@@ -361,6 +361,30 @@ auto_detect_editor() {
   printf '\n'
 }
 
+open_in_editor() {
+  local editor_spec="$1" target_path="$2"
+  local -a editor_cmd=()
+  read -r -a editor_cmd <<<"$editor_spec"
+
+  if [[ ${#editor_cmd[@]} -eq 0 ]]; then
+    gum_warn "No editor command provided."
+    return 1
+  fi
+
+  if ! command -v "${editor_cmd[0]}" &>/dev/null; then
+    gum_warn "Editor command '${editor_cmd[0]}' not found; skipping open."
+    return 1
+  fi
+
+  if "${editor_cmd[@]}" "$target_path"; then
+    gum_success "Opened in ${editor_spec}."
+    return 0
+  fi
+
+  gum_warn "Failed to open in ${editor_spec}."
+  return 1
+}
+
 symlink_worktree_dirs() {
   local repo_root="$1" worktree_dir="$2"
   local available=()
@@ -390,19 +414,28 @@ symlink_worktree_dirs() {
     if [[ "$item" == ".claude" ]]; then
       if [[ ! -d "${worktree_dir}/.claude" ]]; then
         # .claude not tracked in git — symlink the entire folder
-        ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"
-        gum_success "Symlinked .claude"
+        if ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"; then
+          gum_success "Symlinked .claude"
+        else
+          gum_warn "Failed to symlink .claude."
+        fi
       else
         # .claude tracked in git — only symlink settings.local.json
         if [[ -f "${repo_root}/.claude/settings.local.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.local.json" ]]; then
-          ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"
-          gum_success "Symlinked .claude/settings.local.json"
+          if ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"; then
+            gum_success "Symlinked .claude/settings.local.json"
+          else
+            gum_warn "Failed to symlink .claude/settings.local.json."
+          fi
         fi
       fi
     else
       if [[ ! -e "${worktree_dir}/${item}" ]]; then
-        ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"
-        gum_success "Symlinked ${item}"
+        if ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"; then
+          gum_success "Symlinked ${item}"
+        else
+          gum_warn "Failed to symlink ${item}."
+        fi
       fi
     fi
   done <<<"$selected"
@@ -476,8 +509,7 @@ offer_worktree_navigation() {
       ;;
     "Open in "*)
       # editor was detected — use the variable directly, not the display string
-      "$editor" "$target_path"
-      gum_success "Opened in ${editor}."
+      open_in_editor "$editor" "$target_path" || true
       ;;
     "Show path")
       gum_info "cd \"${target_path}\""
@@ -497,11 +529,10 @@ _pick_and_open_editor() {
   local editor_choice
   editor_choice="$(printf '%s\n' "${editors[@]}" | gum choose --header "Select editor:")" || true
   if [[ "$editor_choice" == "Custom..." ]]; then
-    editor_choice="$(gum input --placeholder "editor command")" || true
+    editor_choice="$(gum input --placeholder "editor command (optional args)")" || true
   fi
   if [[ -n "$editor_choice" ]]; then
-    "$editor_choice" "$target_path"
-    gum_success "Opened in ${editor_choice}."
+    open_in_editor "$editor_choice" "$target_path" || true
   fi
 }
 
@@ -877,11 +908,17 @@ _init_worktree() {
   local editor
   editor="$(auto_detect_editor)"
   if [[ -n "$editor" ]]; then
-    "$editor" "$wt_dir"
-    gum_success "Opened in ${editor}."
+    open_in_editor "$editor" "$wt_dir" || true
   fi
 
   gum_info "cd \"${wt_dir}\""
+}
+
+_configure_fetched_branch() {
+  local local_branch="$1" remote_name="$2" head_ref="$3" pr_url="$4"
+  git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
+  git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
+  git config "branch.${local_branch}.pr-url" "$pr_url"
 }
 
 cmd_pause() {
@@ -1048,11 +1085,18 @@ cmd_fetch() {
       git branch "$local_branch" FETCH_HEAD
     fi
 
-    git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
-    git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
-    git config "branch.${local_branch}.pr-url" "$pr_url"
+    _configure_fetched_branch "$local_branch" "$remote_name" "$head_ref" "$pr_url"
 
     gum_success "Fetched PR #${pr_number} → '${local_branch}'."
+
+    local wt_path
+    wt_path="$(get_branch_worktree_path "$local_branch")"
+    if [[ -n "$wt_path" ]]; then
+      gum_info "Branch '${local_branch}' already has a worktree."
+      offer_worktree_navigation "$wt_path"
+      return
+    fi
+
     _init_worktree "$local_branch"
   else
     if git show-ref --verify --quiet "refs/heads/${local_branch}"; then
@@ -1064,9 +1108,7 @@ cmd_fetch() {
       git switch -c "$local_branch" FETCH_HEAD
     fi
 
-    git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
-    git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
-    git config "branch.${local_branch}.pr-url" "$pr_url"
+    _configure_fetched_branch "$local_branch" "$remote_name" "$head_ref" "$pr_url"
 
     gum_success "Fetched PR #${pr_number} → '${local_branch}'."
   fi
