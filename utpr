@@ -1262,7 +1262,17 @@ cmd_forget() {
 
   detect_remote_config
 
-  if is_on_default_branch; then
+  local target
+  if [[ $# -gt 0 ]]; then
+    target="$1"
+    validate_branch_name "$target"
+    if [[ "$target" == "$DEFAULT_BRANCH" ]]; then
+      die "Cannot forget the default branch '${DEFAULT_BRANCH}'."
+    fi
+    if ! git show-ref --verify --quiet "refs/heads/${target}"; then
+      die "Branch '${target}' does not exist locally."
+    fi
+  elif is_on_default_branch; then
     local branches
     branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -Fxv "$DEFAULT_BRANCH" || true)"
 
@@ -1288,39 +1298,37 @@ cmd_forget() {
       exit 0
     fi
 
-    local selected
-    selected="${branch_choice%  \[worktree\]}"
-
-    challenge_local_branch_delete "$selected"
-    if ! gum confirm "Delete branch '${selected}'?"; then
-      gum_info "Cancelled."
-      exit 0
-    fi
-
-    remove_worktree "$selected"
-    delete_local_branch "$selected"
-    gum_success "Deleted local branch '${selected}'."
-    _cleanup_utpr_remote
-    return 0
+    target="${branch_choice%  \[worktree\]}"
+  else
+    target="$(get_current_branch)"
   fi
 
   local current
   current="$(get_current_branch)"
 
-  challenge_uncommitted_changes
-  challenge_local_branch_delete "$current"
+  if [[ "$target" == "$current" ]]; then
+    challenge_uncommitted_changes
+  fi
+  challenge_local_branch_delete "$target"
 
-  if ! gum confirm "Abandon branch '${current}' and switch to ${DEFAULT_BRANCH}?"; then
-    gum_info "Cancelled."
-    exit 0
+  if [[ "$target" == "$current" ]]; then
+    if ! gum confirm "Abandon branch '${target}' and switch to ${DEFAULT_BRANCH}?"; then
+      gum_info "Cancelled."
+      exit 0
+    fi
+    remove_worktree "$target"
+    switch_to_branch "$DEFAULT_BRANCH"
+    git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+  else
+    if ! gum confirm "Delete branch '${target}'?"; then
+      gum_info "Cancelled."
+      exit 0
+    fi
+    remove_worktree "$target"
   fi
 
-  remove_worktree "$current"
-  switch_to_branch "$DEFAULT_BRANCH"
-  git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
-  delete_local_branch "$current"
-  gum_success "Deleted local branch '${current}'."
-
+  delete_local_branch "$target"
+  gum_success "Deleted local branch '${target}'."
   _cleanup_utpr_remote
 }
 
