@@ -21,6 +21,50 @@ if [[ "$OS" == "Linux" ]] && grep -qi microsoft /proc/version 2>/dev/null; then
   IS_WSL=true
 fi
 
+PKG_MANAGER="unknown"
+case "$OS" in
+  Darwin)
+    PKG_MANAGER="brew"
+    ;;
+  Linux)
+    if command -v apt-get &>/dev/null; then
+      PKG_MANAGER="apt-get"
+    elif command -v dnf &>/dev/null; then
+      PKG_MANAGER="dnf"
+    fi
+    ;;
+esac
+
+_die() {
+  local msg="$1"
+  if command -v gum &>/dev/null; then
+    gum log --level error "$msg"
+  else
+    echo "Error: $msg" >&2
+  fi
+  exit 1
+}
+
+_as_root() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+  elif command -v sudo &>/dev/null; then
+    sudo "$@"
+  else
+    _die "This installer needs root privileges for this operation, but sudo is not available."
+  fi
+}
+
+_require_cmd() {
+  local cmd="$1"
+  local context="${2:-this installer}"
+  command -v "$cmd" &>/dev/null || {
+    _die "Required command '$cmd' was not found (${context})."
+  }
+}
+
+_require_cmd curl "download dependencies and utpr"
+
 # -----------------------------------------------------------------------
 # Phase 1: Bootstrap gum using plain echo — gum is not available yet.
 # -----------------------------------------------------------------------
@@ -35,35 +79,32 @@ _bootstrap_gum() {
   case "$OS" in
     Darwin)
       if ! command -v brew &>/dev/null; then
-        echo "Error: Homebrew is required on macOS." >&2
-        echo "Install it from https://brew.sh and re-run this script." >&2
-        exit 1
+        _die "Homebrew is required on macOS. Install it from https://brew.sh and re-run this script."
       fi
       brew install gum
       ;;
     Linux)
       if command -v apt-get &>/dev/null; then
+        _require_cmd gpg "install gum on apt-based Linux"
         echo "==> Adding Charm apt repository..."
-        sudo mkdir -p /etc/apt/keyrings
+        _as_root mkdir -p /etc/apt/keyrings
         curl -fsSL https://repo.charm.sh/apt/gpg.key \
-          | sudo gpg --yes --dearmor -o /etc/apt/keyrings/charm.gpg
+          | _as_root gpg --yes --dearmor -o /etc/apt/keyrings/charm.gpg
         echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
-          | sudo tee /etc/apt/sources.list.d/charm.list > /dev/null
-        sudo apt-get update -qq
-        sudo apt-get install -y gum
+          | _as_root tee /etc/apt/sources.list.d/charm.list > /dev/null
+        _as_root apt-get update -qq
+        _as_root apt-get install -y gum
       elif command -v dnf &>/dev/null; then
         echo "==> Adding Charm yum repository..."
         printf '[charm]\nname=Charm\nbaseurl=https://repo.charm.sh/yum/\nenabled=1\ngpgcheck=1\ngpgkey=https://repo.charm.sh/yum/gpg.key\n' \
-          | sudo tee /etc/yum.repos.d/charm.repo > /dev/null
-        sudo dnf install -y gum
+          | _as_root tee /etc/yum.repos.d/charm.repo > /dev/null
+        _as_root dnf install -y gum
       else
-        echo "Error: No supported package manager found (brew, apt-get, or dnf required)." >&2
-        exit 1
+        _die "No supported package manager found (brew, apt-get, or dnf required)."
       fi
       ;;
     *)
-      echo "Error: Unsupported OS: $OS" >&2
-      exit 1
+      _die "Unsupported OS: $OS"
       ;;
   esac
 }
@@ -76,12 +117,13 @@ _bootstrap_gum
 
 _info()    { gum log --level info  "$@"; }
 _warn()    { gum log --level warn  "$@"; }
-_error()   { gum log --level error "$@"; exit 1; }
+_error()   { _die "$*"; }
 
 gum style \
   --border double --padding "1 3" --border-foreground 4 \
   "$(gum style --bold --foreground 4 "utpr installer")"
 echo ""
+_info "Preflight: os=$OS package_manager=$PKG_MANAGER install_dir=$INSTALL_DIR version=$UTPR_VERSION wsl=$IS_WSL"
 
 # --- Install remaining prerequisites ---
 
@@ -91,6 +133,7 @@ _install_deps_macos() {
     command -v "$dep" &>/dev/null || missing+=("$dep")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
+    command -v brew &>/dev/null || _error "Homebrew is required to install missing prerequisites on macOS."
     _info "Installing ${missing[*]} via Homebrew..."
     brew install "${missing[@]}"
   else
@@ -100,30 +143,68 @@ _install_deps_macos() {
 
 _install_deps_apt() {
   local missing_apt=()
+  local need_gh=false
+  local need_wslu=false
+  local refresh_apt=false
+  local gh_repo_path="/etc/apt/sources.list.d/github-cli.list"
+  local gh_keyring_path="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+
   for dep in git jq; do
     command -v "$dep" &>/dev/null || missing_apt+=("$dep")
   done
   if [[ ${#missing_apt[@]} -gt 0 ]]; then
-    _info "Installing ${missing_apt[*]}..."
-    sudo apt-get install -y "${missing_apt[@]}"
+    refresh_apt=true
   fi
 
   if ! command -v gh &>/dev/null; then
-    _info "Adding GitHub CLI apt repository..."
-    sudo mkdir -p -m 755 /etc/apt/keyrings
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
-    sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-    sudo apt-get update -qq
-    _info "Installing gh..."
-    sudo apt-get install -y gh
+    need_gh=true
+    refresh_apt=true
   fi
 
   if [[ "$IS_WSL" == "true" ]] && ! command -v wslview &>/dev/null; then
+    need_wslu=true
+    refresh_apt=true
+  fi
+
+  if [[ "$need_gh" == "true" ]]; then
+    _require_cmd dpkg "configure GitHub CLI apt repository"
+    _as_root mkdir -p -m 755 /etc/apt/keyrings
+
+    if [[ ! -f "$gh_keyring_path" ]]; then
+      _info "Adding GitHub CLI apt keyring..."
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | _as_root tee "$gh_keyring_path" > /dev/null
+      _as_root chmod go+r "$gh_keyring_path"
+    fi
+
+    if [[ ! -f "$gh_repo_path" ]] || ! grep -q 'https://cli.github.com/packages stable main' "$gh_repo_path"; then
+      _info "Adding GitHub CLI apt repository..."
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=$gh_keyring_path] https://cli.github.com/packages stable main" \
+        | _as_root tee "$gh_repo_path" > /dev/null
+    fi
+  fi
+
+  if [[ "$refresh_apt" == "false" ]]; then
+    _info "Prerequisites already installed."
+    return 0
+  fi
+
+  _info "Updating apt package index..."
+  _as_root apt-get update -qq
+
+  if [[ ${#missing_apt[@]} -gt 0 ]]; then
+    _info "Installing ${missing_apt[*]}..."
+    _as_root apt-get install -y "${missing_apt[@]}"
+  fi
+
+  if [[ "$need_gh" == "true" ]]; then
+    _info "Installing gh..."
+    _as_root apt-get install -y gh
+  fi
+
+  if [[ "$need_wslu" == "true" ]]; then
     _info "Installing wslu for browser integration..."
-    sudo apt-get install -y wslu
+    _as_root apt-get install -y wslu
   fi
 }
 
@@ -134,7 +215,7 @@ _install_deps_dnf() {
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     _info "Installing ${missing[*]}..."
-    sudo dnf install -y "${missing[@]}"
+    _as_root dnf install -y "${missing[@]}"
   else
     _info "Prerequisites already installed."
   fi
@@ -151,19 +232,32 @@ case "$OS" in
       _error "No supported package manager found (apt-get or dnf required)."
     fi
     ;;
+  *)
+    _error "Unsupported OS: $OS"
+    ;;
 esac
 
 # --- Install utpr ---
 _info "Installing utpr to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR" || _error "Cannot create $INSTALL_DIR. Check permissions or set UTPR_INSTALL_DIR."
+_require_cmd mktemp "stage utpr download safely"
+tmp_utpr=""
+_cleanup_tmp_utpr() {
+  if [[ -n "${tmp_utpr:-}" ]]; then
+    rm -f "$tmp_utpr"
+  fi
+}
+trap _cleanup_tmp_utpr EXIT INT TERM
+tmp_utpr="$(mktemp "$INSTALL_DIR/.utpr.XXXXXX")" || _error "Failed to create temporary file in $INSTALL_DIR"
 gum spin --show-error --title "Downloading utpr..." -- \
-  curl -fsSL "$UTPR_URL" -o "$INSTALL_DIR/utpr" \
+  curl -fsSL "$UTPR_URL" -o "$tmp_utpr" \
   || _error "Failed to download utpr from $UTPR_URL"
-if ! head -1 "$INSTALL_DIR/utpr" | grep -q '^#!/usr/bin/env bash'; then
-  rm -f "$INSTALL_DIR/utpr"
+if ! head -1 "$tmp_utpr" | grep -q '^#!/usr/bin/env bash'; then
   _error "Downloaded file doesn't appear to be a valid utpr script. Aborting."
 fi
-chmod +x "$INSTALL_DIR/utpr"
+chmod +x "$tmp_utpr"
+mv "$tmp_utpr" "$INSTALL_DIR/utpr" || _error "Failed to install utpr to $INSTALL_DIR/utpr"
+tmp_utpr=""
 _info "Installed: $INSTALL_DIR/utpr"
 
 # --- Check PATH ---
