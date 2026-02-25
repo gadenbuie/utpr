@@ -821,7 +821,7 @@ show_command_help() {
       gum style "  <pr>  PR number to finish (defaults to current branch's PR)" >&2
       ;;
     view)
-      gum style --bold "utpr view [--web|-w] [--summary] [<pr>]" >&2
+      gum style --bold "utpr view [--web|-w] [--summary] [--state <state>] [<pr>]" >&2
       echo >&2
       gum style "View a PR. Shows full details with comments by default." >&2
       echo >&2
@@ -829,8 +829,9 @@ show_command_help() {
       gum style "  <pr>  PR number to view (defaults to current branch's PR)" >&2
       echo >&2
       gum style --bold "Options:" >&2
-      gum style "  --web, -w  Open the PR in the browser" >&2
-      gum style "  --summary  Show a brief summary formatted as markdown (no comments)" >&2
+      gum style "  --web, -w        Open the PR in the browser" >&2
+      gum style "  --summary        Show a brief summary formatted as markdown (no comments)" >&2
+      gum style "  --state <state>  Filter PR picker by state: open (default), closed, merged, all" >&2
       ;;
     *)
       echo >&2
@@ -1497,46 +1498,69 @@ cmd_view() {
   detect_remote_config
 
   local view_mode="comments"
+  local pr_state="open"
+  local state_set=false
   local pr_arg=""
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --web|-w)  view_mode="web" ;;
-      --summary) view_mode="summary" ;;
-      *)         pr_arg="$arg" ;;
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --web|-w)   view_mode="web"; shift ;;
+      --summary)  view_mode="summary"; shift ;;
+      --state=*)  pr_state="${1#--state=}"; state_set=true; shift ;;
+      --state)
+        if [[ -z "${2:-}" ]]; then
+          die "--state requires an argument: open, closed, merged, all"
+        fi
+        pr_state="$2"; state_set=true; shift 2
+        ;;
+      *) pr_arg="$1"; shift ;;
     esac
   done
+
+  case "$pr_state" in
+    open|closed|merged|all) ;;
+    *) die "Invalid --state value: '${pr_state}' (expected: open, closed, merged, all)" ;;
+  esac
 
   local pr_number=""
   if [[ -n "$pr_arg" ]]; then
     validate_pr_number "$pr_arg"
     pr_number="$pr_arg"
-  elif ! is_on_default_branch; then
+  elif ! is_on_default_branch && [[ "$state_set" == false ]]; then
     pr_number="$(gh pr view --json number --jq '.number' 2>/dev/null || true)"
     if [[ -z "$pr_number" ]]; then
       die "No PR found for the current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line
+    local current_user pr_data pr_list="" pr_choice line pr_disp_state picker_label
     current_user="$(get_gh_login)"
-    pr_data="$(gh pr list \
-      --json number,title,author,updatedAt \
-      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login] | @tsv')" || {
+    pr_data="$(gh pr list --state "$pr_state" \
+      --json number,title,author,updatedAt,state,mergedAt \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, (if .mergedAt then "merged" else (.state | ascii_downcase) end)] | @tsv')" || {
       die "Failed to list PRs."
     }
 
     if [[ -z "$pr_data" ]]; then
-      die "No open PRs found."
+      die "No ${pr_state} PRs found."
     fi
 
-    while IFS=$'\t' read -r num title author; do
-      line="#${num} ${title} (${author})"
+    if [[ "$pr_state" == "open" ]]; then
+      picker_label="a PR"
+    else
+      picker_label="a ${pr_state} PR"
+    fi
+
+    while IFS=$'\t' read -r num title author pr_disp_state; do
+      if [[ "$pr_state" == "open" ]]; then
+        line="#${num} ${title} (${author})"
+      else
+        line="#${num} [${pr_disp_state}] ${title} (${author})"
+      fi
       [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
       pr_list="${pr_list}${line}"$'\n'
     done <<< "$pr_data"
     pr_list="${pr_list%$'\n'}"
 
-    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to view:")"
+    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select ${picker_label} to view:")"
     if [[ -z "$pr_choice" ]]; then
       gum_info "Cancelled."
       return 0
