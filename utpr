@@ -183,9 +183,37 @@ switch_to_branch() {
   fi
 }
 
+challenge_local_branch_delete() {
+  local branch="$1"
+  local tracking
+  tracking="$(git rev-parse --abbrev-ref --symbolic-full-name "${branch}@{u}" 2>/dev/null || true)"
+
+  if [[ -z "$tracking" ]]; then
+    gum_warn "Local branch '${branch}' has no associated remote branch."
+    gum_info "If we delete '${branch}', any work that exists only on this branch may be hard for you to recover."
+    if ! gum confirm "Proceed anyway?" --default=false; then
+      gum_error "Cancelling."
+      exit 1
+    fi
+    return 0
+  fi
+
+  local unpushed
+  unpushed="$(git log "${tracking}..${branch}" --oneline 2>/dev/null)" || true
+  if [[ -n "$unpushed" ]]; then
+    gum_warn "Local branch '${branch}' has 1 or more commits that have not been pushed to '${tracking}'."
+    gum_info "If we delete '${branch}', this work may be hard for you to recover."
+    if ! gum confirm "Proceed anyway?" --default=false; then
+      gum_error "Cancelling."
+      exit 1
+    fi
+  fi
+}
+
 delete_local_branch() {
   local branch="$1"
   local output path
+  challenge_local_branch_delete "$branch"
   if ! output="$(git branch -D -- "$branch" 2>&1)"; then
     path="$(get_branch_worktree_path "$branch")"
     if [[ -n "$path" ]]; then
