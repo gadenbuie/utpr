@@ -86,13 +86,13 @@ Sleep 2s
 
 # --- Pause work and return to main ---
 Enter
-Sleep 1s
+Sleep 3s
 Type "# pause your work"
 Enter
 Sleep 400ms
 Type "utpr pause"
 Enter
-Sleep 2s
+Sleep 3s
 
 # --- Resume: gum choose shows the branch list; press Enter to select ---
 Enter
