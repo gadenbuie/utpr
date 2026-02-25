@@ -94,8 +94,10 @@ validate_pr_number() {
 
 parse_pr_number_from_choice() {
   local choice="$1"
-  local num
-  if [[ "$choice" =~ ^#([0-9]+)([[:space:]]|$) ]]; then
+  local plain num
+  # Strip ANSI SGR escape sequences before parsing so styled lines parse correctly
+  plain="$(printf '%s' "$choice" | sed $'s/\033\\[[0-9;]*m//g')"
+  if [[ "$plain" =~ ^#([0-9]+)([[:space:]]|$) ]]; then
     num="${BASH_REMATCH[1]}"
   else
     die "Could not parse PR number from selection: ${choice}"
@@ -539,10 +541,18 @@ _pick_and_open_editor() {
 # ---------------------------------------------------------------------------
 # Remote config detection
 # ---------------------------------------------------------------------------
+GH_LOGIN=""
 REMOTE_CONFIG=""
 SOURCE_REMOTE=""
 PUSH_REMOTE=""
 DEFAULT_BRANCH=""
+
+get_gh_login() {
+  if [[ -z "$GH_LOGIN" ]]; then
+    GH_LOGIN="$(gh api user --jq '.login' 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$GH_LOGIN"
+}
 
 require_remote_config() {
   if [[ -z "$REMOTE_CONFIG" ]]; then
@@ -1074,15 +1084,25 @@ cmd_fetch() {
     pr_number="$1"
     validate_pr_number "$pr_number"
   else
-    local pr_list pr_choice
-    pr_list="$(gh pr list --json number,title,author,headRefName,isCrossRepository \
-      --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}) [{{.headRefName}}]{{if .isCrossRepository}} [fork]{{end}}{{"\n"}}{{end}}')" || {
+    local current_user pr_data pr_list="" pr_choice line
+    current_user="$(get_gh_login)"
+    pr_data="$(gh pr list \
+      --json number,title,author,headRefName,isCrossRepository,updatedAt \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, .headRefName, (.isCrossRepository | tostring)] | @tsv')" || {
       die "Failed to list PRs."
     }
 
-    if [[ -z "$pr_list" ]]; then
+    if [[ -z "$pr_data" ]]; then
       die "No open PRs found."
     fi
+
+    while IFS=$'\t' read -r num title author branch is_fork; do
+      line="#${num} ${title} (${author}) [${branch}]"
+      [[ "$is_fork" == "true" ]] && line="${line} [fork]"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
+      pr_list="${pr_list}${line}"$'\n'
+    done <<< "$pr_data"
+    pr_list="${pr_list%$'\n'}"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to fetch:")"
     if [[ -z "$pr_choice" ]]; then
@@ -1374,15 +1394,24 @@ cmd_finish() {
       die "Could not determine PR number for current branch."
     fi
   else
-    local pr_list pr_choice
-    pr_list="$(gh pr list --state closed --json number,title,author,mergedAt \
-      --template '{{range .}}#{{.number}} {{if .mergedAt}}[merged]{{else}}[closed]{{end}} {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
+    local current_user pr_data pr_list="" pr_choice line pr_status
+    current_user="$(get_gh_login)"
+    pr_data="$(gh pr list --state closed \
+      --json number,title,author,mergedAt,updatedAt \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, (if .mergedAt then "merged" else "closed" end)] | @tsv')" || {
       die "Failed to list closed PRs."
     }
 
-    if [[ -z "$pr_list" ]]; then
+    if [[ -z "$pr_data" ]]; then
       die "No closed PRs found."
     fi
+
+    while IFS=$'\t' read -r num title author pr_status; do
+      line="#${num} [${pr_status}] ${title} (${author})"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
+      pr_list="${pr_list}${line}"$'\n'
+    done <<< "$pr_data"
+    pr_list="${pr_list%$'\n'}"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to finish:")"
     if [[ -z "$pr_choice" ]]; then
@@ -1488,15 +1517,24 @@ cmd_view() {
       die "No PR found for the current branch."
     fi
   else
-    local pr_list pr_choice
-    pr_list="$(gh pr list --json number,title,author \
-      --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
+    local current_user pr_data pr_list="" pr_choice line
+    current_user="$(get_gh_login)"
+    pr_data="$(gh pr list \
+      --json number,title,author,updatedAt \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login] | @tsv')" || {
       die "Failed to list PRs."
     }
 
-    if [[ -z "$pr_list" ]]; then
+    if [[ -z "$pr_data" ]]; then
       die "No open PRs found."
     fi
+
+    while IFS=$'\t' read -r num title author; do
+      line="#${num} ${title} (${author})"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
+      pr_list="${pr_list}${line}"$'\n'
+    done <<< "$pr_data"
+    pr_list="${pr_list%$'\n'}"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to view:")"
     if [[ -z "$pr_choice" ]]; then
