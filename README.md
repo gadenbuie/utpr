@@ -39,6 +39,8 @@ For more background on the workflow that inspired utpr, see
 [Pull Request Flow with usethis][blog-pr-flow] and the
 [usethis pull request helpers documentation][usethis-pr].
 
+![utpr demo](example/demo.gif)
+
 ## Installation
 
 ```bash
