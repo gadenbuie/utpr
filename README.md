@@ -3,6 +3,8 @@
 A command-line tool for pull request workflows, inspired by the
 [`pr_*()` helper functions][usethis-pr] from the R [usethis] package.
 
+<p align="center"><img src="example/demo.gif" alt="utpr demo" /></p>
+
 ## Why utpr?
 
 Working with pull requests involves a surprising amount of repetitive,
@@ -38,8 +40,6 @@ remotes it created, so cleanup is safe and thorough.
 For more background on the workflow that inspired utpr, see
 [Pull Request Flow with usethis][blog-pr-flow] and the
 [usethis pull request helpers documentation][usethis-pr].
-
-![utpr demo](example/demo.gif)
 
 ## Installation
 
