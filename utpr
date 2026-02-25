@@ -1395,24 +1395,41 @@ cmd_finish() {
       die "Could not determine PR number for current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line pr_status
+    local current_user pr_data pr_list="" pr_choice line local_branch upstream
+    local num title author head_ref
     current_user="$(get_gh_login)"
-    pr_data="$(gh pr list --state closed \
-      --json number,title,author,mergedAt,updatedAt \
-      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, (if .mergedAt then "merged" else "closed" end)] | @tsv')" || {
-      die "Failed to list closed PRs."
+    pr_data="$(gh pr list --state merged \
+      --json number,title,author,updatedAt,headRefName \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, .headRefName] | @tsv')" || {
+      die "Failed to list merged PRs."
     }
 
     if [[ -z "$pr_data" ]]; then
-      die "No closed PRs found."
+      gum_info "No merged PRs found."
+      return 0
     fi
 
-    while IFS=$'\t' read -r num title author pr_status; do
-      line="#${num} [${pr_status}] ${title} (${author})"
+    while IFS=$'\t' read -r num title author head_ref; do
+      local_branch=""
+      if git show-ref --verify --quiet "refs/heads/${head_ref}"; then
+        upstream="$(git for-each-ref --format='%(upstream:short)' "refs/heads/${head_ref}")"
+        [[ -n "$upstream" ]] && local_branch="$head_ref"
+      fi
+      if [[ -z "$local_branch" ]] && git show-ref --verify --quiet "refs/heads/pr-${num}/${head_ref}"; then
+        upstream="$(git for-each-ref --format='%(upstream:short)' "refs/heads/pr-${num}/${head_ref}")"
+        [[ -n "$upstream" ]] && local_branch="pr-${num}/${head_ref}"
+      fi
+      [[ -z "$local_branch" ]] && continue
+      line="#${num} ${title} (${author})"
       [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
       pr_list="${pr_list}${line}"$'\n'
     done <<< "$pr_data"
     pr_list="${pr_list%$'\n'}"
+
+    if [[ -z "$pr_list" ]]; then
+      gum_info "No merged PRs with a local branch to clean up."
+      return 0
+    fi
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to finish:")"
     if [[ -z "$pr_choice" ]]; then
