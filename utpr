@@ -716,7 +716,7 @@ show_help() {
     "  $(gum style --foreground 4 "merge-main")  Merge default branch into current branch" \
     "  $(gum style --foreground 4 "forget")      Abandon and delete a local PR branch" \
     "  $(gum style --foreground 4 "finish")      Clean up after a merged PR" \
-    "  $(gum style --foreground 4 "view")        View PR in browser" >&2
+    "  $(gum style --foreground 4 "view")        View PR details and comments" >&2
   echo >&2
 
   gum style --faint "Run 'utpr <command> --help' for command-specific help." >&2
@@ -737,6 +737,10 @@ show_command_help() {
       gum style --bold "Options:" >&2
       gum style "  --worktree     Create branch in a new git worktree" >&2
       gum style "  --base <ref>   Base branch or ref to create from (default: current branch)" >&2
+      echo >&2
+      gum style --bold "Environment:" >&2
+      gum style "  UTPR_EDITOR        Editor to open the worktree in (default: auto-detected)" >&2
+      gum style "  UTPR_SYMLINK_DIRS  Comma-separated dirs to symlink into worktrees (default: _dev,.claude)" >&2
       ;;
     pause)
       gum style --bold "utpr pause" >&2
@@ -761,6 +765,10 @@ show_command_help() {
       echo >&2
       gum style --bold "Options:" >&2
       gum style "  --worktree  Check out the PR in a new git worktree" >&2
+      echo >&2
+      gum style --bold "Environment:" >&2
+      gum style "  UTPR_EDITOR        Editor to open the worktree in (default: auto-detected)" >&2
+      gum style "  UTPR_SYMLINK_DIRS  Comma-separated dirs to symlink into worktrees (default: _dev,.claude)" >&2
       ;;
     push)
       gum style --bold "utpr push [--edit=browser|terminal]" >&2
@@ -803,12 +811,16 @@ show_command_help() {
       gum style "  <pr>  PR number to finish (defaults to current branch's PR)" >&2
       ;;
     view)
-      gum style --bold "utpr view [<pr>]" >&2
+      gum style --bold "utpr view [--web|-w] [--summary] [<pr>]" >&2
       echo >&2
-      gum style "Open a PR in the browser." >&2
+      gum style "View a PR. Shows full details with comments by default." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <pr>  PR number to view (defaults to current branch's PR)" >&2
+      echo >&2
+      gum style --bold "Options:" >&2
+      gum style "  --web, -w  Open the PR in the browser" >&2
+      gum style "  --summary  Show a brief summary formatted as markdown (no comments)" >&2
       ;;
     *)
       echo >&2
@@ -1036,6 +1048,7 @@ cmd_resume() {
       if [[ -n "$pull_output" ]]; then
         printf '%s\n' "$pull_output" >&2
       fi
+      exit 1
     fi
   fi
 
@@ -1062,8 +1075,8 @@ cmd_fetch() {
     validate_pr_number "$pr_number"
   else
     local pr_list pr_choice
-    pr_list="$(gh pr list --json number,title,author,headRefName \
-      --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}) [{{.headRefName}}]{{"\n"}}{{end}}')" || {
+    pr_list="$(gh pr list --json number,title,author,headRefName,isCrossRepository \
+      --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}) [{{.headRefName}}]{{if .isCrossRepository}} [fork]{{end}}{{"\n"}}{{end}}')" || {
       die "Failed to list PRs."
     }
 
@@ -1196,9 +1209,16 @@ cmd_push() {
         open_url "https://github.com/${owner_repo}/compare/${DEFAULT_BRANCH}...${current}?expand=1"
       fi
     else
-      if ! gh pr create; then
+      local pr_url exit_code=0
+      pr_url="$(gh pr create)" || exit_code=$?
+      if [[ "$exit_code" -eq 130 ]]; then
+        gum_info "Cancelled."
+        return 0
+      elif [[ "$exit_code" -ne 0 ]]; then
         die "Failed to create pull request."
       fi
+      git config "branch.${current}.pr-url" "$pr_url"
+      gum_success "PR created: ${pr_url}"
     fi
   else
     local behind
@@ -1298,7 +1318,7 @@ cmd_forget() {
     branch_choice="$(printf '%s\n' "$branch_display_list" | gum choose --header "Select a branch to forget:")" || true
     if [[ -z "$branch_choice" ]]; then
       gum_info "Cancelled."
-      exit 0
+      return 0
     fi
 
     target="${branch_choice%  \[worktree\]}"
@@ -1317,7 +1337,7 @@ cmd_forget() {
   if [[ "$target" == "$current" ]]; then
     if ! gum confirm "Abandon branch '${target}' and switch to ${DEFAULT_BRANCH}?"; then
       gum_info "Cancelled."
-      exit 0
+      return 0
     fi
     remove_worktree "$target"
     switch_to_branch "$DEFAULT_BRANCH"
@@ -1325,7 +1345,7 @@ cmd_forget() {
   else
     if ! gum confirm "Delete branch '${target}'?"; then
       gum_info "Cancelled."
-      exit 0
+      return 0
     fi
     remove_worktree "$target"
   fi
@@ -1355,8 +1375,8 @@ cmd_finish() {
     fi
   else
     local pr_list pr_choice
-    pr_list="$(gh pr list --state closed --json number,title,author,state \
-      --template '{{range .}}#{{.number}} [{{.state}}] {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
+    pr_list="$(gh pr list --state closed --json number,title,author,mergedAt \
+      --template '{{range .}}#{{.number}} {{if .mergedAt}}[merged]{{else}}[closed]{{end}} {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
       die "Failed to list closed PRs."
     }
 
@@ -1366,8 +1386,8 @@ cmd_finish() {
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to finish:")"
     if [[ -z "$pr_choice" ]]; then
-      gum_error "No PR selected."
-      exit 0
+      gum_info "Cancelled."
+      return 0
     fi
 
     pr_number="$(parse_pr_number_from_choice "$pr_choice")"
@@ -1387,13 +1407,13 @@ cmd_finish() {
   if [[ "$pr_state" != "closed" ]]; then
     gum_warn "PR #${pr_number} is still open (state: ${pr_state})."
     if ! gum confirm "Continue anyway?"; then
-      exit 0
+      return 0
     fi
   fi
 
   if ! gum confirm "Finish PR #${pr_number} (branch: ${pr_branch})?"; then
     gum_info "Cancelled."
-    exit 0
+    return 0
   fi
 
   if ! is_on_default_branch; then
@@ -1447,37 +1467,64 @@ cmd_finish() {
 cmd_view() {
   detect_remote_config
 
-  if [[ $# -gt 0 ]]; then
-    validate_pr_number "$1"
-    gh pr view "$1" --web
-    return
-  fi
+  local view_mode="comments"
+  local pr_arg=""
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --web|-w)  view_mode="web" ;;
+      --summary) view_mode="summary" ;;
+      *)         pr_arg="$arg" ;;
+    esac
+  done
 
-  if ! is_on_default_branch; then
-    gh pr view --web 2>/dev/null || {
+  local pr_number=""
+  if [[ -n "$pr_arg" ]]; then
+    validate_pr_number "$pr_arg"
+    pr_number="$pr_arg"
+  elif ! is_on_default_branch; then
+    pr_number="$(gh pr view --json number --jq '.number' 2>/dev/null || true)"
+    if [[ -z "$pr_number" ]]; then
       die "No PR found for the current branch."
+    fi
+  else
+    local pr_list pr_choice
+    pr_list="$(gh pr list --json number,title,author \
+      --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
+      die "Failed to list PRs."
     }
-    return
+
+    if [[ -z "$pr_list" ]]; then
+      die "No open PRs found."
+    fi
+
+    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to view:")"
+    if [[ -z "$pr_choice" ]]; then
+      gum_info "Cancelled."
+      return 0
+    fi
+
+    pr_number="$(parse_pr_number_from_choice "$pr_choice")"
   fi
 
-  local pr_list pr_choice pr_number
-  pr_list="$(gh pr list --json number,title,author \
-    --template '{{range .}}#{{.number}} {{.title}} ({{.author.login}}){{"\n"}}{{end}}')" || {
-    die "Failed to list PRs."
-  }
-
-  if [[ -z "$pr_list" ]]; then
-    die "No open PRs found."
-  fi
-
-  pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to view:")"
-  if [[ -z "$pr_choice" ]]; then
-    gum_error "No PR selected."
-    exit 0
-  fi
-
-  pr_number="$(parse_pr_number_from_choice "$pr_choice")"
-  gh pr view "$pr_number" --web
+  case "$view_mode" in
+    web)
+      gh pr view "$pr_number" --web
+      ;;
+    summary)
+      local pr_md
+      pr_md="$(gh pr view "$pr_number" \
+        --json number,title,body,author,state,labels \
+        --jq '"# #\(.number) \(.title)\n\n**Author:** \(.author.login) · **State:** \(.state)\(if (.labels | length) > 0 then (" · **Labels:** " + (.labels | map(.name) | join(", "))) else "" end)\n\n\(if (.body // "") != "" then .body else "*No description provided.*" end)"' \
+        2>/dev/null)" || {
+        die "Failed to fetch PR #${pr_number}."
+      }
+      printf '%s\n' "$pr_md" | gum format
+      ;;
+    *)
+      gh pr view "$pr_number" --comments
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
