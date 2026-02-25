@@ -95,7 +95,11 @@ validate_pr_number() {
 parse_pr_number_from_choice() {
   local choice="$1"
   local num
-  num="$(printf '%s\n' "$choice" | sed 's/^#\([0-9]*\).*/\1/')"
+  if [[ "$choice" =~ ^#([0-9]+)([[:space:]]|$) ]]; then
+    num="${BASH_REMATCH[1]}"
+  else
+    die "Could not parse PR number from selection: ${choice}"
+  fi
   validate_pr_number "$num"
   printf '%s\n' "$num"
 }
@@ -104,8 +108,9 @@ parse_pr_number_from_choice() {
 # Git utilities
 # ---------------------------------------------------------------------------
 get_default_branch() {
+  local remote="${1:-origin}"
   local branch
-  branch="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')" || true
+  branch="$(git symbolic-ref "refs/remotes/${remote}/HEAD" 2>/dev/null | sed "s|refs/remotes/${remote}/||")" || true
   if [[ -n "$branch" ]]; then
     printf '%s\n' "$branch"
     return 0
@@ -120,11 +125,11 @@ get_default_branch() {
     return 0
   fi
 
-  if git show-ref --verify --quiet refs/remotes/origin/main; then
+  if git show-ref --verify --quiet "refs/remotes/${remote}/main"; then
     printf 'main\n'
     return 0
   fi
-  if git show-ref --verify --quiet refs/remotes/origin/master; then
+  if git show-ref --verify --quiet "refs/remotes/${remote}/master"; then
     printf 'master\n'
     return 0
   fi
@@ -206,14 +211,18 @@ detect_remote_config() {
   if [[ -n "$REMOTE_CONFIG" ]]; then
     return 0
   fi
-  DEFAULT_BRANCH="$(get_default_branch)" || DEFAULT_BRANCH="main"
 
-  local origin_url owner_repo
+  local origin_url owner_repo fallback_remote
   origin_url="$(git remote get-url origin 2>/dev/null)" || {
-    gum_warn "No 'origin' remote found. Assuming 'ours' config."
+    fallback_remote="$(git remote | head -n 1 || true)"
+    if [[ -z "$fallback_remote" ]]; then
+      die "No git remotes configured. Add a remote before using utpr."
+    fi
+    gum_warn "No 'origin' remote found. Using '${fallback_remote}'."
     REMOTE_CONFIG="ours"
-    SOURCE_REMOTE="origin"
-    PUSH_REMOTE="origin"
+    SOURCE_REMOTE="$fallback_remote"
+    PUSH_REMOTE="$fallback_remote"
+    DEFAULT_BRANCH="$(get_default_branch "$SOURCE_REMOTE")" || DEFAULT_BRANCH="main"
     return 0
   }
   owner_repo="$(parse_repo_spec "$origin_url")"
@@ -236,6 +245,7 @@ detect_remote_config() {
       SOURCE_REMOTE="origin"
       PUSH_REMOTE="origin"
     fi
+    DEFAULT_BRANCH="$(get_default_branch "$SOURCE_REMOTE")" || DEFAULT_BRANCH="main"
     return 0
   fi
 
@@ -246,6 +256,7 @@ detect_remote_config() {
     REMOTE_CONFIG="ours"
     SOURCE_REMOTE="origin"
     PUSH_REMOTE="origin"
+    DEFAULT_BRANCH="$(get_default_branch "$SOURCE_REMOTE")" || DEFAULT_BRANCH="main"
     return 0
   fi
 
@@ -269,6 +280,7 @@ detect_remote_config() {
         SOURCE_REMOTE="origin"
       fi
     fi
+    DEFAULT_BRANCH="$(get_default_branch "$SOURCE_REMOTE")" || DEFAULT_BRANCH="main"
     return 0
   fi
 
@@ -276,6 +288,7 @@ detect_remote_config() {
   REMOTE_CONFIG="ours"
   SOURCE_REMOTE="origin"
   PUSH_REMOTE="origin"
+  DEFAULT_BRANCH="$(get_default_branch "$SOURCE_REMOTE")" || DEFAULT_BRANCH="main"
 }
 
 parse_repo_spec() {
@@ -517,7 +530,7 @@ cmd_resume() {
     validate_branch_name "$branch"
   else
     local branches
-    branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -v "^${DEFAULT_BRANCH}$" || true)"
+    branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -Fxv "$DEFAULT_BRANCH" || true)"
 
     if [[ -z "$branches" ]]; then
       die "No branches to resume."
@@ -581,10 +594,13 @@ cmd_fetch() {
   source_repo="$(parse_repo_spec "$(git remote get-url "$SOURCE_REMOTE")")"
 
   local pr_data
-  pr_data="$(gh api "repos/${source_repo}/pulls/${pr_number}" \
+  if ! pr_data="$(gh api "repos/${source_repo}/pulls/${pr_number}" \
     --jq '[.head.ref, .head.repo.full_name, .head.repo.clone_url,
            (if .head.repo.full_name != .base.repo.full_name then "true" else "false" end),
-           .head.repo.owner.login, .html_url] | @tsv')"
+           .head.repo.owner.login, .html_url] | @tsv' 2>&1)"; then
+    printf '%s\n' "$pr_data" >&2
+    die "Failed to fetch PR #${pr_number} details."
+  fi
 
   local head_ref head_repo_full_name head_repo_clone_url is_fork_pr pr_author pr_url
   IFS=$'\t' read -r head_ref head_repo_full_name head_repo_clone_url is_fork_pr pr_author pr_url <<<"$pr_data"
@@ -666,7 +682,9 @@ cmd_push() {
         open_url "https://github.com/${owner_repo}/compare/${DEFAULT_BRANCH}...${current}?expand=1"
       fi
     else
-      gh pr create || true
+      if ! gh pr create; then
+        die "Failed to create pull request."
+      fi
     fi
   else
     local behind
@@ -780,8 +798,11 @@ cmd_finish() {
 
   local source_repo pr_data
   source_repo="$(parse_repo_spec "$(git remote get-url "$SOURCE_REMOTE")")"
-  pr_data="$(gh api "repos/${source_repo}/pulls/${pr_number}" \
-    --jq '[.state, (.merged | tostring), .head.ref, .head.repo.full_name] | @tsv')"
+  if ! pr_data="$(gh api "repos/${source_repo}/pulls/${pr_number}" \
+    --jq '[.state, (.merged | tostring), .head.ref, .head.repo.full_name] | @tsv' 2>&1)"; then
+    printf '%s\n' "$pr_data" >&2
+    die "Failed to fetch PR #${pr_number} details."
+  fi
 
   local pr_state pr_merged pr_branch pr_head_repo
   IFS=$'\t' read -r pr_state pr_merged pr_branch pr_head_repo <<<"$pr_data"
@@ -889,7 +910,7 @@ _cleanup_utpr_remote() {
       continue
     fi
 
-    tracking_branches="$(git for-each-ref --format='%(upstream:short)' refs/heads/ | grep "^${remote}/" || true)"
+    tracking_branches="$(git for-each-ref --format='%(upstream:short)' refs/heads/ | awk -v p="${remote}/" 'index($0, p) == 1' || true)"
 
     if [[ -z "$tracking_branches" ]]; then
       gum_info "Removing unused remote '${remote}'."
