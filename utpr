@@ -150,7 +150,7 @@ is_on_default_branch() {
 
 has_uncommitted_changes() {
   local status
-  status="$(git status --porcelain 2>/dev/null)"
+  status="$(git status --porcelain --untracked-files=no 2>/dev/null)"
   [[ -n "$status" ]]
 }
 
@@ -220,8 +220,8 @@ challenge_uncommitted_changes() {
     return 0
   fi
 
-  gum_warn "You have uncommitted changes."
-  if ! gum confirm "You have uncommitted changes. Continue?" --default=false; then
+  gum_warn "There are uncommited changes, which may cause problems or be lost when we push, pull, switch or compare branches."
+  if ! gum confirm "Do you want to proceed anyway?" --default=false; then
     exit 1
   fi
 }
