@@ -1230,14 +1230,16 @@ cmd_push() {
         open_url "https://github.com/${owner_repo}/compare/${DEFAULT_BRANCH}...${current}?expand=1"
       fi
     else
-      local pr_url exit_code=0
-      pr_url="$(gh pr create)" || exit_code=$?
+      local exit_code=0
+      gh pr create || exit_code=$?
       if [[ "$exit_code" -eq 130 ]]; then
         gum_info "Cancelled."
         return 0
       elif [[ "$exit_code" -ne 0 ]]; then
         die "Failed to create pull request."
       fi
+      local pr_url
+      pr_url="$(gh pr view --json url --jq .url)"
       git config "branch.${current}.pr-url" "$pr_url"
       gum_success "PR created: ${pr_url}"
     fi
