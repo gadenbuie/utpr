@@ -154,6 +154,50 @@ has_uncommitted_changes() {
   [[ -n "$status" ]]
 }
 
+ensure_git_repo() {
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    die "Not inside a git repository (or worktree). Run utpr from a repository checkout."
+  fi
+}
+
+get_branch_worktree_path() {
+  local branch="$1"
+  git worktree list --porcelain 2>/dev/null | awk -v ref="refs/heads/${branch}" '
+    $1 == "worktree" { wt = $2 }
+    $1 == "branch" && $2 == ref { print wt; exit }
+  ' || true
+}
+
+switch_to_branch() {
+  local branch="$1"
+  local output path
+  if ! output="$(git switch "$branch" 2>&1)"; then
+    path="$(get_branch_worktree_path "$branch")"
+    if [[ -n "$path" ]]; then
+      die "Branch '${branch}' is checked out in another worktree: ${path}"
+    fi
+    if [[ -n "$output" ]]; then
+      printf '%s\n' "$output" >&2
+    fi
+    die "Failed to switch to branch '${branch}'."
+  fi
+}
+
+delete_local_branch() {
+  local branch="$1"
+  local output path
+  if ! output="$(git branch -D -- "$branch" 2>&1)"; then
+    path="$(get_branch_worktree_path "$branch")"
+    if [[ -n "$path" ]]; then
+      die "Cannot delete '${branch}' because it is checked out in another worktree: ${path}"
+    fi
+    if [[ -n "$output" ]]; then
+      printf '%s\n' "$output" >&2
+    fi
+    die "Failed to delete local branch '${branch}'."
+  fi
+}
+
 has_unpushed_commits() {
   local tracking
   tracking="$(get_tracking_branch)"
@@ -488,7 +532,7 @@ cmd_init() {
     gum_warn "You're on '${current}', not '${DEFAULT_BRANCH}'."
     if ! gum confirm "Create branch from '${current}' instead of '${DEFAULT_BRANCH}'?" --default=false; then
       challenge_uncommitted_changes
-      git switch "$DEFAULT_BRANCH"
+      switch_to_branch "$DEFAULT_BRANCH"
     fi
   fi
 
@@ -516,7 +560,7 @@ cmd_pause() {
 
   local current
   current="$(get_current_branch)"
-  git switch "$DEFAULT_BRANCH"
+  switch_to_branch "$DEFAULT_BRANCH"
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
   gum_success "Paused '${current}'. Switched to ${DEFAULT_BRANCH}."
 }
@@ -547,7 +591,7 @@ cmd_resume() {
   fi
 
   challenge_uncommitted_changes
-  git switch "$branch"
+  switch_to_branch "$branch"
 
   local tracking
   tracking="$(get_tracking_branch)"
@@ -625,7 +669,7 @@ cmd_fetch() {
     git fetch "$remote_name" "$head_ref"
 
   if git show-ref --verify --quiet "refs/heads/${local_branch}"; then
-    git switch "$local_branch"
+    switch_to_branch "$local_branch"
     if ! git merge FETCH_HEAD; then
       gum_warn "Merge had conflicts. Resolve them before continuing."
     fi
@@ -754,9 +798,9 @@ cmd_forget() {
     exit 0
   fi
 
-  git switch "$DEFAULT_BRANCH"
+  switch_to_branch "$DEFAULT_BRANCH"
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
-  git branch -D -- "$current"
+  delete_local_branch "$current"
   gum_success "Deleted local branch '${current}'."
 
   _cleanup_utpr_remote
@@ -820,7 +864,7 @@ cmd_finish() {
   fi
 
   if ! is_on_default_branch; then
-    git switch "$DEFAULT_BRANCH"
+    switch_to_branch "$DEFAULT_BRANCH"
   fi
 
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
@@ -833,7 +877,7 @@ cmd_finish() {
   fi
 
   if [[ -n "$local_branch" ]]; then
-    git branch -D -- "$local_branch"
+    delete_local_branch "$local_branch"
     gum_success "Deleted local branch '${local_branch}'."
   else
     gum_info "No local branch found for PR #${pr_number}."
@@ -951,6 +995,7 @@ main() {
     fi
   done
 
+  ensure_git_repo
   check_dependencies
 
   case "${cmd}" in
