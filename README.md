@@ -35,7 +35,23 @@ For more background on the workflow that inspired utpr, see
 [Pull Request Flow with usethis][blog-pr-flow] and the
 [usethis pull request helpers documentation][usethis-pr].
 
-## Prerequisites
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/install.sh | bash
+```
+
+This installs utpr and all prerequisites to `~/.local/bin`. Supported
+platforms: **macOS** (via Homebrew), **Linux** (Debian/Ubuntu and
+Fedora/RHEL), and **WSL**.
+
+After installation, authenticate the GitHub CLI if you haven't already:
+
+```bash
+gh auth login
+```
+
+### Manual installation
 
 utpr requires the following tools:
 
@@ -46,23 +62,7 @@ utpr requires the following tools:
 | [jq](https://jqlang.github.io/jq/) | JSON processing |
 | [gum](https://github.com/charmbracelet/gum) | Interactive terminal UI |
 
-## Installation
-
-### macOS (Homebrew)
-
-Install prerequisites:
-
-```bash
-brew install git gh jq gum
-```
-
-Authenticate the GitHub CLI (if you haven't already):
-
-```bash
-gh auth login
-```
-
-Install utpr:
+Once prerequisites are installed, download utpr:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -70,116 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr -o ~/.loca
 chmod +x ~/.local/bin/utpr
 ```
 
-Make sure `~/.local/bin` is in your `PATH`. Add this to your
-`~/.zshrc` (or `~/.bashrc`):
+Make sure `~/.local/bin` is in your `PATH` (add to `~/.zshrc` or `~/.bashrc`):
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then reload your shell:
-
-```bash
-source ~/.zshrc
-```
-
-### Linux (Debian/Ubuntu)
-
-Install prerequisites:
-
-```bash
-sudo apt-get install git jq
-```
-
-Install `gh` ([instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)):
-
-```bash
-sudo mkdir -p -m 755 /etc/apt/keyrings
-wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
-sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-sudo apt-get update
-sudo apt-get install gh
-```
-
-Install `gum` ([instructions](https://github.com/charmbracelet/gum#installation)):
-
-```bash
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
-echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
-sudo apt-get update
-sudo apt-get install gum
-```
-
-Authenticate and install utpr:
-
-```bash
-gh auth login
-
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr -o ~/.local/bin/utpr
-chmod +x ~/.local/bin/utpr
-```
-
-Make sure `~/.local/bin` is in your `PATH`. Add this to your
-`~/.bashrc`:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-### Linux (Fedora/RHEL)
-
-Install prerequisites:
-
-```bash
-sudo dnf install git gh jq
-```
-
-Install `gum` ([instructions](https://github.com/charmbracelet/gum#installation)):
-
-```bash
-echo '[charm]
-name=Charm
-baseurl=https://repo.charm.sh/yum/
-enabled=1
-gpgcheck=1
-gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo
-sudo dnf install gum
-```
-
-Authenticate and install utpr:
-
-```bash
-gh auth login
-
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr -o ~/.local/bin/utpr
-chmod +x ~/.local/bin/utpr
-```
-
-### Windows (WSL)
-
-utpr requires a Unix shell and is supported on Windows through
-[WSL (Windows Subsystem for Linux)](https://learn.microsoft.com/en-us/windows/wsl/install).
-All commands below should be run inside your WSL terminal.
-
-Install WSL if you haven't already (from PowerShell as Administrator):
-
-```powershell
-wsl --install
-```
-
-Then open your WSL terminal and install prerequisites. For Ubuntu
-(the default WSL distribution), follow the
-[Linux (Debian/Ubuntu)](#linux-debianubuntu) instructions above.
-
-Optionally, install [wslu](https://wslutilities.github.io/wslu/) for
-`utpr view` to open PRs in your Windows browser:
-
-```bash
-sudo apt-get install wslu
 ```
 
 ## Usage
