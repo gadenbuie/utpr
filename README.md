@@ -26,6 +26,10 @@ experience for the full pull request round-trip:
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
 - **Clean up** with `utpr finish` after a merge, or `utpr forget`
   to abandon work.
+- **Isolate AI coding agents** with `--worktree` on `utpr init` and
+  `utpr fetch`: each agent gets its own Git worktree, pre-wired with
+  your project's shared config, and `utpr finish` tears it down cleanly
+  when the PR is merged.
 
 utpr automatically detects whether you own the repo or are working from
 a fork, and configures remotes accordingly. It tracks which branches and
@@ -84,10 +88,10 @@ utpr <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `utpr init <branch>` | Create a new PR branch |
+| `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree |
 | `utpr pause` | Switch back to the default branch |
 | `utpr resume [<branch>]` | Resume work on a PR branch |
-| `utpr fetch [<pr>]` | Fetch a PR from GitHub |
+| `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree |
 | `utpr push [--edit=...]` | Push branch and create/update PR |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
@@ -140,6 +144,40 @@ utpr view
 utpr finish
 ```
 
+### Working with worktrees
+
+The `--worktree` flag on `utpr init` and `utpr fetch` creates a
+[Git worktree][git-worktree] instead of checking out the branch in
+your main repo. Each worktree is a fully independent working directory,
+so you can have multiple branches active simultaneously without
+disturbing your main checkout.
+
+This is especially useful for **AI coding agents**: give each agent
+its own isolated workspace, pre-configured with your project's shared
+settings.
+
+```bash
+# Start a new branch in its own worktree
+utpr init feat/add-auth --worktree
+
+# Fetch a contributor's PR into a worktree for parallel review
+utpr fetch 42 --worktree
+```
+
+Worktrees are created at `<parent>/<repo>.worktrees/<branch>/`.
+utpr automatically:
+
+- Symlinks shared directories (`.claude`, `_dev`) into each worktree
+- Runs project setup when detected (`npm install`, `uv sync`, `make setup`)
+- Opens the worktree in your current editor
+
+`utpr finish` and `utpr forget` clean up worktrees automatically.
+`utpr resume` detects when a branch has a worktree and offers to
+navigate there instead of switching in the main repo.
+
+The symlinked directories are controlled by the `UTPR_SYMLINK_DIRS`
+environment variable (default: `_dev,.claude`).
+
 ## Acknowledgments
 
 utpr is a standalone reimplementation of the
@@ -158,6 +196,7 @@ Aden-Buie][garrick].
 
 MIT
 
+[git-worktree]: https://git-scm.com/docs/git-worktree
 [usethis]: https://usethis.r-lib.org
 [usethis-pr]: https://usethis.r-lib.org/articles/pr-functions.html
 [blog-pr-flow]: https://www.garrickadenbuie.com/blog/pull-request-flow-usethis/
