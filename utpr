@@ -284,6 +284,214 @@ challenge_branch_behind_remote() {
 }
 
 # ---------------------------------------------------------------------------
+# Worktree utilities
+# ---------------------------------------------------------------------------
+get_worktree_dir() {
+  local branch="$1"
+  local repo_root repo_name parent_dir
+  repo_root="$(git rev-parse --show-toplevel)"
+  repo_name="$(basename "$repo_root")"
+  parent_dir="$(dirname "$repo_root")"
+  printf '%s\n' "${parent_dir}/${repo_name}.worktrees/${branch}"
+}
+
+is_in_worktree() {
+  local git_dir git_common_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null)"
+  git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+  [[ "$git_dir" != "$git_common_dir" ]]
+}
+
+get_main_repo_root() {
+  local git_common_dir
+  git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+  # git-common-dir returns path to .git; parent is the repo root
+  printf '%s\n' "$(cd "$git_common_dir/.." && pwd)"
+}
+
+auto_detect_editor() {
+  # Check for Positron first, since it is based on VS Code
+  if [[ "${POSITRON:-}" == "1" ]]; then
+    printf 'positron\n'; return
+  fi
+
+  # Check for Cursor (VS Code fork)
+  if [[ -n "${CURSOR_TRACE_ID:-}" || -n "${CURSOR_SESSION_ID:-}" ]]; then
+    printf 'cursor\n'; return
+  fi
+
+  # Check for Windsurf (Codeium's VS Code fork)
+  if [[ -n "${WINDSURF:-}" || -n "${CODEIUM_WIND_SURF:-}" ]]; then
+    printf 'windsurf\n'; return
+  fi
+
+  # Check for Zed
+  if [[ -n "${ZED_SESSION:-}" || "${TERM_PROGRAM:-}" == "zed" ]]; then
+    printf 'zed\n'; return
+  fi
+
+  # Check TERM_PROGRAM (set by many terminal-integrated editors)
+  case "${TERM_PROGRAM:-}" in
+    vscode)
+      if [[ "${VSCODE_GIT_IPC_HANDLE:-}" == *"Code - Insiders"* ]]; then
+        printf 'code-insiders\n'
+      else
+        printf 'code\n'
+      fi
+      return
+      ;;
+  esac
+
+  # Fallback: check for VS Code via other env vars
+  if [[ -n "${VSCODE_GIT_IPC_HANDLE:-}" || -n "${VSCODE_PID:-}" ]]; then
+    if [[ "${VSCODE_GIT_IPC_HANDLE:-}" == *"Code - Insiders"* ]]; then
+      printf 'code-insiders\n'
+    else
+      printf 'code\n'
+    fi
+    return
+  fi
+
+  # No editor detected
+  printf '\n'
+}
+
+symlink_worktree_dirs() {
+  local repo_root="$1" worktree_dir="$2"
+  local available=()
+
+  for item in _dev .claude; do
+    [[ -d "${repo_root}/${item}" ]] && available+=("$item")
+  done
+
+  if [[ ${#available[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  local selected
+  selected="$(printf '%s\n' "${available[@]}" | gum choose --no-limit --header "Symlink into worktree:" --selected "$(IFS=,; printf '%s' "${available[*]}")")" || true
+
+  if [[ -z "$selected" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r item; do
+    [[ -z "$item" ]] && continue
+    if [[ "$item" == ".claude" ]]; then
+      if [[ ! -d "${worktree_dir}/.claude" ]]; then
+        # .claude not tracked in git — symlink the entire folder
+        ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"
+        gum_success "Symlinked .claude"
+      else
+        # .claude tracked in git — only symlink settings.local.json
+        if [[ -f "${repo_root}/.claude/settings.local.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.local.json" ]]; then
+          ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"
+          gum_success "Symlinked .claude/settings.local.json"
+        fi
+      fi
+    else
+      if [[ ! -e "${worktree_dir}/${item}" ]]; then
+        ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"
+        gum_success "Symlinked ${item}"
+      fi
+    fi
+  done <<<"$selected"
+}
+
+run_worktree_setup() {
+  local worktree_dir="$1"
+
+  if [[ -f "${worktree_dir}/package.json" ]] && command -v npm &>/dev/null; then
+    if ! gum spin --title "Running npm install..." --show-error -- npm install --prefix "$worktree_dir" 2>&1; then
+      gum_warn "npm install failed (non-fatal)."
+    fi
+  fi
+
+  if [[ -f "${worktree_dir}/pyproject.toml" ]] && command -v uv &>/dev/null; then
+    if ! gum spin --title "Running uv sync..." --show-error -- uv sync --all-groups --directory "$worktree_dir" 2>&1; then
+      gum_warn "uv sync failed (non-fatal)."
+    fi
+  fi
+
+  if [[ -f "${worktree_dir}/Makefile" ]] && grep -q '^setup:' "${worktree_dir}/Makefile"; then
+    if ! gum spin --title "Running make setup..." --show-error -- make -C "$worktree_dir" setup 2>&1; then
+      gum_warn "make setup failed (non-fatal)."
+    fi
+  fi
+}
+
+remove_worktree() {
+  local branch="$1"
+  local wt_path
+  wt_path="$(get_branch_worktree_path "$branch")"
+
+  if [[ -z "$wt_path" ]]; then
+    return 0
+  fi
+
+  gum_info "Branch '${branch}' has a worktree at: ${wt_path}"
+  if ! gum confirm "Remove worktree?"; then
+    return 0
+  fi
+
+  if ! git worktree remove "$wt_path" 2>/dev/null; then
+    gum_warn "Worktree has uncommitted changes."
+    if gum confirm "Force remove worktree?" --default=false; then
+      git worktree remove --force "$wt_path"
+    else
+      die "Cannot proceed without removing the worktree."
+    fi
+  fi
+
+  git config --unset "branch.${branch}.worktree-path" 2>/dev/null || true
+  gum_success "Removed worktree for '${branch}'."
+}
+
+offer_worktree_navigation() {
+  local target_path="$1"
+  local editor
+  editor="$(auto_detect_editor)"
+
+  local choice
+  if [[ -n "$editor" ]]; then
+    choice="$(gum choose --header "Worktree: ${target_path}" \
+      "Open in ${editor}" "Show path" "Do nothing")" || true
+  else
+    choice="$(gum choose --header "Worktree: ${target_path}" \
+      "Show path" "Open in editor..." "Do nothing")" || true
+  fi
+
+  case "$choice" in
+    "Open in editor..."*)
+      local editors=()
+      local cmd
+      for cmd in code code-insiders cursor positron windsurf zed; do
+        command -v "$cmd" &>/dev/null && editors+=("$cmd")
+      done
+      editors+=("Custom...")
+
+      local editor_choice
+      editor_choice="$(printf '%s\n' "${editors[@]}" | gum choose --header "Select editor:")" || true
+      if [[ "$editor_choice" == "Custom..." ]]; then
+        editor_choice="$(gum input --placeholder "editor command")" || true
+      fi
+      if [[ -n "$editor_choice" ]]; then
+        "$editor_choice" "$target_path"
+        gum_success "Opened in ${editor_choice}."
+      fi
+      ;;
+    "Open in "*)
+      local cmd="${choice#Open in }"
+      "$cmd" "$target_path"
+      gum_success "Opened in ${cmd}."
+      ;;
+    "Show path")
+      gum_info "cd \"${target_path}\""
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Remote config detection
 # ---------------------------------------------------------------------------
 REMOTE_CONFIG=""
@@ -454,7 +662,7 @@ show_help() {
 
   gum style --bold "Commands:" >&2
   gum style \
-    "  $(gum style --foreground 4 "init")        Create a new PR branch" \
+    "  $(gum style --foreground 4 "init")        Create a new PR branch (--worktree)" \
     "  $(gum style --foreground 4 "pause")       Switch back to default branch" \
     "  $(gum style --foreground 4 "resume")      Resume work on a PR branch" \
     "  $(gum style --foreground 4 "fetch")       Fetch a PR from GitHub" \
@@ -474,12 +682,15 @@ show_command_help() {
 
   case "${cmd}" in
     init)
-      gum style --bold "utpr init <branch>" >&2
+      gum style --bold "utpr init [--worktree] <branch>" >&2
       echo >&2
       gum style "Create a new PR branch from the default branch." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <branch>  Name of the new branch to create" >&2
+      echo >&2
+      gum style --bold "Options:" >&2
+      gum style "  --worktree  Create branch in a new git worktree" >&2
       ;;
     pause)
       gum style --bold "utpr pause" >&2
@@ -495,12 +706,15 @@ show_command_help() {
       gum style "  <branch>  Branch to resume (interactive selection if omitted)" >&2
       ;;
     fetch)
-      gum style --bold "utpr fetch [<pr>]" >&2
+      gum style --bold "utpr fetch [--worktree] [<pr>]" >&2
       echo >&2
       gum style "Fetch a PR from GitHub and check it out locally." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <pr>  PR number to fetch (interactive selection if omitted)" >&2
+      echo >&2
+      gum style --bold "Options:" >&2
+      gum style "  --worktree  Check out the PR in a new git worktree" >&2
       ;;
     push)
       gum style --bold "utpr push [--edit=browser|terminal]" >&2
@@ -528,11 +742,13 @@ show_command_help() {
       gum style --bold "utpr forget" >&2
       echo >&2
       gum style "Abandon the current local PR branch and return to the default branch." >&2
+      gum style "Automatically removes any associated worktree." >&2
       ;;
     finish)
       gum style --bold "utpr finish [<pr>]" >&2
       echo >&2
       gum style "Clean up a local branch after its PR has been merged." >&2
+      gum style "Automatically removes any associated worktree." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <pr>  PR number to finish (defaults to current branch's PR)" >&2
@@ -557,16 +773,39 @@ show_command_help() {
 # Command functions
 # ---------------------------------------------------------------------------
 cmd_init() {
-  if [[ $# -eq 0 ]]; then
+  local branch="" use_worktree=false
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --worktree) use_worktree=true ;;
+      *) branch="$arg" ;;
+    esac
+  done
+
+  if [[ -z "$branch" ]]; then
     show_command_help init
     die "Branch name required."
   fi
 
-  local branch="$1"
   validate_branch_name "$branch"
   detect_remote_config
 
   if git show-ref --verify --quiet "refs/heads/${branch}"; then
+    local wt_path
+    wt_path="$(get_branch_worktree_path "$branch")"
+
+    if [[ -n "$wt_path" ]]; then
+      gum_info "Branch '${branch}' already has a worktree."
+      offer_worktree_navigation "$wt_path"
+      return
+    fi
+
+    if [[ "$use_worktree" == true ]]; then
+      gum_info "Creating worktree for existing branch '${branch}'."
+      _init_worktree "$branch"
+      return
+    fi
+
     gum_info "Branch '${branch}' already exists locally. Resuming."
     cmd_resume "$branch"
     return
@@ -590,24 +829,72 @@ cmd_init() {
       git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
   fi
 
-  git switch -c "$branch"
-  git config "branch.${branch}.created-by" "$UTPR_CREATED_BY"
+  if [[ "$use_worktree" == true ]]; then
+    git branch "$branch"
+    git config "branch.${branch}.created-by" "$UTPR_CREATED_BY"
+    gum_success "Created branch '${branch}'."
+    _init_worktree "$branch"
+  else
+    git switch -c "$branch"
+    git config "branch.${branch}.created-by" "$UTPR_CREATED_BY"
+    gum_success "Created branch '${branch}'."
+  fi
+}
 
-  gum_success "Created branch '${branch}'."
+_init_worktree() {
+  local branch="$1"
+  local repo_root wt_dir
+  repo_root="$(git rev-parse --show-toplevel)"
+  wt_dir="$(get_worktree_dir "$branch")"
+
+  mkdir -p "$(dirname "$wt_dir")"
+  git worktree add "$wt_dir" "$branch" 2>/dev/null || {
+    die "Failed to create worktree at ${wt_dir}."
+  }
+  git config "branch.${branch}.worktree-path" "$wt_dir"
+  gum_success "Created worktree at ${wt_dir}"
+
+  symlink_worktree_dirs "$repo_root" "$wt_dir"
+  run_worktree_setup "$wt_dir"
+
+  local editor
+  editor="$(auto_detect_editor)"
+  if [[ -n "$editor" ]]; then
+    "$editor" "$wt_dir"
+    gum_success "Opened in ${editor}."
+  fi
+
+  gum_info "cd \"${wt_dir}\""
 }
 
 cmd_pause() {
   detect_remote_config
+
+  if is_in_worktree; then
+    local main_root
+    main_root="$(get_main_repo_root)"
+    gum_info "You're in a worktree. Main repo is at:"
+    gum_info "cd \"${main_root}\""
+    return
+  fi
+
   if is_on_default_branch; then
     die "Already on the default branch (${DEFAULT_BRANCH}). Nothing to pause."
+  fi
+
+  local current wt_path
+  current="$(get_current_branch)"
+  wt_path="$(get_branch_worktree_path "$current")"
+  if [[ -n "$wt_path" ]]; then
+    gum_info "Branch '${current}' has a worktree at: ${wt_path}"
+    gum_info "Navigate there to continue working, or use 'utpr forget' to clean up."
+    return
   fi
 
   challenge_uncommitted_changes
   challenge_unpushed_commits
   challenge_branch_behind_remote
 
-  local current
-  current="$(get_current_branch)"
   switch_to_branch "$DEFAULT_BRANCH"
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
   gum_success "Paused '${current}'. Switched to ${DEFAULT_BRANCH}."
@@ -638,6 +925,13 @@ cmd_resume() {
     die "Branch '${branch}' does not exist locally."
   fi
 
+  local wt_path
+  wt_path="$(get_branch_worktree_path "$branch")"
+  if [[ -n "$wt_path" ]]; then
+    offer_worktree_navigation "$wt_path"
+    return
+  fi
+
   challenge_uncommitted_changes
   switch_to_branch "$branch"
 
@@ -658,6 +952,17 @@ cmd_resume() {
 
 cmd_fetch() {
   detect_remote_config
+
+  local use_worktree=false
+  local args=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --worktree) use_worktree=true ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+  set -- "${args[@]+"${args[@]}"}"
 
   local pr_number=""
   if [[ $# -gt 0 ]]; then
@@ -730,6 +1035,11 @@ cmd_fetch() {
   git config "branch.${local_branch}.pr-url" "$pr_url"
 
   gum_success "Fetched PR #${pr_number} → '${local_branch}'."
+
+  if [[ "$use_worktree" == true ]]; then
+    switch_to_branch "$DEFAULT_BRANCH"
+    _init_worktree "$local_branch"
+  fi
 }
 
 cmd_push() {
@@ -839,6 +1149,10 @@ cmd_merge_main() {
 }
 
 cmd_forget() {
+  if is_in_worktree; then
+    die "Navigate to the main repo first. Run: cd \"$(get_main_repo_root)\""
+  fi
+
   detect_remote_config
 
   if is_on_default_branch; then
@@ -858,6 +1172,7 @@ cmd_forget() {
 
   switch_to_branch "$DEFAULT_BRANCH"
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+  remove_worktree "$current"
   delete_local_branch "$current"
   gum_success "Deleted local branch '${current}'."
 
@@ -865,6 +1180,10 @@ cmd_forget() {
 }
 
 cmd_finish() {
+  if is_in_worktree; then
+    die "Navigate to the main repo first. Run: cd \"$(get_main_repo_root)\""
+  fi
+
   detect_remote_config
 
   local pr_number=""
@@ -936,6 +1255,7 @@ cmd_finish() {
   fi
 
   if [[ -n "$local_branch" ]]; then
+    remove_worktree "$local_branch"
     challenge_local_branch_delete "$local_branch"
     delete_local_branch "$local_branch"
     gum_success "Deleted local branch '${local_branch}'."
