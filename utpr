@@ -163,8 +163,8 @@ ensure_git_repo() {
 get_branch_worktree_path() {
   local branch="$1"
   git worktree list --porcelain 2>/dev/null | awk -v ref="refs/heads/${branch}" '
-    $1 == "worktree" { wt = $2 }
-    $1 == "branch" && $2 == ref { print wt; exit }
+    $1 == "worktree" { count++; if (count > 1) wt = $2 }
+    $1 == "branch" && $2 == ref && count > 1 { print wt; exit }
   ' || true
 }
 
