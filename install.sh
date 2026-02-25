@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-UTPR_URL="https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr"
+UTPR_VERSION="${UTPR_VERSION:-main}"
+UTPR_URL="https://raw.githubusercontent.com/gadenbuie/utpr/${UTPR_VERSION}/utpr"
 INSTALL_DIR="${UTPR_INSTALL_DIR:-$HOME/.local/bin}"
 
 # --- Platform detection ---
@@ -45,7 +46,7 @@ _bootstrap_gum() {
         echo "==> Adding Charm apt repository..."
         sudo mkdir -p /etc/apt/keyrings
         curl -fsSL https://repo.charm.sh/apt/gpg.key \
-          | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+          | sudo gpg --yes --dearmor -o /etc/apt/keyrings/charm.gpg
         echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
           | sudo tee /etc/apt/sources.list.d/charm.list > /dev/null
         sudo apt-get update -qq
@@ -110,7 +111,7 @@ _install_deps_apt() {
   if ! command -v gh &>/dev/null; then
     _info "Adding GitHub CLI apt repository..."
     sudo mkdir -p -m 755 /etc/apt/keyrings
-    wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
     sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -154,9 +155,14 @@ esac
 
 # --- Install utpr ---
 _info "Installing utpr to $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
-gum spin --title "Downloading utpr..." -- \
-  curl -fsSL "$UTPR_URL" -o "$INSTALL_DIR/utpr"
+mkdir -p "$INSTALL_DIR" || _error "Cannot create $INSTALL_DIR. Check permissions or set UTPR_INSTALL_DIR."
+gum spin --show-error --title "Downloading utpr..." -- \
+  curl -fsSL "$UTPR_URL" -o "$INSTALL_DIR/utpr" \
+  || _error "Failed to download utpr from $UTPR_URL"
+if ! head -1 "$INSTALL_DIR/utpr" | grep -q '^#!/usr/bin/env bash'; then
+  rm -f "$INSTALL_DIR/utpr"
+  _error "Downloaded file doesn't appear to be a valid utpr script. Aborting."
+fi
 chmod +x "$INSTALL_DIR/utpr"
 _info "Installed: $INSTALL_DIR/utpr"
 
@@ -173,7 +179,7 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   gum style --border rounded --padding "0 1" --border-foreground 3 \
     "Add this line to $shell_rc, then open a new terminal:" \
     "" \
-    "$(gum style --foreground 6 "  export PATH=\"\$HOME/.local/bin:\$PATH\"")"
+    "$(gum style --foreground 6 "  export PATH=\"$INSTALL_DIR:\$PATH\"")"
   echo ""
 fi
 
