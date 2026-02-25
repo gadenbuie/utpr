@@ -1263,7 +1263,45 @@ cmd_forget() {
   detect_remote_config
 
   if is_on_default_branch; then
-    die "Already on the default branch. Nothing to forget."
+    local branches
+    branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -Fxv "$DEFAULT_BRANCH" || true)"
+
+    if [[ -z "$branches" ]]; then
+      die "No branches to forget."
+    fi
+
+    local branch_display_list="" wt_path branch
+    while IFS= read -r branch; do
+      wt_path="$(get_branch_worktree_path "$branch")"
+      if [[ -n "$wt_path" ]]; then
+        branch_display_list="${branch_display_list}${branch}  [worktree]"$'\n'
+      else
+        branch_display_list="${branch_display_list}${branch}"$'\n'
+      fi
+    done <<< "$branches"
+    branch_display_list="${branch_display_list%?}"
+
+    local branch_choice
+    branch_choice="$(printf '%s\n' "$branch_display_list" | gum choose --header "Select a branch to forget:")" || true
+    if [[ -z "$branch_choice" ]]; then
+      gum_info "Cancelled."
+      exit 0
+    fi
+
+    local selected
+    selected="${branch_choice%  \[worktree\]}"
+
+    challenge_local_branch_delete "$selected"
+    if ! gum confirm "Delete branch '${selected}'?"; then
+      gum_info "Cancelled."
+      exit 0
+    fi
+
+    remove_worktree "$selected"
+    delete_local_branch "$selected"
+    gum_success "Deleted local branch '${selected}'."
+    _cleanup_utpr_remote
+    return 0
   fi
 
   local current
