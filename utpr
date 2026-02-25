@@ -213,7 +213,6 @@ challenge_local_branch_delete() {
 delete_local_branch() {
   local branch="$1"
   local output path
-  challenge_local_branch_delete "$branch"
   if ! output="$(git branch -D -- "$branch" 2>&1)"; then
     path="$(get_branch_worktree_path "$branch")"
     if [[ -n "$path" ]]; then
@@ -604,6 +603,7 @@ cmd_pause() {
   fi
 
   challenge_uncommitted_changes
+  challenge_unpushed_commits
   challenge_branch_behind_remote
 
   local current
@@ -841,6 +841,7 @@ cmd_forget() {
   current="$(get_current_branch)"
 
   challenge_uncommitted_changes
+  challenge_local_branch_delete "$current"
 
   if ! gum confirm "Abandon branch '${current}' and switch to ${DEFAULT_BRANCH}?"; then
     gum_info "Cancelled."
@@ -927,6 +928,7 @@ cmd_finish() {
   fi
 
   if [[ -n "$local_branch" ]]; then
+    challenge_local_branch_delete "$local_branch"
     delete_local_branch "$local_branch"
     gum_success "Deleted local branch '${local_branch}'."
   else
