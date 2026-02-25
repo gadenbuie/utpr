@@ -180,6 +180,63 @@ navigate there instead of switching in the main repo.
 The symlinked directories are controlled by the `UTPR_SYMLINK_DIRS`
 environment variable (default: `_dev,.claude`).
 
+## Configuration
+
+utpr can be configured with the following environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UTPR_EDITOR` | auto-detected | Editor command used to open worktrees (e.g. `code`, `cursor`, `zed`) |
+| `UTPR_SYMLINK_DIRS` | `_dev,.claude` | Comma-separated list of directories to symlink into new worktrees |
+
+Set these in your shell profile (e.g. `~/.zshrc`):
+
+```bash
+export UTPR_EDITOR="cursor"
+export UTPR_SYMLINK_DIRS="_dev,.claude,secrets"
+```
+
+## Troubleshooting
+
+### `utpr: command not found` after installation
+
+The installer places `utpr` in `~/.local/bin`. Make sure that directory is
+in your `PATH`:
+
+```bash
+echo $PATH | tr ':' '\n' | grep local
+```
+
+If `~/.local/bin` is missing, add it to your shell profile:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then reload your shell (`source ~/.zshrc`) or open a new terminal.
+
+### GitHub API errors or authentication failures
+
+utpr uses the `gh` CLI for all GitHub operations. If you see errors like
+"authentication required" or "HTTP 401", authenticate first:
+
+```bash
+gh auth login
+```
+
+To check your current auth status:
+
+```bash
+gh auth status
+```
+
+If you have multiple GitHub accounts, make sure the correct one is active:
+
+```bash
+gh auth switch
+```
+
 ## Acknowledgments
 
 utpr is a standalone reimplementation of the
