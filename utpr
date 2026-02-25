@@ -310,6 +310,11 @@ get_main_repo_root() {
 }
 
 auto_detect_editor() {
+  # Explicit override via env var
+  if [[ -n "${UTPR_EDITOR:-}" ]]; then
+    printf '%s\n' "$UTPR_EDITOR"; return
+  fi
+
   # Check for Positron first, since it is based on VS Code
   if [[ "${POSITRON:-}" == "1" ]]; then
     printf 'positron\n'; return
@@ -360,8 +365,13 @@ symlink_worktree_dirs() {
   local repo_root="$1" worktree_dir="$2"
   local available=()
 
-  for item in _dev .claude; do
-    [[ -d "${repo_root}/${item}" ]] && available+=("$item")
+  local symlink_dirs="${UTPR_SYMLINK_DIRS:-_dev,.claude}"
+  local item
+  IFS=',' read -ra _dirs <<<"$symlink_dirs"
+  for item in "${_dirs[@]}"; do
+    item="${item## }" # trim leading space
+    item="${item%% }" # trim trailing space
+    [[ -n "$item" ]] && [[ -d "${repo_root}/${item}" ]] && available+=("$item")
   done
 
   if [[ ${#available[@]} -eq 0 ]]; then
@@ -402,19 +412,19 @@ run_worktree_setup() {
   local worktree_dir="$1"
 
   if [[ -f "${worktree_dir}/package.json" ]] && command -v npm &>/dev/null; then
-    if ! gum spin --title "Running npm install..." --show-error -- npm install --prefix "$worktree_dir" 2>&1; then
+    if ! gum spin --title "Running npm install..." --show-error -- npm install --prefix "$worktree_dir" >&2; then
       gum_warn "npm install failed (non-fatal)."
     fi
   fi
 
   if [[ -f "${worktree_dir}/pyproject.toml" ]] && command -v uv &>/dev/null; then
-    if ! gum spin --title "Running uv sync..." --show-error -- uv sync --all-groups --directory "$worktree_dir" 2>&1; then
+    if ! gum spin --title "Running uv sync..." --show-error -- uv sync --all-groups --directory "$worktree_dir" >&2; then
       gum_warn "uv sync failed (non-fatal)."
     fi
   fi
 
   if [[ -f "${worktree_dir}/Makefile" ]] && grep -q '^setup:' "${worktree_dir}/Makefile"; then
-    if ! gum spin --title "Running make setup..." --show-error -- make -C "$worktree_dir" setup 2>&1; then
+    if ! gum spin --title "Running make setup..." --show-error -- make -C "$worktree_dir" setup >&2; then
       gum_warn "make setup failed (non-fatal)."
     fi
   fi
@@ -443,7 +453,6 @@ remove_worktree() {
     fi
   fi
 
-  git config --unset "branch.${branch}.worktree-path" 2>/dev/null || true
   gum_success "Removed worktree for '${branch}'."
 }
 
@@ -463,32 +472,37 @@ offer_worktree_navigation() {
 
   case "$choice" in
     "Open in editor..."*)
-      local editors=()
-      local cmd
-      for cmd in code code-insiders cursor positron windsurf zed; do
-        command -v "$cmd" &>/dev/null && editors+=("$cmd")
-      done
-      editors+=("Custom...")
-
-      local editor_choice
-      editor_choice="$(printf '%s\n' "${editors[@]}" | gum choose --header "Select editor:")" || true
-      if [[ "$editor_choice" == "Custom..." ]]; then
-        editor_choice="$(gum input --placeholder "editor command")" || true
-      fi
-      if [[ -n "$editor_choice" ]]; then
-        "$editor_choice" "$target_path"
-        gum_success "Opened in ${editor_choice}."
-      fi
+      _pick_and_open_editor "$target_path"
       ;;
     "Open in "*)
-      local cmd="${choice#Open in }"
-      "$cmd" "$target_path"
-      gum_success "Opened in ${cmd}."
+      # editor was detected — use the variable directly, not the display string
+      "$editor" "$target_path"
+      gum_success "Opened in ${editor}."
       ;;
     "Show path")
       gum_info "cd \"${target_path}\""
       ;;
   esac
+}
+
+_pick_and_open_editor() {
+  local target_path="$1"
+  local editors=()
+  local cmd
+  for cmd in code code-insiders cursor positron windsurf zed; do
+    command -v "$cmd" &>/dev/null && editors+=("$cmd")
+  done
+  editors+=("Custom...")
+
+  local editor_choice
+  editor_choice="$(printf '%s\n' "${editors[@]}" | gum choose --header "Select editor:")" || true
+  if [[ "$editor_choice" == "Custom..." ]]; then
+    editor_choice="$(gum input --placeholder "editor command")" || true
+  fi
+  if [[ -n "$editor_choice" ]]; then
+    "$editor_choice" "$target_path"
+    gum_success "Opened in ${editor_choice}."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -848,10 +862,13 @@ _init_worktree() {
   wt_dir="$(get_worktree_dir "$branch")"
 
   mkdir -p "$(dirname "$wt_dir")"
-  git worktree add "$wt_dir" "$branch" 2>/dev/null || {
+  local wt_output
+  if ! wt_output="$(git worktree add "$wt_dir" "$branch" 2>&1)"; then
+    if [[ -n "$wt_output" ]]; then
+      printf '%s\n' "$wt_output" >&2
+    fi
     die "Failed to create worktree at ${wt_dir}."
-  }
-  git config "branch.${branch}.worktree-path" "$wt_dir"
+  fi
   gum_success "Created worktree at ${wt_dir}"
 
   symlink_worktree_dirs "$repo_root" "$wt_dir"
@@ -1021,24 +1038,37 @@ cmd_fetch() {
   git_spin "Fetching '${head_ref}' from ${remote_name}..." \
     git fetch "$remote_name" "$head_ref"
 
-  if git show-ref --verify --quiet "refs/heads/${local_branch}"; then
-    switch_to_branch "$local_branch"
-    if ! git merge FETCH_HEAD; then
-      gum_warn "Merge had conflicts. Resolve them before continuing."
-    fi
-  else
-    git switch -c "$local_branch" FETCH_HEAD
-  fi
-
-  git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
-  git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
-  git config "branch.${local_branch}.pr-url" "$pr_url"
-
-  gum_success "Fetched PR #${pr_number} → '${local_branch}'."
-
   if [[ "$use_worktree" == true ]]; then
-    switch_to_branch "$DEFAULT_BRANCH"
+    if git show-ref --verify --quiet "refs/heads/${local_branch}"; then
+      # Existing branch — update it in place without checking out
+      git fetch . FETCH_HEAD:"${local_branch}" 2>/dev/null || {
+        gum_warn "Could not fast-forward '${local_branch}'. You may need to merge manually in the worktree."
+      }
+    else
+      git branch "$local_branch" FETCH_HEAD
+    fi
+
+    git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
+    git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
+    git config "branch.${local_branch}.pr-url" "$pr_url"
+
+    gum_success "Fetched PR #${pr_number} → '${local_branch}'."
     _init_worktree "$local_branch"
+  else
+    if git show-ref --verify --quiet "refs/heads/${local_branch}"; then
+      switch_to_branch "$local_branch"
+      if ! git merge FETCH_HEAD; then
+        gum_warn "Merge had conflicts. Resolve them before continuing."
+      fi
+    else
+      git switch -c "$local_branch" FETCH_HEAD
+    fi
+
+    git branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
+    git config "branch.${local_branch}.created-by" "$UTPR_CREATED_BY"
+    git config "branch.${local_branch}.pr-url" "$pr_url"
+
+    gum_success "Fetched PR #${pr_number} → '${local_branch}'."
   fi
 }
 
@@ -1170,9 +1200,9 @@ cmd_forget() {
     exit 0
   fi
 
+  remove_worktree "$current"
   switch_to_branch "$DEFAULT_BRANCH"
   git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
-  remove_worktree "$current"
   delete_local_branch "$current"
   gum_success "Deleted local branch '${current}'."
 
