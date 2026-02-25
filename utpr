@@ -1375,8 +1375,11 @@ cmd_finish() {
     local push_repo
     push_repo="$(parse_repo_spec "$(git remote get-url "$PUSH_REMOTE")")"
     if [[ "$pr_head_repo" == "$push_repo" ]]; then
-      if gh api --method DELETE "repos/${pr_head_repo}/git/refs/heads/${pr_branch}" 2>/dev/null; then
+      local delete_err
+      if delete_err="$(gh api --method DELETE "repos/${pr_head_repo}/git/refs/heads/${pr_branch}" 2>&1)"; then
         gum_success "Deleted remote branch '${pr_branch}'."
+      elif printf '%s\n' "$delete_err" | grep -q "Reference does not exist"; then
+        gum_info "Remote branch '${pr_branch}' already deleted."
       else
         gum_warn "Could not delete remote branch '${pr_branch}' (may require manual cleanup)."
       fi
