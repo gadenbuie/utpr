@@ -727,15 +727,16 @@ show_command_help() {
 
   case "${cmd}" in
     init)
-      gum style --bold "utpr init [--worktree] <branch>" >&2
+      gum style --bold "utpr init [--worktree] [--base <ref>] <branch>" >&2
       echo >&2
-      gum style "Create a new PR branch from the default branch." >&2
+      gum style "Create a new PR branch." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <branch>  Name of the new branch to create" >&2
       echo >&2
       gum style --bold "Options:" >&2
-      gum style "  --worktree  Create branch in a new git worktree" >&2
+      gum style "  --worktree     Create branch in a new git worktree" >&2
+      gum style "  --base <ref>   Base branch or ref to create from (default: current branch)" >&2
       ;;
     pause)
       gum style --bold "utpr pause" >&2
@@ -818,12 +819,17 @@ show_command_help() {
 # Command functions
 # ---------------------------------------------------------------------------
 cmd_init() {
-  local branch="" use_worktree=false
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --worktree) use_worktree=true ;;
-      *) branch="$arg" ;;
+  local branch="" use_worktree=false base_ref=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --worktree) use_worktree=true; shift ;;
+      --base)
+        if [[ -z "${2:-}" ]]; then
+          die "--base requires a branch or ref argument."
+        fi
+        base_ref="$2"; shift 2
+        ;;
+      *) branch="$1"; shift ;;
     esac
   done
 
@@ -856,33 +862,62 @@ cmd_init() {
     return
   fi
 
-  if ! is_on_default_branch; then
-    local current
-    current="$(get_current_branch)"
-    gum_warn "You're on '${current}', not '${DEFAULT_BRANCH}'."
-    if ! gum confirm "Create branch from '${current}' instead of '${DEFAULT_BRANCH}'?" --default=false; then
-      challenge_uncommitted_changes
-      switch_to_branch "$DEFAULT_BRANCH"
+  # Default base to current branch
+  if [[ -z "$base_ref" ]]; then
+    base_ref="$(get_current_branch)"
+  fi
+
+  # Fetch and update the base ref from upstream
+  if [[ "$base_ref" == */* ]]; then
+    # Remote-tracking ref (e.g. origin/main) — fetch from that remote
+    local fetch_remote="${base_ref%%/*}"
+    local fetch_branch="${base_ref#*/}"
+    git_spin "Fetching ${base_ref}..." \
+      git fetch "$fetch_remote" "$fetch_branch"
+  else
+    # Local branch — find its upstream and fetch
+    local base_upstream=""
+    base_upstream="$(git rev-parse --abbrev-ref "${base_ref}@{upstream}" 2>/dev/null)" || true
+
+    if [[ -n "$base_upstream" ]]; then
+      local fetch_remote="${base_upstream%%/*}"
+      local fetch_branch="${base_upstream#*/}"
+      git_spin "Fetching latest ${base_ref}..." \
+        git fetch "$fetch_remote" "$fetch_branch"
+
+      if [[ "$(get_current_branch)" == "$base_ref" ]]; then
+        # On the base branch — pull to update working tree
+        git_spin "Pulling ${base_ref}..." \
+          git pull "$fetch_remote" "$fetch_branch"
+      else
+        # Not on the base branch — fast-forward the local ref if possible
+        local local_sha remote_sha
+        local_sha="$(git rev-parse "$base_ref")"
+        remote_sha="$(git rev-parse "$base_upstream")"
+        if [[ "$local_sha" != "$remote_sha" ]]; then
+          local merge_base
+          merge_base="$(git merge-base "$base_ref" "$base_upstream")"
+          if [[ "$merge_base" == "$local_sha" ]]; then
+            git update-ref "refs/heads/$base_ref" "$remote_sha"
+            gum_success "Fast-forwarded '${base_ref}' to '${base_upstream}'."
+          else
+            gum_warn "'${base_ref}' has diverged from '${base_upstream}'."
+            gum_info "You may want to update '${base_ref}' manually before continuing."
+          fi
+        fi
+      fi
     fi
   fi
 
-  git_spin "Fetching latest ${DEFAULT_BRANCH}..." \
-    git fetch "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
-
-  if is_on_default_branch; then
-    git_spin "Pulling ${DEFAULT_BRANCH}..." \
-      git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
-  fi
-
   if [[ "$use_worktree" == true ]]; then
-    git branch "$branch"
+    git branch "$branch" "$base_ref"
     git config "branch.${branch}.created-by" "$UTPR_CREATED_BY"
-    gum_success "Created branch '${branch}'."
+    gum_success "Created branch '${branch}' from '${base_ref}'."
     _init_worktree "$branch"
   else
-    git switch -c "$branch"
+    git switch -c "$branch" "$base_ref"
     git config "branch.${branch}.created-by" "$UTPR_CREATED_BY"
-    gum_success "Created branch '${branch}'."
+    gum_success "Created branch '${branch}' from '${base_ref}'."
   fi
 }
 
