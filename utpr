@@ -265,6 +265,25 @@ challenge_unpushed_commits() {
   fi
 }
 
+challenge_branch_behind_remote() {
+  local tracking
+  tracking="$(get_tracking_branch)"
+  if [[ -z "$tracking" ]]; then
+    return 0
+  fi
+
+  local behind
+  behind="$(git rev-list --count "HEAD..@{u}" 2>/dev/null || echo 0)"
+  if [[ "$behind" -gt 0 ]]; then
+    gum_warn "Local branch is ${behind} commit(s) behind '${tracking}'."
+    gum_info "You may want to run 'utpr pull' to update before switching away."
+    if ! gum confirm "Proceed anyway?" --default=false; then
+      gum_error "Cancelling."
+      exit 1
+    fi
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Remote config detection
 # ---------------------------------------------------------------------------
@@ -585,6 +604,7 @@ cmd_pause() {
   fi
 
   challenge_uncommitted_changes
+  challenge_branch_behind_remote
 
   local current
   current="$(get_current_branch)"
@@ -719,6 +739,8 @@ cmd_push() {
     die "Cannot push from the default branch. Create a PR branch first with 'utpr init'."
   fi
 
+  challenge_uncommitted_changes
+
   local edit_mode="terminal"
   local arg
   for arg in "$@"; do
@@ -819,7 +841,6 @@ cmd_forget() {
   current="$(get_current_branch)"
 
   challenge_uncommitted_changes
-  challenge_unpushed_commits
 
   if ! gum confirm "Abandon branch '${current}' and switch to ${DEFAULT_BRANCH}?"; then
     gum_info "Cancelled."
@@ -892,6 +913,7 @@ cmd_finish() {
   fi
 
   if ! is_on_default_branch; then
+    challenge_uncommitted_changes
     switch_to_branch "$DEFAULT_BRANCH"
   fi
 
