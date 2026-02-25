@@ -714,7 +714,7 @@ show_help() {
     "  $(gum style --foreground 4 "push")        Push branch and create/update PR" \
     "  $(gum style --foreground 4 "pull")        Pull latest changes" \
     "  $(gum style --foreground 4 "merge-main")  Merge default branch into current branch" \
-    "  $(gum style --foreground 4 "forget")      Abandon local PR branch" \
+    "  $(gum style --foreground 4 "forget")      Abandon and delete a local PR branch" \
     "  $(gum style --foreground 4 "finish")      Clean up after a merged PR" \
     "  $(gum style --foreground 4 "view")        View PR in browser" >&2
   echo >&2
@@ -785,10 +785,13 @@ show_command_help() {
       gum style "Merge the default branch into the current PR branch to stay up to date." >&2
       ;;
     forget)
-      gum style --bold "utpr forget" >&2
+      gum style --bold "utpr forget [<branch>]" >&2
       echo >&2
-      gum style "Abandon the current local PR branch and return to the default branch." >&2
+      gum style "Abandon a local PR branch and delete it." >&2
       gum style "Automatically removes any associated worktree." >&2
+      echo >&2
+      gum style --bold "Arguments:" >&2
+      gum style "  <branch>  Branch to forget (defaults to current branch, or interactive picker on default branch)" >&2
       ;;
     finish)
       gum style --bold "utpr finish [<pr>]" >&2
