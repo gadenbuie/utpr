@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Setup script for the utpr demo.
 #
-# Creates a GitHub repository seeded with initial content and one pre-merged
-# PR so that `utpr finish 1` has a real merged PR to clean up in the recording.
+# Creates a GitHub repository seeded with initial content, one open issue,
+# and one pre-merged PR so the demo can exercise:
+#   - `utpr init` issue picker  (issue #1: "Add project status")
+#   - `utpr finish` PR picker   (PR #2: feat/add-contributing, merged here)
+#
+# Issues and PRs share GitHub's number space. Creating the issue before the
+# CONTRIBUTING PR guarantees issue #1 and PR #2, making branch names
+# deterministic in the recording.
 #
 # Writes /tmp/utpr-demo.env on success.
 #
@@ -78,8 +84,18 @@ git add README.md
 git commit -m "docs: add README" --quiet
 gum spin --title "Pushing main..." -- git push -u origin main
 
-# --- Create and merge a PR (gives the demo a real merged PR to finish) ---
-info "Creating PR #1 (feat/add-contributing)..."
+# --- Create issue #1 (used in the demo via `utpr init` issue picker) ---
+# Must be created before the CONTRIBUTING PR so it gets number #1.
+# The demo runs `utpr init` with no args, selects this issue from the picker,
+# and lands on branch `fix/1-add-project-status`.
+info "Creating issue #1 (Add project status)..."
+gum spin --title "Creating issue..." -- \
+  gh issue create \
+    --title "Add project status" \
+    --body "Add a Status section to the README indicating the project is active and welcoming contributions."
+
+# --- Create and merge PR #2 (gives the demo a real merged PR to finish) ---
+info "Creating PR #2 (feat/add-contributing)..."
 git switch -c feat/add-contributing --quiet
 
 cat > CONTRIBUTING.md << 'HEREDOC'
@@ -106,15 +122,16 @@ gum spin --title "Creating PR..." -- \
     --body "Adds a CONTRIBUTING.md to guide new contributors." \
     --base main
 
-gum spin --title "Merging PR #1..." -- gh pr merge --squash
+gum spin --title "Merging PR #2..." -- gh pr merge --squash
 
 # Return to main and pull the squash commit
 git switch main --quiet
 gum spin --title "Pulling main..." -- git pull origin main
 
-# Delete the local branch so it doesn't appear in `utpr resume`'s picker,
-# but leave the remote branch for `utpr finish 1` to clean up.
-git branch -D feat/add-contributing
+# Keep the local branch (with its upstream tracking) so it appears in
+# `utpr finish`'s merged-PR picker during the demo recording.
+# It won't interfere with `utpr resume` because that picker sorts by
+# committerdate and `fix/1-add-project-status` will be more recent.
 
 # --- Write the demo environment file ---
 cat > "$ENV_FILE" << HEREDOC
