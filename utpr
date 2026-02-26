@@ -738,13 +738,13 @@ show_command_help() {
 
   case "${cmd}" in
     init)
-      gum style --bold "utpr init [--worktree] [--base <ref>] { <branch> | #<issue> }" >&2
+      gum style --bold "utpr init [--worktree] [--base <ref>] { <branch> | <issue> }" >&2
       echo >&2
       gum style "Create a new PR branch." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
       gum style "  <branch>   Name of the new branch to create" >&2
-      gum style "  #<issue>   GitHub issue number; fetches issue details and prompts for branch name" >&2
+      gum style "  <issue>    GitHub issue number; fetches issue details and prompts for branch name" >&2
       echo >&2
       gum style --bold "Options:" >&2
       gum style "  --worktree     Create branch in a new git worktree" >&2
@@ -872,7 +872,14 @@ cmd_init() {
         base_ref="$2"; shift 2
         ;;
       \#*) issue_number="${1#\#}"; shift ;;
-      *) branch="$1"; shift ;;
+      *)
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+          issue_number="$1"
+        else
+          branch="$1"
+        fi
+        shift
+        ;;
     esac
   done
 
