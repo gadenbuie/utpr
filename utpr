@@ -582,9 +582,10 @@ detect_remote_config() {
 
   local api_output
   api_output="$(
-    gh api "repos/${owner_repo}" \
-      --jq '[.fork, .permissions.push, (.parent.full_name // "")] | @tsv' \
-      2>/dev/null
+    gum spin --title "Checking GitHub repo..." -- \
+      gh api "repos/${owner_repo}" \
+        --jq '[.fork, .permissions.push, (.parent.full_name // "")] | @tsv' \
+    2>/dev/null
   )" || api_output=""
 
   if [[ -z "$api_output" ]]; then
@@ -1024,7 +1025,8 @@ cmd_resume() {
     validate_branch_name "$branch"
   else
     local branches
-    branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -Fxv "$DEFAULT_BRANCH" || true)"
+    branches="$(gum spin --title "Looking up local branches..." -- git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/)"
+    branches="$(grep -Fxv "$DEFAULT_BRANCH" <<< "$branches" || true)"
 
     if [[ -z "$branches" ]]; then
       die "No branches to resume."
@@ -1087,7 +1089,7 @@ cmd_fetch() {
   else
     local current_user pr_data pr_list="" pr_choice line num_s title_s author_s branch_s
     current_user="$(get_gh_login)"
-    pr_data="$(gh pr list \
+    pr_data="$(gum spin --title "Getting open PRs..." -- gh pr list \
       --json number,title,author,headRefName,isCrossRepository,updatedAt \
       --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, .headRefName, (.isCrossRepository | tostring)] | @tsv')" || {
       die "Failed to list PRs."
@@ -1324,7 +1326,8 @@ cmd_forget() {
     fi
   elif is_on_default_branch; then
     local branches
-    branches="$(git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/ | grep -Fxv "$DEFAULT_BRANCH" || true)"
+    branches="$(gum spin --title "Looking up local branches..." -- git for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads/)"
+    branches="$(grep -Fxv "$DEFAULT_BRANCH" <<< "$branches" || true)"
 
     if [[ -z "$branches" ]]; then
       die "No branches to forget."
@@ -1404,7 +1407,7 @@ cmd_finish() {
     local current_user pr_data pr_list="" pr_choice line local_branch upstream num_s title_s author_s
     local num title author head_ref
     current_user="$(get_gh_login)"
-    pr_data="$(gh pr list --state merged \
+    pr_data="$(gum spin --title "Getting merged PRs..." -- gh pr list --state merged \
       --json number,title,author,updatedAt,headRefName \
       --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, .headRefName] | @tsv')" || {
       die "Failed to list merged PRs."
@@ -1559,7 +1562,7 @@ cmd_view() {
   else
     local current_user pr_data pr_list="" pr_choice line pr_disp_state picker_label num_s title_s author_s state_color
     current_user="$(get_gh_login)"
-    pr_data="$(gh pr list --state "$pr_state" \
+    pr_data="$(gum spin --title "Getting ${pr_state} PRs..." -- gh pr list --state "$pr_state" \
       --json number,title,author,updatedAt,state,mergedAt \
       --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, (if .mergedAt then "merged" else (.state | ascii_downcase) end)] | @tsv')" || {
       die "Failed to list PRs."
