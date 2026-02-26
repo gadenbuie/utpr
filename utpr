@@ -1642,6 +1642,9 @@ cmd_finish() {
     local tmp_output check_pid
     tmp_output="$(mktemp)"
     (
+      # Phase 1: partition branches into those with a known PR number and those without
+      query_fields=""
+      fallback_branches=""
       while IFS= read -r branch; do
         num=""
         pr_url="$(git config "branch.${branch}.pr-url" 2>/dev/null || true)"
@@ -1650,20 +1653,36 @@ cmd_finish() {
         elif [[ "$branch" =~ ^pr-([0-9]+)/ ]]; then
           num="${BASH_REMATCH[1]}"
         fi
-
-        if [[ -n "$num" ]]; then
-          pr_info="$(gh api "repos/${source_repo}/pulls/${num}" \
-            --jq 'select(.merged == true) | [(.number | tostring), .title, .user.login] | @tsv' \
-            2>/dev/null || true)"
-        else
-          pr_info="$(gh pr list --head "$branch" --state merged --json number,title,author \
-            --jq 'first | select(. != null) | [(.number | tostring), .title, .author.login] | @tsv' \
-            2>/dev/null || true)"
+        if [[ -n "$num" ]] && [[ "$query_fields" != *"pr${num}:"* ]]; then
+          query_fields="${query_fields}pr${num}:pullRequest(number:${num}){number title merged author{login}}"
+        elif [[ -z "$num" ]]; then
+          fallback_branches="${fallback_branches}${branch}"$'\n'
         fi
-
-        [[ -z "$pr_info" ]] && continue
-        printf '%s\n' "$pr_info"
       done <<< "$branches"
+
+      # Phase 2a: one GraphQL call for all known PR numbers
+      if [[ -n "$query_fields" ]]; then
+        owner="${source_repo%%/*}"
+        repo_name="${source_repo#*/}"
+        gh api graphql \
+          -F owner="$owner" -F name="$repo_name" \
+          -f query="query(\$owner:String!,\$name:String!){repository(owner:\$owner,name:\$name){${query_fields}}}" \
+          --jq '(.data.repository // {}) | to_entries[] |
+            select(.value != null and .value.merged == true) |
+            [(.value.number | tostring), .value.title, (.value.author.login // "unknown")] |
+            @tsv' \
+          2>/dev/null || true
+      fi
+
+      # Phase 2b: fallback for branches without a stored PR number
+      if [[ -n "$fallback_branches" ]]; then
+        while IFS= read -r branch; do
+          [[ -z "$branch" ]] && continue
+          gh pr list --head "$branch" --state merged --json number,title,author \
+            --jq 'first | select(. != null) | [(.number | tostring), .title, .author.login] | @tsv' \
+            2>/dev/null || true
+        done <<< "$fallback_branches"
+      fi
     ) > "$tmp_output" &
     check_pid=$!
     gum spin --title "Checking for merged PRs..." -- \
