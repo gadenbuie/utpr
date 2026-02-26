@@ -1082,6 +1082,7 @@ cmd_init() {
     if gum confirm "Assign yourself to issue #${issue_number}?" --default=true; then
       gh issue edit "$issue_number" --add-assignee "@me" >/dev/null || \
         gum_warn "Could not assign you to issue #${issue_number}."
+      gum style --foreground 2 "✔ You were assigned to issue $(gum style --foreground 6 "#${issue_number}")" >&2
     fi
   fi
 
