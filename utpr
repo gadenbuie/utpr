@@ -871,7 +871,11 @@ cmd_init() {
   done
 
   if [[ -z "$branch" && -z "$issue_number" ]]; then
-    local current_user issue_data issue_list="" issue_choice num_s title_s line
+    local current_user issue_data issue_list="" issue_choice num_s title_s asgn_s line
+    local nums=() titles=() authors=() assignees_arr=() labels_arr=()
+    local max_num_len=0 max_assignee_col=0 max_author_col=0 max_title_len=0 TITLE_CAP i
+    local num title author assignees labels display_title n_len a_len au_len t_len term_width _tmp
+
     current_user="$(get_gh_login)"
     issue_data="$(gum spin --title "Getting open issues..." -- gh issue list \
       --json number,title,author,assignees,labels,updatedAt \
@@ -883,22 +887,59 @@ cmd_init() {
       die "No open issues found. Provide a branch name to proceed."
     fi
 
+    # Pass 1: collect data and measure column widths
     while IFS=$'\t' read -r num title author assignees labels; do
-      num_s="$(gum style --foreground 6 "#${num}")"
-      title_s="${title}"
-      [[ -n "$current_user" && ",$assignees," == *",$current_user,"* ]] && \
-        title_s="$(gum style --bold "${title}")"
-      line="${num_s} ${title_s}"
+      nums+=("$num"); titles+=("$title"); authors+=("$author")
+      assignees_arr+=("$assignees"); labels_arr+=("$labels")
+      n_len=$(( ${#num} + 1 ))
+      [[ $n_len -gt $max_num_len ]] && max_num_len=$n_len
       if [[ -n "$assignees" ]]; then
-        line="${line} $(gum style --foreground 3 "→ @${assignees//,/, @}") $(gum style --foreground 8 "| @${author}")"
-      else
-        line="${line} $(gum style --foreground 8 "| @${author}")"
+        # "→ login1, login2": 2 chars overhead (→, space) + logins + 1 per comma (", ")
+        _tmp="${assignees//,/}"; a_len=$(( 2 + ${#assignees} + (${#assignees} - ${#_tmp}) ))
+        [[ $a_len -gt $max_assignee_col ]] && max_assignee_col=$a_len
       fi
-      if [[ -n "$labels" ]]; then
-        line="${line} $(gum style --foreground 5 "[${labels}]")"
-      fi
-      issue_list="${issue_list}${line}"$'\n'
+      au_len=$(( 2 + ${#author} ))  # "| login"
+      [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
     done <<< "$issue_data"
+
+    # Derive TITLE_CAP from terminal width, then compute max_title_len
+    term_width="$(tput cols 2>/dev/null || echo 80)"
+    TITLE_CAP=$(( term_width - max_num_len - 1 - max_assignee_col - 1 - max_author_col - 3 ))
+    [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
+    for title in "${titles[@]}"; do
+      t_len=${#title}; [[ $t_len -gt $TITLE_CAP ]] && t_len=$TITLE_CAP
+      [[ $t_len -gt $max_title_len ]] && max_title_len=$t_len
+    done
+
+    # Pass 2: build aligned display lines
+    for i in "${!nums[@]}"; do
+      num="${nums[$i]}"; title="${titles[$i]}"; author="${authors[$i]}"
+      assignees="${assignees_arr[$i]}"; labels="${labels_arr[$i]}"
+
+      display_title="${title}"
+      [[ ${#title} -gt $TITLE_CAP ]] && display_title="${title:0:$(( TITLE_CAP - 1 ))}…"
+
+      num_s="$(gum style --foreground 6 "#${num}")"
+      num_s="${num_s}$(printf '%*s' $(( max_num_len - ${#num} - 1 )) '')"
+
+      title_s="${display_title}"
+      [[ -n "$current_user" && ",$assignees," == *",$current_user,"* ]] && \
+        title_s="$(gum style --bold "${display_title}")"
+      title_s="${title_s}$(printf '%*s' $(( max_title_len - ${#display_title} )) '')"
+
+      # Assignee column: styled + padded to max_assignee_col so | always aligns
+      if [[ -n "$assignees" ]]; then
+        asgn_s="$(gum style --foreground 3 "→ ${assignees//,/, }")"
+        _tmp="${assignees//,/}"; a_len=$(( 2 + ${#assignees} + (${#assignees} - ${#_tmp}) ))
+        asgn_s="${asgn_s}$(printf '%*s' $(( max_assignee_col - a_len )) '')"
+      else
+        asgn_s="$(printf '%*s' $max_assignee_col '')"
+      fi
+
+      line="${num_s} ${title_s} ${asgn_s} $(gum style --foreground 8 "| ${author}")"
+      [[ -n "$labels" ]] && line="${line} $(gum style --foreground 5 "[${labels}]")"
+      issue_list="${issue_list}${line}"$'\n'
+    done
     issue_list="${issue_list%$'\n'}"
 
     issue_choice="$(printf '%s\n' "$issue_list" | gum filter --no-strip-ansi --header "Select an issue to work on:")" || true
