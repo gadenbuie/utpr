@@ -1030,7 +1030,7 @@ cmd_resume() {
       die "No branches to resume."
     fi
 
-    branch="$(printf '%s\n' "$branches" | gum choose --header "Select a branch to resume:")"
+    branch="$(printf '%s\n' "$branches" | gum filter --header "Select a branch to resume:")"
     if [[ -z "$branch" ]]; then
       die "No branch selected."
     fi
@@ -1085,7 +1085,7 @@ cmd_fetch() {
     pr_number="$1"
     validate_pr_number "$pr_number"
   else
-    local current_user pr_data pr_list="" pr_choice line
+    local current_user pr_data pr_list="" pr_choice line num_s title_s author_s branch_s
     current_user="$(get_gh_login)"
     pr_data="$(gh pr list \
       --json number,title,author,headRefName,isCrossRepository,updatedAt \
@@ -1098,14 +1098,18 @@ cmd_fetch() {
     fi
 
     while IFS=$'\t' read -r num title author branch is_fork; do
-      line="#${num} ${title} (${author}) [${branch}]"
-      [[ "$is_fork" == "true" ]] && line="${line} [fork]"
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
+      num_s="$(gum style --foreground 6 "#${num}")"
+      title_s="${title}"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${title}")"
+      author_s="$(gum style --foreground 3 "(@${author})")"
+      branch_s="$(gum style --foreground 5 "[${branch}]")"
+      line="${num_s} ${title_s} ${author_s} ${branch_s}"
+      [[ "$is_fork" == "true" ]] && line="${line} $(gum style --foreground 8 "[fork]")"
       pr_list="${pr_list}${line}"$'\n'
     done <<< "$pr_data"
     pr_list="${pr_list%$'\n'}"
 
-    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to fetch:")"
+    pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select a PR to fetch:")"
     if [[ -z "$pr_choice" ]]; then
       die "No PR selected."
     fi
@@ -1338,7 +1342,7 @@ cmd_forget() {
     branch_display_list="${branch_display_list%?}"
 
     local branch_choice
-    branch_choice="$(printf '%s\n' "$branch_display_list" | gum choose --header "Select a branch to forget:")" || true
+    branch_choice="$(printf '%s\n' "$branch_display_list" | gum filter --header "Select a branch to forget:")" || true
     if [[ -z "$branch_choice" ]]; then
       gum_info "Cancelled."
       return 0
@@ -1397,7 +1401,7 @@ cmd_finish() {
       die "Could not determine PR number for current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line local_branch upstream
+    local current_user pr_data pr_list="" pr_choice line local_branch upstream num_s title_s author_s
     local num title author head_ref
     current_user="$(get_gh_login)"
     pr_data="$(gh pr list --state merged \
@@ -1422,8 +1426,11 @@ cmd_finish() {
         [[ -n "$upstream" ]] && local_branch="pr-${num}/${head_ref}"
       fi
       [[ -z "$local_branch" ]] && continue
-      line="#${num} ${title} (${author})"
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
+      num_s="$(gum style --foreground 6 "#${num}")"
+      title_s="${title}"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${title}")"
+      author_s="$(gum style --foreground 3 "(@${author})")"
+      line="${num_s} ${title_s} ${author_s}"
       pr_list="${pr_list}${line}"$'\n'
     done <<< "$pr_data"
     pr_list="${pr_list%$'\n'}"
@@ -1433,7 +1440,7 @@ cmd_finish() {
       return 0
     fi
 
-    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select a PR to finish:")"
+    pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select a PR to finish:")"
     if [[ -z "$pr_choice" ]]; then
       gum_info "Cancelled."
       return 0
@@ -1550,7 +1557,7 @@ cmd_view() {
       die "No PR found for the current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line pr_disp_state picker_label
+    local current_user pr_data pr_list="" pr_choice line pr_disp_state picker_label num_s title_s author_s state_color
     current_user="$(get_gh_login)"
     pr_data="$(gh pr list --state "$pr_state" \
       --json number,title,author,updatedAt,state,mergedAt \
@@ -1569,17 +1576,25 @@ cmd_view() {
     fi
 
     while IFS=$'\t' read -r num title author pr_disp_state; do
+      num_s="$(gum style --foreground 6 "#${num}")"
+      title_s="${title}"
+      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${title}")"
+      author_s="$(gum style --foreground 3 "(@${author})")"
       if [[ "$pr_state" == "open" ]]; then
-        line="#${num} ${title} (${author})"
+        line="${num_s} ${title_s} ${author_s}"
       else
-        line="#${num} [${pr_disp_state}] ${title} (${author})"
+        case "$pr_disp_state" in
+          merged) state_color=5 ;;
+          closed) state_color=1 ;;
+          *)      state_color=4 ;;
+        esac
+        line="${num_s} $(gum style --foreground "$state_color" "[${pr_disp_state}]") ${title_s} ${author_s}"
       fi
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && line="$(gum style --bold "$line")"
       pr_list="${pr_list}${line}"$'\n'
     done <<< "$pr_data"
     pr_list="${pr_list%$'\n'}"
 
-    pr_choice="$(printf '%s\n' "$pr_list" | gum choose --header "Select ${picker_label} to view:")"
+    pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select ${picker_label} to view:")"
     if [[ -z "$pr_choice" ]]; then
       gum_info "Cancelled."
       return 0
