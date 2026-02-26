@@ -397,7 +397,21 @@ symlink_worktree_dirs() {
   for item in "${_dirs[@]}"; do
     item="${item## }" # trim leading space
     item="${item%% }" # trim trailing space
-    [[ -n "$item" ]] && [[ -d "${repo_root}/${item}" ]] && available+=("$item")
+    [[ -z "$item" ]] && continue
+    [[ ! -d "${repo_root}/${item}" ]] && continue
+    if [[ -d "${worktree_dir}/${item}" ]]; then
+      # Directory is tracked in git — already checked out into worktree; skip picker
+      # For .claude, still auto-symlink settings.local.json (untracked local config)
+      if [[ "$item" == ".claude" ]] && [[ -f "${repo_root}/.claude/settings.local.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.local.json" ]]; then
+        if ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"; then
+          gum_success "Symlinked .claude/settings.local.json"
+        else
+          gum_warn "Failed to symlink .claude/settings.local.json."
+        fi
+      fi
+    else
+      available+=("$item")
+    fi
   done
 
   if [[ ${#available[@]} -eq 0 ]]; then
@@ -414,30 +428,17 @@ symlink_worktree_dirs() {
   while IFS= read -r item; do
     [[ -z "$item" ]] && continue
     if [[ "$item" == ".claude" ]]; then
-      if [[ ! -d "${worktree_dir}/.claude" ]]; then
-        # .claude not tracked in git — symlink the entire folder
-        if ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"; then
-          gum_success "Symlinked .claude"
-        else
-          gum_warn "Failed to symlink .claude."
-        fi
+      # .claude not in worktree — symlink the entire folder
+      if ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"; then
+        gum_success "Symlinked .claude"
       else
-        # .claude tracked in git — only symlink settings.local.json
-        if [[ -f "${repo_root}/.claude/settings.local.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.local.json" ]]; then
-          if ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"; then
-            gum_success "Symlinked .claude/settings.local.json"
-          else
-            gum_warn "Failed to symlink .claude/settings.local.json."
-          fi
-        fi
+        gum_warn "Failed to symlink .claude."
       fi
     else
-      if [[ ! -e "${worktree_dir}/${item}" ]]; then
-        if ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"; then
-          gum_success "Symlinked ${item}"
-        else
-          gum_warn "Failed to symlink ${item}."
-        fi
+      if ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"; then
+        gum_success "Symlinked ${item}"
+      else
+        gum_warn "Failed to symlink ${item}."
       fi
     fi
   done <<<"$selected"
