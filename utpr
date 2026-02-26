@@ -942,7 +942,7 @@ cmd_init() {
         asgn_s="$(printf '%*s' $max_assignee_col '')"
       fi
 
-      line="${num_s} ${title_s} ${asgn_s} $(gum style --foreground 8 "| ${author}")"
+      line="${num_s} ${title_s} ${asgn_s} $(gum style --foreground 8 "│ ${author}")"
       [[ -n "$labels" ]] && line="${line} $(gum style --foreground 5 "[${labels}]")"
       issue_list="${issue_list}${line}"$'\n'
     done
