@@ -846,6 +846,12 @@ show_command_help() {
 # ---------------------------------------------------------------------------
 # Command functions
 # ---------------------------------------------------------------------------
+_get_term_width() {
+  local w
+  w="$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2)"
+  printf '%s\n' "${w:-$(tput cols 2>/dev/null || echo 80)}"
+}
+
 _issue_to_branch_slug() {
   local number="$1" title="$2" slug
   slug="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-')"
@@ -903,7 +909,7 @@ cmd_init() {
     done <<< "$issue_data"
 
     # Derive TITLE_CAP from terminal width, then compute max_title_len
-    term_width="$(tput cols 2>/dev/null || echo 80)"
+    term_width="$(_get_term_width)"
     TITLE_CAP=$(( term_width - max_num_len - 1 - max_assignee_col - 1 - max_author_col - 3 ))
     [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
     for title in "${titles[@]}"; do
@@ -1241,7 +1247,7 @@ cmd_fetch() {
       [[ $br_len -gt $max_branch_col ]] && max_branch_col=$br_len
     done <<< "$pr_data"
 
-    term_width="$(tput cols 2>/dev/null || echo 80)"
+    term_width="$(_get_term_width)"
     TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 1 - max_branch_col - 3 ))
     [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
     for title in "${titles[@]}"; do
@@ -1607,7 +1613,7 @@ cmd_finish() {
       return 0
     fi
 
-    term_width="$(tput cols 2>/dev/null || echo 80)"
+    term_width="$(_get_term_width)"
     TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 3 ))
     [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
     for title in "${titles[@]}"; do
@@ -1778,7 +1784,7 @@ cmd_view() {
       [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
     done <<< "$pr_data"
 
-    term_width="$(tput cols 2>/dev/null || echo 80)"
+    term_width="$(_get_term_width)"
     TITLE_CAP=$(( term_width - max_num_len - 1 - state_col_width - max_author_col - 3 ))
     [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
     for title in "${titles[@]}"; do
