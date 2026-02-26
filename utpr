@@ -391,16 +391,16 @@ symlink_worktree_dirs() {
   local repo_root="$1" worktree_dir="$2"
   local available=()
 
-  local symlink_dirs="${UTPR_SYMLINK_DIRS:-_dev,.claude}"
+  local symlink_dirs="${UTPR_SYMLINK_DIRS:-_dev,.claude,.env,.env.local,.Renviron,.Rprofile,.agents,.secrets,secrets,.htpasswd,.vscode,.vscode/settings.json}"
   local item
   IFS=',' read -ra _dirs <<<"$symlink_dirs"
   for item in "${_dirs[@]}"; do
     item="${item## }" # trim leading space
     item="${item%% }" # trim trailing space
     [[ -z "$item" ]] && continue
-    [[ ! -d "${repo_root}/${item}" ]] && continue
-    if [[ -d "${worktree_dir}/${item}" ]]; then
-      # Directory is tracked in git — already checked out into worktree; skip picker
+    [[ ! -e "${repo_root}/${item}" ]] && continue
+    if [[ -e "${worktree_dir}/${item}" ]]; then
+      # Item is tracked in git — already checked out into worktree; skip picker
       # For .claude, still auto-symlink settings.local.json (untracked local config)
       if [[ "$item" == ".claude" ]] && [[ -f "${repo_root}/.claude/settings.local.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.local.json" ]]; then
         if ln -s "${repo_root}/.claude/settings.local.json" "${worktree_dir}/.claude/settings.local.json"; then
@@ -427,19 +427,12 @@ symlink_worktree_dirs() {
 
   while IFS= read -r item; do
     [[ -z "$item" ]] && continue
-    if [[ "$item" == ".claude" ]]; then
-      # .claude not in worktree — symlink the entire folder
-      if ln -s "${repo_root}/.claude" "${worktree_dir}/.claude"; then
-        gum_success "Symlinked .claude"
-      else
-        gum_warn "Failed to symlink .claude."
-      fi
+    # Skip if already present (e.g. parent dir was also selected and symlinked)
+    [[ -e "${worktree_dir}/${item}" ]] && continue
+    if ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"; then
+      gum_success "Symlinked ${item}"
     else
-      if ln -s "${repo_root}/${item}" "${worktree_dir}/${item}"; then
-        gum_success "Symlinked ${item}"
-      else
-        gum_warn "Failed to symlink ${item}."
-      fi
+      gum_warn "Failed to symlink ${item}."
     fi
   done <<<"$selected"
 }
@@ -753,7 +746,7 @@ show_command_help() {
       echo >&2
       gum style --bold "Environment:" >&2
       gum style "  UTPR_EDITOR        Editor to open the worktree in (default: auto-detected)" >&2
-      gum style "  UTPR_SYMLINK_DIRS  Comma-separated dirs to symlink into worktrees (default: _dev,.claude)" >&2
+      gum style "  UTPR_SYMLINK_DIRS  Comma-separated files/dirs to symlink into worktrees (default: _dev,.claude,...)" >&2
       ;;
     pause)
       gum style --bold "utpr pause" >&2
@@ -781,7 +774,7 @@ show_command_help() {
       echo >&2
       gum style --bold "Environment:" >&2
       gum style "  UTPR_EDITOR        Editor to open the worktree in (default: auto-detected)" >&2
-      gum style "  UTPR_SYMLINK_DIRS  Comma-separated dirs to symlink into worktrees (default: _dev,.claude)" >&2
+      gum style "  UTPR_SYMLINK_DIRS  Comma-separated files/dirs to symlink into worktrees (default: _dev,.claude,...)" >&2
       ;;
     push)
       gum style --bold "utpr push [--edit=browser|terminal]" >&2

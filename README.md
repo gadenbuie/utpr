@@ -177,8 +177,14 @@ utpr automatically:
 `utpr resume` detects when a branch has a worktree and offers to
 navigate there instead of switching in the main repo.
 
-The symlinked directories are controlled by the `UTPR_SYMLINK_DIRS`
-environment variable (default: `_dev,.claude`).
+The symlinked files and directories are controlled by the `UTPR_SYMLINK_DIRS`
+environment variable. The default covers common untracked project state:
+`_dev`, `.claude`, `.env`, `.env.local`, `.Renviron`, `.Rprofile`, `.agents`,
+`.secrets`, `secrets`, `.htpasswd`, `.vscode`, `.vscode/settings.json`.
+
+Items are only offered for symlinking if they exist in the main repo **and**
+are not already present in the worktree (i.e. not tracked by git). Gitignored
+files are naturally included since git never checks them out.
 
 ## Configuration
 
@@ -187,13 +193,13 @@ utpr can be configured with the following environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UTPR_EDITOR` | auto-detected | Editor command used to open worktrees (e.g. `code`, `cursor`, `zed`) |
-| `UTPR_SYMLINK_DIRS` | `_dev,.claude` | Comma-separated list of directories to symlink into new worktrees |
+| `UTPR_SYMLINK_DIRS` | `_dev,.claude,...` | Comma-separated list of files/dirs to symlink into new worktrees |
 
 Set these in your shell profile (e.g. `~/.zshrc`):
 
 ```bash
 export UTPR_EDITOR="cursor"
-export UTPR_SYMLINK_DIRS="_dev,.claude,secrets"
+export UTPR_SYMLINK_DIRS="_dev,.claude,.env,.Renviron,secrets"
 ```
 
 ## Troubleshooting

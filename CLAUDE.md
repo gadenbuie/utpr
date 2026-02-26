@@ -13,7 +13,7 @@ A bash CLI for GitHub PR workflows, inspired by the `pr_*()` functions from the 
 - **Worktree support** via `--worktree` flag on `init` and `fetch`. Worktrees are created at `<parent>/<repo>.worktrees/<branch>`. `cmd_forget`/`cmd_finish` automatically clean up worktrees. `cmd_resume` offers navigation to existing worktrees. `cmd_pause` detects worktree context and prints main repo path.
 - **`is_in_worktree()` guard** on `cmd_forget`/`cmd_finish` — these commands must run from the main repo (not a worktree) because they delete the branch, which would break the worktree.
 - **Worktree path discovery** uses `get_branch_worktree_path()` (live `git worktree list --porcelain` query) as the single source of truth — no config key duplication.
-- **Environment variables:** `UTPR_EDITOR` overrides auto-detected editor for worktree open. `UTPR_SYMLINK_DIRS` (comma-separated, default `_dev,.claude`) controls which directories are symlinked into worktrees.
+- **Environment variables:** `UTPR_EDITOR` overrides auto-detected editor for worktree open. `UTPR_SYMLINK_DIRS` (comma-separated) controls which files/directories are symlinked into worktrees; items are offered only if they exist in the main repo but not in the worktree (not tracked by git). Gitignored files are included naturally. Default covers: `_dev,.claude,.env,.env.local,.Renviron,.Rprofile,.agents,.secrets,secrets,.htpasswd,.vscode,.vscode/settings.json`.
 
 ## Development notes
 
