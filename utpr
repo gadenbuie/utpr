@@ -860,6 +860,95 @@ _issue_to_branch_slug() {
   printf 'fix/%s-%s\n' "$number" "$slug"
 }
 
+_render_aligned_pr_picker() {
+  local mode="$1" current_user="$2" pr_data="$3"
+  local pr_list="" line num_s title_s author_s extra_s state_color
+  local nums=() titles=() authors=() extras1=() extras2=()
+  local max_num_len=0 max_author_col=0 max_extra_col=0 max_title_len=0 TITLE_CAP i
+  local num title author extra1 extra2 display_title n_len au_len ex_len t_len term_width
+  local state_col_width=0
+
+  [[ "$mode" == "view-state" ]] && state_col_width=10
+
+  # Pass 1: collect data and measure column widths
+  while IFS=$'\t' read -r num title author extra1 extra2; do
+    [[ -z "$num" ]] && continue
+    nums+=("$num"); titles+=("$title"); authors+=("$author")
+    extras1+=("${extra1:-}"); extras2+=("${extra2:-}")
+    n_len=$(( ${#num} + 1 ))
+    [[ $n_len -gt $max_num_len ]] && max_num_len=$n_len
+    au_len=${#author}
+    [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
+    if [[ "$mode" == "fetch" ]]; then
+      ex_len=${#extra1}
+      [[ "${extra2:-}" == "true" ]] && ex_len=$(( ex_len + 2 ))  # "branch ⎇"
+      [[ $ex_len -gt $max_extra_col ]] && max_extra_col=$ex_len
+    fi
+  done <<< "$pr_data"
+
+  if [[ ${#nums[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  term_width="$(_get_term_width)"
+  case "$mode" in
+    fetch)      TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 1 - max_extra_col - 3 )) ;;
+    view-state) TITLE_CAP=$(( term_width - max_num_len - 1 - state_col_width - max_author_col - 3 )) ;;
+    *)          TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 3 )) ;;
+  esac
+  [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
+
+  for title in "${titles[@]}"; do
+    t_len=${#title}; [[ $t_len -gt $TITLE_CAP ]] && t_len=$TITLE_CAP
+    [[ $t_len -gt $max_title_len ]] && max_title_len=$t_len
+  done
+
+  # Pass 2: build aligned display lines
+  for i in "${!nums[@]}"; do
+    num="${nums[$i]}"; title="${titles[$i]}"; author="${authors[$i]}"
+    extra1="${extras1[$i]}"; extra2="${extras2[$i]}"
+    display_title="${title}"
+    [[ ${#title} -gt $TITLE_CAP ]] && display_title="${title:0:$(( TITLE_CAP - 1 ))}…"
+
+    num_s="$(gum style --foreground 6 "#${num}")"
+    num_s="${num_s}$(printf '%*s' $(( max_num_len - ${#num} - 1 )) '')"
+
+    title_s="${display_title}"
+    [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${display_title}")"
+    title_s="${title_s}$(printf '%*s' $(( max_title_len - ${#display_title} )) '')"
+
+    author_s="$(gum style --foreground 3 "${author}")"
+    [[ "$mode" == "fetch" ]] && author_s="${author_s}$(printf '%*s' $(( max_author_col - ${#author} )) '')"
+
+    case "$mode" in
+      fetch)
+        if [[ "$extra2" == "true" ]]; then
+          extra_s="$(gum style --foreground 5 "${extra1}") $(gum style --foreground 8 "⎇")"
+          extra_s="${extra_s}$(printf '%*s' $(( max_extra_col - ${#extra1} - 2 )) '')"
+        else
+          extra_s="$(gum style --foreground 5 "${extra1}")"
+          extra_s="${extra_s}$(printf '%*s' $(( max_extra_col - ${#extra1} )) '')"
+        fi
+        line="${num_s} ${title_s} ${author_s} ${extra_s}"
+        ;;
+      view-state)
+        case "$extra1" in
+          merged) state_color=5 ;;
+          closed) state_color=1 ;;
+          *)      state_color=4 ;;
+        esac
+        line="${num_s} $(gum style --foreground "$state_color" "[${extra1}]") ${title_s} ${author_s}"
+        ;;
+      *)
+        line="${num_s} ${title_s} ${author_s}"
+        ;;
+    esac
+    pr_list="${pr_list}${line}"$'\n'
+  done
+
+  printf '%s\n' "${pr_list%$'\n'}"
+}
+
 cmd_init() {
   local branch="" use_worktree=false base_ref="" issue_number=""
   while [[ $# -gt 0 ]]; do
@@ -1227,10 +1316,7 @@ cmd_fetch() {
     pr_number="$1"
     validate_pr_number "$pr_number"
   else
-    local current_user pr_data pr_list="" pr_choice line num_s title_s author_s branch_s
-    local nums=() titles=() authors=() branches=() is_forks=()
-    local max_num_len=0 max_author_col=0 max_branch_col=0 max_title_len=0 TITLE_CAP i
-    local num title author branch is_fork display_title n_len au_len br_len t_len term_width
+    local current_user pr_data pr_list="" pr_choice
     current_user="$(get_gh_login)"
     pr_data="$(gum spin --title "Getting open PRs..." -- gh pr list \
       --json number,title,author,headRefName,isCrossRepository,updatedAt \
@@ -1242,50 +1328,7 @@ cmd_fetch() {
       die "No open PRs found."
     fi
 
-    # Pass 1: collect data and measure column widths
-    while IFS=$'\t' read -r num title author branch is_fork; do
-      nums+=("$num"); titles+=("$title"); authors+=("$author")
-      branches+=("$branch"); is_forks+=("$is_fork")
-      n_len=$(( ${#num} + 1 ))
-      [[ $n_len -gt $max_num_len ]] && max_num_len=$n_len
-      au_len=${#author}
-      [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
-      br_len=${#branch}; [[ "$is_fork" == "true" ]] && br_len=$(( br_len + 2 ))  # "branch ⎇"
-      [[ $br_len -gt $max_branch_col ]] && max_branch_col=$br_len
-    done <<< "$pr_data"
-
-    term_width="$(_get_term_width)"
-    TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 1 - max_branch_col - 3 ))
-    [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
-    for title in "${titles[@]}"; do
-      t_len=${#title}; [[ $t_len -gt $TITLE_CAP ]] && t_len=$TITLE_CAP
-      [[ $t_len -gt $max_title_len ]] && max_title_len=$t_len
-    done
-
-    # Pass 2: build aligned display lines
-    for i in "${!nums[@]}"; do
-      num="${nums[$i]}"; title="${titles[$i]}"; author="${authors[$i]}"
-      branch="${branches[$i]}"; is_fork="${is_forks[$i]}"
-      display_title="${title}"
-      [[ ${#title} -gt $TITLE_CAP ]] && display_title="${title:0:$(( TITLE_CAP - 1 ))}…"
-      num_s="$(gum style --foreground 6 "#${num}")"
-      num_s="${num_s}$(printf '%*s' $(( max_num_len - ${#num} - 1 )) '')"
-      title_s="${display_title}"
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${display_title}")"
-      title_s="${title_s}$(printf '%*s' $(( max_title_len - ${#display_title} )) '')"
-      author_s="$(gum style --foreground 3 "${author}")"
-      author_s="${author_s}$(printf '%*s' $(( max_author_col - ${#author} )) '')"
-      if [[ "$is_fork" == "true" ]]; then
-        branch_s="$(gum style --foreground 5 "${branch}") $(gum style --foreground 8 "⎇")"
-        branch_s="${branch_s}$(printf '%*s' $(( max_branch_col - ${#branch} - 2 )) '')"
-      else
-        branch_s="$(gum style --foreground 5 "${branch}")"
-        branch_s="${branch_s}$(printf '%*s' $(( max_branch_col - ${#branch} )) '')"
-      fi
-      line="${num_s} ${title_s} ${author_s} ${branch_s}"
-      pr_list="${pr_list}${line}"$'\n'
-    done
-    pr_list="${pr_list%$'\n'}"
+    pr_list="$(_render_aligned_pr_picker "fetch" "$current_user" "$pr_data")"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select a PR to fetch:")"
     if [[ -z "$pr_choice" ]]; then
@@ -1580,10 +1623,8 @@ cmd_finish() {
       die "Could not determine PR number for current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line local_branch upstream num_s title_s author_s
-    local nums=() titles=() authors=()
-    local max_num_len=0 max_author_col=0 max_title_len=0 TITLE_CAP i
-    local num title author head_ref display_title n_len au_len t_len term_width
+    local current_user pr_data pr_picker_data="" pr_list="" pr_choice local_branch upstream
+    local num title author head_ref
     current_user="$(get_gh_login)"
     pr_data="$(gum spin --title "Getting merged PRs..." -- gh pr list --state merged \
       --json number,title,author,updatedAt,headRefName \
@@ -1608,40 +1649,16 @@ cmd_finish() {
         [[ -n "$upstream" ]] && local_branch="pr-${num}/${head_ref}"
       fi
       [[ -z "$local_branch" ]] && continue
-      nums+=("$num"); titles+=("$title"); authors+=("$author")
-      n_len=$(( ${#num} + 1 ))
-      [[ $n_len -gt $max_num_len ]] && max_num_len=$n_len
-      au_len=${#author}
-      [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
+      pr_picker_data="${pr_picker_data}${num}"$'\t'"${title}"$'\t'"${author}"$'\n'
     done <<< "$pr_data"
 
-    if [[ ${#nums[@]} -eq 0 ]]; then
+    if [[ -z "$pr_picker_data" ]]; then
       gum_info "No merged PRs with a local branch to clean up."
       return 0
     fi
 
-    term_width="$(_get_term_width)"
-    TITLE_CAP=$(( term_width - max_num_len - 1 - max_author_col - 3 ))
-    [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
-    for title in "${titles[@]}"; do
-      t_len=${#title}; [[ $t_len -gt $TITLE_CAP ]] && t_len=$TITLE_CAP
-      [[ $t_len -gt $max_title_len ]] && max_title_len=$t_len
-    done
-
-    # Pass 2: build aligned display lines
-    for i in "${!nums[@]}"; do
-      num="${nums[$i]}"; title="${titles[$i]}"; author="${authors[$i]}"
-      display_title="${title}"
-      [[ ${#title} -gt $TITLE_CAP ]] && display_title="${title:0:$(( TITLE_CAP - 1 ))}…"
-      num_s="$(gum style --foreground 6 "#${num}")"
-      num_s="${num_s}$(printf '%*s' $(( max_num_len - ${#num} - 1 )) '')"
-      title_s="${display_title}"
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${display_title}")"
-      title_s="${title_s}$(printf '%*s' $(( max_title_len - ${#display_title} )) '')"
-      author_s="$(gum style --foreground 3 "${author}")"
-      pr_list="${pr_list}${num_s} ${title_s} ${author_s}"$'\n'
-    done
-    pr_list="${pr_list%$'\n'}"
+    pr_picker_data="${pr_picker_data%$'\n'}"
+    pr_list="$(_render_aligned_pr_picker "finish" "$current_user" "$pr_picker_data")"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select a PR to finish:")"
     if [[ -z "$pr_choice" ]]; then
@@ -1760,10 +1777,7 @@ cmd_view() {
       die "No PR found for the current branch."
     fi
   else
-    local current_user pr_data pr_list="" pr_choice line pr_disp_state picker_label num_s title_s author_s state_color
-    local nums=() titles=() authors=() disp_states=()
-    local max_num_len=0 max_author_col=0 max_title_len=0 TITLE_CAP state_col_width=0 i
-    local num title author display_title n_len au_len t_len term_width
+    local current_user pr_data pr_list="" pr_choice picker_label
     current_user="$(get_gh_login)"
     pr_data="$(gum spin --title "Getting ${pr_state} PRs..." -- gh pr list --state "$pr_state" \
       --json number,title,author,updatedAt,state,mergedAt \
@@ -1777,52 +1791,11 @@ cmd_view() {
 
     if [[ "$pr_state" == "open" ]]; then
       picker_label="a PR"
+      pr_list="$(_render_aligned_pr_picker "view-open" "$current_user" "$pr_data")"
     else
       picker_label="a ${pr_state} PR"
-      state_col_width=10  # " [merged] " or " [closed] " = 8 chars + 2 surrounding spaces
+      pr_list="$(_render_aligned_pr_picker "view-state" "$current_user" "$pr_data")"
     fi
-
-    # Pass 1: collect data and measure column widths
-    while IFS=$'\t' read -r num title author pr_disp_state; do
-      nums+=("$num"); titles+=("$title"); authors+=("$author"); disp_states+=("$pr_disp_state")
-      n_len=$(( ${#num} + 1 ))
-      [[ $n_len -gt $max_num_len ]] && max_num_len=$n_len
-      au_len=${#author}
-      [[ $au_len -gt $max_author_col ]] && max_author_col=$au_len
-    done <<< "$pr_data"
-
-    term_width="$(_get_term_width)"
-    TITLE_CAP=$(( term_width - max_num_len - 1 - state_col_width - max_author_col - 3 ))
-    [[ $TITLE_CAP -lt 20 ]] && TITLE_CAP=20
-    for title in "${titles[@]}"; do
-      t_len=${#title}; [[ $t_len -gt $TITLE_CAP ]] && t_len=$TITLE_CAP
-      [[ $t_len -gt $max_title_len ]] && max_title_len=$t_len
-    done
-
-    # Pass 2: build aligned display lines
-    for i in "${!nums[@]}"; do
-      num="${nums[$i]}"; title="${titles[$i]}"; author="${authors[$i]}"; pr_disp_state="${disp_states[$i]}"
-      display_title="${title}"
-      [[ ${#title} -gt $TITLE_CAP ]] && display_title="${title:0:$(( TITLE_CAP - 1 ))}…"
-      num_s="$(gum style --foreground 6 "#${num}")"
-      num_s="${num_s}$(printf '%*s' $(( max_num_len - ${#num} - 1 )) '')"
-      title_s="${display_title}"
-      [[ -n "$current_user" && "$author" == "$current_user" ]] && title_s="$(gum style --bold "${display_title}")"
-      title_s="${title_s}$(printf '%*s' $(( max_title_len - ${#display_title} )) '')"
-      author_s="$(gum style --foreground 3 "${author}")"
-      if [[ "$pr_state" == "open" ]]; then
-        line="${num_s} ${title_s} ${author_s}"
-      else
-        case "$pr_disp_state" in
-          merged) state_color=5 ;;
-          closed) state_color=1 ;;
-          *)      state_color=4 ;;
-        esac
-        line="${num_s} $(gum style --foreground "$state_color" "[${pr_disp_state}]") ${title_s} ${author_s}"
-      fi
-      pr_list="${pr_list}${line}"$'\n'
-    done
-    pr_list="${pr_list%$'\n'}"
 
     pr_choice="$(printf '%s\n' "$pr_list" | gum filter --no-strip-ansi --header "Select ${picker_label} to view:")"
     if [[ -z "$pr_choice" ]]; then
