@@ -738,12 +738,13 @@ show_command_help() {
 
   case "${cmd}" in
     init)
-      gum style --bold "utpr init [--worktree] [--base <ref>] <branch>" >&2
+      gum style --bold "utpr init [--worktree] [--base <ref>] { <branch> | #<issue> }" >&2
       echo >&2
       gum style "Create a new PR branch." >&2
       echo >&2
       gum style --bold "Arguments:" >&2
-      gum style "  <branch>  Name of the new branch to create" >&2
+      gum style "  <branch>   Name of the new branch to create" >&2
+      gum style "  #<issue>   GitHub issue number; fetches issue details and prompts for branch name" >&2
       echo >&2
       gum style --bold "Options:" >&2
       gum style "  --worktree     Create branch in a new git worktree" >&2
@@ -845,8 +846,16 @@ show_command_help() {
 # ---------------------------------------------------------------------------
 # Command functions
 # ---------------------------------------------------------------------------
+_issue_to_branch_slug() {
+  local number="$1" title="$2" slug
+  slug="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-')"
+  slug="${slug#-}"
+  slug="${slug%-}"
+  printf 'fix/%s-%s\n' "$number" "$slug"
+}
+
 cmd_init() {
-  local branch="" use_worktree=false base_ref=""
+  local branch="" use_worktree=false base_ref="" issue_number=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --worktree) use_worktree=true; shift ;;
@@ -856,9 +865,86 @@ cmd_init() {
         fi
         base_ref="$2"; shift 2
         ;;
+      \#*) issue_number="${1#\#}"; shift ;;
       *) branch="$1"; shift ;;
     esac
   done
+
+  if [[ -z "$branch" && -z "$issue_number" ]]; then
+    local current_user issue_data issue_list="" issue_choice num_s title_s line
+    current_user="$(get_gh_login)"
+    issue_data="$(gum spin --title "Getting open issues..." -- gh issue list \
+      --json number,title,author,assignees,labels,updatedAt \
+      --jq 'sort_by(.updatedAt) | reverse | .[] | [(.number | tostring), .title, .author.login, (.assignees | map(.login) | join(",")), (.labels | map(.name) | join(","))] | @tsv')" || {
+      die "Failed to list issues."
+    }
+
+    if [[ -z "$issue_data" ]]; then
+      die "No open issues found. Provide a branch name to proceed."
+    fi
+
+    while IFS=$'\t' read -r num title author assignees labels; do
+      num_s="$(gum style --foreground 6 "#${num}")"
+      title_s="${title}"
+      [[ -n "$current_user" && ",$assignees," == *",$current_user,"* ]] && \
+        title_s="$(gum style --bold "${title}")"
+      line="${num_s} ${title_s}"
+      if [[ -n "$assignees" ]]; then
+        line="${line} $(gum style --foreground 3 "→ @${assignees//,/, @}") $(gum style --foreground 8 "| @${author}")"
+      else
+        line="${line} $(gum style --foreground 8 "| @${author}")"
+      fi
+      if [[ -n "$labels" ]]; then
+        line="${line} $(gum style --foreground 5 "[${labels}]")"
+      fi
+      issue_list="${issue_list}${line}"$'\n'
+    done <<< "$issue_data"
+    issue_list="${issue_list%$'\n'}"
+
+    issue_choice="$(printf '%s\n' "$issue_list" | gum filter --no-strip-ansi --header "Select an issue to work on:")" || true
+    if [[ -z "$issue_choice" ]]; then
+      gum_info "Cancelled."
+      return 0
+    fi
+
+    issue_number="$(parse_pr_number_from_choice "$issue_choice")"
+  fi
+
+  if [[ -n "$issue_number" ]]; then
+    validate_pr_number "$issue_number"
+    local issue_data issue_title issue_body issue_state issue_author issue_created
+    issue_data="$(gum spin --title "Looking up issue #${issue_number}..." --show-error -- \
+      gh issue view "$issue_number" --json number,title,body,state,author,createdAt)" || \
+      die "Failed to fetch issue #${issue_number}."
+
+    issue_title="$(printf '%s' "$issue_data" | jq -r '.title')"
+    issue_body="$(printf '%s' "$issue_data" | jq -r '.body // ""')"
+    issue_state="$(printf '%s' "$issue_data" | jq -r '.state')"
+    issue_author="$(printf '%s' "$issue_data" | jq -r '.author.login')"
+    issue_created="$(printf '%s' "$issue_data" | jq -r '.createdAt | split("T")[0]')"
+
+    if gum confirm "Preview issue #${issue_number}?" --default=false; then
+      printf '# #%s %s\n\n**State:** %s · **Author:** @%s · **Created:** %s\n\n%s\n' \
+        "$issue_number" "$issue_title" "$issue_state" "$issue_author" "$issue_created" \
+        "${issue_body:-*No description provided.*}" \
+        | gum format | gum pager --no-soft-wrap --show-line-numbers=false
+    fi
+
+    if [[ -z "$branch" ]]; then
+      local suggested_branch
+      suggested_branch="$(_issue_to_branch_slug "$issue_number" "$issue_title")"
+      gum_info "Issue #${issue_number}: ${issue_title}"
+      branch="$(gum input --header "Branch name:" --value "$suggested_branch" --placeholder "branch name")" || true
+      if [[ -z "$branch" ]]; then
+        die "Branch name required."
+      fi
+    fi
+
+    if gum confirm "Assign yourself to issue #${issue_number}?" --default=true; then
+      gh issue edit "$issue_number" --add-assignee "@me" >/dev/null || \
+        gum_warn "Could not assign you to issue #${issue_number}."
+    fi
+  fi
 
   if [[ -z "$branch" ]]; then
     show_command_help init
