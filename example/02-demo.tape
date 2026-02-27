@@ -8,6 +8,7 @@
 # Record with: vhs example/02-demo.tape   (run from the repo root)
 
 Output example/demo.gif
+Output example/demo.mp4
 
 Set Shell        bash
 Set FontSize     15
@@ -19,7 +20,13 @@ Env COLORTERM    truecolor
 
 # --- Hidden setup: navigate to the demo repo and set a clean prompt ---
 Hide
+Type "set +m"
+Enter
+Sleep 500ms
 Type "source /tmp/utpr-demo.env"
+Enter
+Sleep 500ms
+Type "source example/02-run-and-clear.sh"
 Enter
 Sleep 500ms
 Type "cd /tmp/utpr-demo"
@@ -89,18 +96,24 @@ Enter
 Sleep 400ms
 Type "utpr push"
 Enter
-Sleep 1.5s   # git push completes; gh pr create title prompt appears
+Sleep 5s   # git push completes; gh pr create title prompt appears
 Enter        # accept the prefilled title
 Sleep 1s     # prompt: "? Body [(e) to launch vim, enter to skip]"
 Enter        # skip body
-Sleep 2s     # "What's next?" menu appears (Submit is default)
+Sleep 1s     # "What's next?" menu appears (Submit is default)
 Enter        # Submit
-Sleep 3s
+Sleep 2s
+
+# --- Hidden: merge PR #2 to simulate another contributor's activity ---
+Hide
+Type "run_and_clear gh pr merge 2 --merge"
+Enter
+Show
 
 # --- Pause work and return to main ---
 Enter
-Sleep 3s
-Type "# pause your work"
+Sleep 2s
+Type "# pause your work (someone merged a PR)"
 Enter
 Sleep 400ms
 Type "utpr pause"
@@ -118,25 +131,25 @@ Sleep 2s
 Enter
 Sleep 1.5s
 
-# --- Go back to main ---
+# --- Our PR was approved: merge it quickly without switching branches ---
 Enter
-Type "# head back to main"
+Type "# your PR was approved!"
 Enter
 Sleep 400ms
-Type "utpr pause"
+Type "gh pr merge --merge"
 Enter
-Sleep 2s
+Sleep 5s
 
-# --- Clean up after a merged PR via the PR picker ---
+# --- Clean up our local branch ---
 Enter
-Type "# clean up after a merged PR"
+Type "# clean up your local branch"
 Enter
 Sleep 400ms
 Type "utpr finish"
 Enter
 Sleep 2.5s   # gum filter loads with merged PRs that have a local branch
-Enter        # select PR #2 (feat/add-contributing)
-Sleep 1.5s   # "Finish PR #2 (branch: feat/add-contributing)?" confirm appears
+Enter        # select PR #3 (fix/1-add-project-status)
+Sleep 1.5s   # "Finish PR #3 (branch: fix/1-add-project-status)?" confirm appears
 Enter        # confirm
 Sleep 3s
 

@@ -2,9 +2,10 @@
 # Setup script for the utpr demo.
 #
 # Creates a GitHub repository seeded with initial content, one open issue,
-# and one pre-merged PR so the demo can exercise:
+# and one open PR so the demo can exercise:
 #   - `utpr init` issue picker  (issue #1: "Add project status")
-#   - `utpr finish` PR picker   (PR #2: feat/add-contributing, merged here)
+#   - `utpr pause` showing main advance (PR #2: feat/add-contributing, merged mid-demo)
+#   - `utpr finish` PR picker   (PR #3: fix/1-add-project-status, the demo's own PR)
 #
 # Issues and PRs share GitHub's number space. Creating the issue before the
 # CONTRIBUTING PR guarantees issue #1 and PR #2, making branch names
@@ -94,7 +95,7 @@ gum spin --title "Creating issue..." -- \
     --title "Add project status" \
     --body "Add a Status section to the README indicating the project is active and welcoming contributions."
 
-# --- Create and merge PR #2 (gives the demo a real merged PR to finish) ---
+# --- Create PR #2 (open but not merged; hidden merge happens mid-demo to show main advancing) ---
 info "Creating PR #2 (feat/add-contributing)..."
 git switch -c feat/add-contributing --quiet
 
@@ -122,16 +123,12 @@ gum spin --title "Creating PR..." -- \
     --body "Adds a CONTRIBUTING.md to guide new contributors." \
     --base main
 
-gum spin --title "Merging PR #2..." -- gh pr merge --squash
-
-# Return to main and pull the squash commit
+# Return to main. The remote branch stays open so the hidden demo step can merge it.
 git switch main --quiet
-gum spin --title "Pulling main..." -- git pull origin main
 
-# Keep the local branch (with its upstream tracking) so it appears in
-# `utpr finish`'s merged-PR picker during the demo recording.
-# It won't interfere with `utpr resume` because that picker sorts by
-# committerdate and `fix/1-add-project-status` will be more recent.
+# Delete the local branch so it won't appear in utpr finish's merged-PR picker
+# (the demo's `utpr finish` should only show the current feature PR).
+git branch -D feat/add-contributing
 
 # --- Write the demo environment file ---
 cat > "$ENV_FILE" << HEREDOC
