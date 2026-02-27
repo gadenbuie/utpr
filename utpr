@@ -1246,6 +1246,16 @@ cmd_pause() {
     return
   fi
 
+  local pr_state
+  pr_state="$(gh pr view --json state --jq '.state' 2>/dev/null || true)"
+  if [[ "$pr_state" == "MERGED" ]]; then
+    gum_info "The PR for branch '${current}' has already been merged."
+    if gum confirm "Finish this PR instead?" --unselected.background=""; then
+      cmd_finish
+      return
+    fi
+  fi
+
   challenge_uncommitted_changes
   challenge_unpushed_commits
   challenge_branch_behind_remote
