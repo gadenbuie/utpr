@@ -24,6 +24,19 @@ git_spin() {
   fi
 }
 
+pull_default_branch() {
+  local before
+  before="$(git rev-parse HEAD)"
+  git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+  local after
+  after="$(git rev-parse HEAD)"
+  if [[ "$before" != "$after" ]]; then
+    local n
+    n="$(git rev-list --count "${before}..${after}")"
+    gum_success "Pulled ${n} new commit(s) on ${DEFAULT_BRANCH}."
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # check_dependencies()
 # ---------------------------------------------------------------------------
@@ -1238,7 +1251,7 @@ cmd_pause() {
   challenge_branch_behind_remote
 
   switch_to_branch "$DEFAULT_BRANCH"
-  git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+  pull_default_branch
   gum_success "Paused '${current}'. Switched to ${DEFAULT_BRANCH}."
 }
 
@@ -1587,7 +1600,7 @@ cmd_forget() {
     fi
     remove_worktree "$target"
     switch_to_branch "$DEFAULT_BRANCH"
-    git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+    pull_default_branch
   else
     if ! gum confirm "Delete branch '${target}'?" --unselected.background=""; then
       gum_info "Cancelled."
@@ -1763,7 +1776,7 @@ cmd_finish() {
     switch_to_branch "$DEFAULT_BRANCH"
   fi
 
-  git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
+  pull_default_branch
 
   for pr_number in "${pr_numbers[@]}"; do
     if [[ "$from_picker" == true ]]; then
