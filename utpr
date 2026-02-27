@@ -193,7 +193,7 @@ challenge_local_branch_delete() {
   if [[ -z "$tracking" ]]; then
     gum_warn "Local branch '${branch}' has no associated remote branch."
     gum_info "If we delete '${branch}', any work that exists only on this branch may be hard for you to recover."
-    if ! gum confirm "Proceed anyway?" --default=false; then
+    if ! gum confirm "Proceed anyway?" --default=false --unselected.background=""; then
       gum_error "Cancelling."
       exit 1
     fi
@@ -205,7 +205,7 @@ challenge_local_branch_delete() {
   if [[ -n "$unpushed" ]]; then
     gum_warn "Local branch '${branch}' has 1 or more commits that have not been pushed to '${tracking}'."
     gum_info "If we delete '${branch}', this work may be hard for you to recover."
-    if ! gum confirm "Proceed anyway?" --default=false; then
+    if ! gum confirm "Proceed anyway?" --default=false --unselected.background=""; then
       gum_error "Cancelling."
       exit 1
     fi
@@ -250,7 +250,7 @@ challenge_uncommitted_changes() {
   fi
 
   gum_warn "There are uncommited changes, which may cause problems or be lost when we push, pull, switch or compare branches."
-  if ! gum confirm "Do you want to proceed anyway?" --default=false; then
+  if ! gum confirm "Do you want to proceed anyway?" --default=false --unselected.background=""; then
     exit 1
   fi
 }
@@ -261,7 +261,7 @@ challenge_unpushed_commits() {
   fi
 
   gum_warn "You have unpushed commits."
-  if ! gum confirm "You have unpushed commits. Continue?" --default=false; then
+  if ! gum confirm "You have unpushed commits. Continue?" --default=false --unselected.background=""; then
     exit 1
   fi
 }
@@ -278,7 +278,7 @@ challenge_branch_behind_remote() {
   if [[ "$behind" -gt 0 ]]; then
     gum_warn "Local branch is ${behind} commit(s) behind '${tracking}'."
     gum_info "You may want to run 'utpr pull' to update before switching away."
-    if ! gum confirm "Proceed anyway?" --default=false; then
+    if ! gum confirm "Proceed anyway?" --default=false --unselected.background=""; then
       gum_error "Cancelling."
       exit 1
     fi
@@ -469,13 +469,13 @@ remove_worktree() {
   fi
 
   gum_info "Branch '${branch}' has a worktree at: ${wt_path}"
-  if ! gum confirm "Remove worktree?"; then
+  if ! gum confirm "Remove worktree?" --unselected.background=""; then
     return 0
   fi
 
   if ! git worktree remove "$wt_path" 2>/dev/null; then
     gum_warn "Worktree has uncommitted changes."
-    if gum confirm "Force remove worktree?" --default=false; then
+    if gum confirm "Force remove worktree?" --default=false --unselected.background=""; then
       git worktree remove --force "$wt_path"
     else
       die "Cannot proceed without removing the worktree."
@@ -616,7 +616,7 @@ detect_remote_config() {
       SOURCE_REMOTE="upstream"
     else
       if [[ -n "$parent_full_name" ]]; then
-        if gum confirm "Add 'upstream' remote for '${parent_full_name}'?"; then
+        if gum confirm "Add 'upstream' remote for '${parent_full_name}'?" --unselected.background=""; then
           git remote add upstream "https://github.com/${parent_full_name}.git"
           SOURCE_REMOTE="upstream"
         else
@@ -1062,7 +1062,7 @@ cmd_init() {
     issue_author="$(printf '%s' "$issue_data" | jq -r '.author.login')"
     issue_created="$(printf '%s' "$issue_data" | jq -r '.createdAt | split("T")[0]')"
 
-    if gum confirm "Preview issue #${issue_number}?" --default=false; then
+    if gum confirm "Preview issue #${issue_number}?" --default=false --unselected.background=""; then
       printf '# #%s %s\n\n**State:** %s · **Author:** @%s · **Created:** %s\n\n%s\n' \
         "$issue_number" "$issue_title" "$issue_state" "$issue_author" "$issue_created" \
         "${issue_body:-*No description provided.*}" \
@@ -1079,7 +1079,7 @@ cmd_init() {
       fi
     fi
 
-    if gum confirm "Assign yourself to issue #${issue_number}?" --default=true; then
+    if gum confirm "Assign yourself to issue #${issue_number}?" --default=true --unselected.background=""; then
       gh issue edit "$issue_number" --add-assignee "@me" >/dev/null || \
         gum_warn "Could not assign you to issue #${issue_number}."
       gum style --foreground 2 "✔ You were assigned to issue $(gum style --foreground 6 "#${issue_number}")" >&2
@@ -1581,7 +1581,7 @@ cmd_forget() {
   challenge_local_branch_delete "$target"
 
   if [[ "$target" == "$current" ]]; then
-    if ! gum confirm "Abandon branch '${target}' and switch to ${DEFAULT_BRANCH}?"; then
+    if ! gum confirm "Abandon branch '${target}' and switch to ${DEFAULT_BRANCH}?" --unselected.background=""; then
       gum_info "Cancelled."
       return 0
     fi
@@ -1589,7 +1589,7 @@ cmd_forget() {
     switch_to_branch "$DEFAULT_BRANCH"
     git_spin "Pulling ${DEFAULT_BRANCH}..." git pull "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
   else
-    if ! gum confirm "Delete branch '${target}'?"; then
+    if ! gum confirm "Delete branch '${target}'?" --unselected.background=""; then
       gum_info "Cancelled."
       return 0
     fi
@@ -1718,12 +1718,12 @@ cmd_finish() {
 
     local n_prs="${#pr_numbers[@]}"
     if [[ "$n_prs" -eq 1 ]]; then
-      if ! gum confirm "Finish PR #${pr_numbers[0]}?"; then
+      if ! gum confirm "Finish PR #${pr_numbers[0]}?" --unselected.background=""; then
         gum_info "Cancelled."
         return 0
       fi
     else
-      if ! gum confirm "Finish ${n_prs} selected PRs?"; then
+      if ! gum confirm "Finish ${n_prs} selected PRs?" --unselected.background=""; then
         gum_info "Cancelled."
         return 0
       fi
@@ -1747,12 +1747,12 @@ cmd_finish() {
 
     if [[ "$pr_state" != "closed" ]]; then
       gum_warn "PR #${pr_number} is still open (state: ${pr_state})."
-      if ! gum confirm "Continue anyway?"; then
+      if ! gum confirm "Continue anyway?" --unselected.background=""; then
         return 0
       fi
     fi
 
-    if ! gum confirm "Finish PR #${pr_number} (branch: ${pr_branch})?"; then
+    if ! gum confirm "Finish PR #${pr_number} (branch: ${pr_branch})?" --unselected.background=""; then
       gum_info "Cancelled."
       return 0
     fi
@@ -1776,7 +1776,7 @@ cmd_finish() {
 
       if [[ "$pr_state" != "closed" ]]; then
         gum_warn "PR #${pr_number} is still open (state: ${pr_state})."
-        if ! gum confirm "Continue anyway?"; then
+        if ! gum confirm "Continue anyway?" --unselected.background=""; then
           continue
         fi
       fi
