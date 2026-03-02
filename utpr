@@ -1518,8 +1518,32 @@ cmd_pull() {
       gum_warn "No tracking branch configured. Nothing to pull."
       return 0
     fi
-    git_spin "Pulling from ${tracking}..." git pull
-    gum_success "Pulled latest changes."
+    local remote
+    remote="${tracking%%/*}"
+    git_spin "Fetching from ${remote}..." git fetch "$remote"
+    local ahead behind
+    ahead="$(git rev-list --count "@{u}..HEAD")"
+    behind="$(git rev-list --count "HEAD..@{u}")"
+    if [[ "$behind" -eq 0 ]]; then
+      gum_success "Already up to date."
+      return 0
+    fi
+    if [[ "$ahead" -gt 0 ]]; then
+      gum_warn "The remote branch has diverged from your local branch (${ahead} local commit(s) not on remote)."
+      gum_warn "This usually means the PR author force-pushed. A force-update will discard your local commits."
+      if gum confirm "Force-update local branch to match ${tracking}?" --default=false --unselected.background=""; then
+        git reset --hard "@{u}"
+        gum_success "Force-updated to match ${tracking}."
+      else
+        gum_info "To manually update, run:"
+        gum_info "  git fetch"
+        gum_info "  git reset --hard @{u}"
+        return 1
+      fi
+    else
+      git_spin "Pulling from ${tracking}..." git pull
+      gum_success "Pulled latest changes."
+    fi
   fi
 }
 
