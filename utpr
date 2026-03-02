@@ -731,7 +731,7 @@ show_help() {
     "  $(gum style --foreground 4 "fetch")       Fetch a PR from GitHub" \
     "  $(gum style --foreground 4 "push")        Push branch and create/update PR" \
     "  $(gum style --foreground 4 "pull")        Pull latest changes" \
-    "  $(gum style --foreground 4 "merge-main")  Merge default branch into current branch" \
+    "  $(gum style --foreground 4 "merge-main")  Merge or rebase default branch into current branch" \
     "  $(gum style --foreground 4 "forget")      Abandon and delete a local PR branch" \
     "  $(gum style --foreground 4 "finish")      Clean up after a merged PR" \
     "  $(gum style --foreground 4 "view")        View PR details and comments" >&2
@@ -807,9 +807,12 @@ show_command_help() {
       gum style "Pull the latest changes for the current branch from GitHub." >&2
       ;;
     merge-main)
-      gum style --bold "utpr merge-main" >&2
+      gum style --bold "utpr merge-main [--rebase]" >&2
       echo >&2
-      gum style "Merge the default branch into the current PR branch to stay up to date." >&2
+      gum style "Merge or rebase the default branch into the current PR branch to stay up to date." >&2
+      echo >&2
+      gum style --bold "Options:" >&2
+      gum style "  --rebase  Rebase onto the default branch instead of merging (requires force push if already pushed)" >&2
       ;;
     forget)
       gum style --bold "utpr forget [<branch>]" >&2
@@ -1521,29 +1524,78 @@ cmd_pull() {
 }
 
 cmd_merge_main() {
+  local do_rebase=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rebase) do_rebase=true; shift ;;
+      --help|-h) show_help merge-main; return 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
   detect_remote_config
 
   if is_on_default_branch; then
     die "Already on the default branch. Use 'utpr pull' instead."
   fi
 
+  local current tracking
+  current="$(get_current_branch)"
+  tracking="$(get_tracking_branch)"
+
+  # Determine strategy when --rebase was not explicitly passed
+  if ! "$do_rebase"; then
+    if [[ -z "$tracking" ]]; then
+      local strategy
+      strategy="$(gum choose \
+        --header "Branch '${current}' hasn't been pushed yet — rebase or merge?" \
+        "Rebase onto ${DEFAULT_BRANCH}" \
+        "Merge ${DEFAULT_BRANCH} into ${current}")" || true
+      if [[ "$strategy" == "Rebase onto ${DEFAULT_BRANCH}" ]]; then
+        do_rebase=true
+      fi
+    fi
+    # If tracking exists, do_rebase stays false → merge (no prompt)
+  fi
+
+  # If --rebase and branch is already pushed, warn and confirm
+  if "$do_rebase" && [[ -n "$tracking" ]]; then
+    gum_warn "Branch '${current}' has already been pushed to '${tracking}'."
+    gum_info "Rebasing rewrites history and will require a force push afterwards."
+    if ! gum confirm "Rebase anyway?" --default=false --unselected.background=""; then
+      gum_info "Cancelled. Run 'utpr merge-main' without --rebase to merge instead."
+      exit 1
+    fi
+  fi
+
   git_spin "Fetching ${DEFAULT_BRANCH} from ${SOURCE_REMOTE}..." \
     git fetch "$SOURCE_REMOTE" "$DEFAULT_BRANCH"
 
-  local current
-  current="$(get_current_branch)"
-  gum_info "Merging ${SOURCE_REMOTE}/${DEFAULT_BRANCH} into ${current}..."
-  if ! git merge --no-edit "${SOURCE_REMOTE}/${DEFAULT_BRANCH}"; then
-    gum_warn "Merge had conflicts. Resolve these files before continuing:"
-    local conflicts
-    conflicts="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
-    while IFS= read -r f; do
-      gum style --foreground 3 "  • ${f}" >&2
-    done <<<"$conflicts"
-    exit 1
+  if "$do_rebase"; then
+    gum_info "Rebasing ${current} onto ${SOURCE_REMOTE}/${DEFAULT_BRANCH}..."
+    if ! git rebase "${SOURCE_REMOTE}/${DEFAULT_BRANCH}"; then
+      gum_warn "Rebase had conflicts. Resolve conflicts, then run:"
+      gum style --foreground 3 "  git rebase --continue" >&2
+      exit 1
+    fi
+    gum_success "Rebased ${current} onto ${DEFAULT_BRANCH}."
+    if [[ -n "$tracking" ]]; then
+      gum_info "You will need to force push:"
+      gum style --foreground 4 "  git push --force-with-lease ${PUSH_REMOTE} ${current}" >&2
+    fi
+  else
+    gum_info "Merging ${SOURCE_REMOTE}/${DEFAULT_BRANCH} into ${current}..."
+    if ! git merge --no-edit "${SOURCE_REMOTE}/${DEFAULT_BRANCH}"; then
+      gum_warn "Merge had conflicts. Resolve these files before continuing:"
+      local conflicts
+      conflicts="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
+      while IFS= read -r f; do
+        gum style --foreground 3 "  • ${f}" >&2
+      done <<<"$conflicts"
+      exit 1
+    fi
+    gum_success "Merged ${DEFAULT_BRANCH} into ${current}."
   fi
-
-  gum_success "Merged ${DEFAULT_BRANCH} into ${current}."
 }
 
 cmd_forget() {
