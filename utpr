@@ -1069,7 +1069,7 @@ cmd_init() {
     validate_pr_number "$issue_number"
     local issue_data issue_title issue_body issue_state issue_author issue_created
     issue_data="$(gum spin --title "Looking up issue #${issue_number}..." --show-error -- \
-      gh issue view "$issue_number" --json number,title,body,state,author,createdAt)" || \
+      gh issue view "$issue_number" --json number,title,body,state,author,createdAt,assignees)" || \
       die "Failed to fetch issue #${issue_number}."
 
     issue_title="$(printf '%s' "$issue_data" | jq -r '.title')"
@@ -1077,6 +1077,8 @@ cmd_init() {
     issue_state="$(printf '%s' "$issue_data" | jq -r '.state')"
     issue_author="$(printf '%s' "$issue_data" | jq -r '.author.login')"
     issue_created="$(printf '%s' "$issue_data" | jq -r '.createdAt | split("T")[0]')"
+    local issue_assignees
+    issue_assignees="$(printf '%s' "$issue_data" | jq -r '[.assignees[].login] | join(",")')"
 
     if gum confirm "Preview issue #${issue_number}?" --default=false --unselected.background=""; then
       printf '# #%s %s\n\n**State:** %s · **Author:** @%s · **Created:** %s\n\n%s\n' \
@@ -1095,7 +1097,10 @@ cmd_init() {
       fi
     fi
 
-    if gum confirm "Assign yourself to issue #${issue_number}?" --default=true --unselected.background=""; then
+    [[ -z "$current_user" ]] && current_user="$(get_gh_login)"
+    if [[ -n "$current_user" && ",$issue_assignees," == *",$current_user,"* ]]; then
+      gum_info "You are already assigned to issue #${issue_number}."
+    elif gum confirm "Assign yourself to issue #${issue_number}?" --default=true --unselected.background=""; then
       gh issue edit "$issue_number" --add-assignee "@me" >/dev/null || \
         gum_warn "Could not assign you to issue #${issue_number}."
       gum style --foreground 2 "✔ You were assigned to issue $(gum style --foreground 6 "#${issue_number}")" >&2
