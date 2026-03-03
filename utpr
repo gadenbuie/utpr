@@ -1947,6 +1947,7 @@ cmd_view() {
 
   local view_mode="comments"
   local view_type="pr"
+  local view_type_set=false
   local pr_state="open"
   local state_set=false
   local number_arg=""
@@ -1954,8 +1955,8 @@ cmd_view() {
     case "$1" in
       --web|-w)   view_mode="web"; shift ;;
       --summary)  view_mode="summary"; shift ;;
-      --issue)    view_type="issue"; shift ;;
-      --issue=*)  view_type="issue"; number_arg="${1#--issue=}"; shift ;;
+      --issue)    view_type="issue"; view_type_set=true; shift ;;
+      --issue=*)  view_type="issue"; view_type_set=true; number_arg="${1#--issue=}"; shift ;;
       --state=*)  pr_state="${1#--state=}"; state_set=true; shift ;;
       --state)
         if [[ -z "${2:-}" ]]; then
@@ -1966,6 +1967,13 @@ cmd_view() {
       *) number_arg="$1"; shift ;;
     esac
   done
+
+  if [[ -n "$number_arg" && "$view_type_set" == false ]]; then
+    local detected_type
+    detected_type="$(gh api "repos/{owner}/{repo}/issues/${number_arg}" --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null)" || \
+      die "Could not find issue or PR #${number_arg}."
+    view_type="$detected_type"
+  fi
 
   if [[ "$view_type" == "issue" ]]; then
     case "$pr_state" in
