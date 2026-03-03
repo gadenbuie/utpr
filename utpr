@@ -85,6 +85,32 @@ gum_warn()    { gum style --foreground 3 "⚠ $*" >&2; }
 gum_error()   { gum style --foreground 1 "✖ $*" >&2; }
 gum_success() { gum style --foreground 2 "✔ $*" >&2; }
 
+strip_ansi() { printf '%s' "$1" | sed $'s/\033\\[[0-9;]*m//g'; }
+
+# Style a branch name: colors the conventional-commit prefix (e.g. feat/, fix/)
+# and leaves non-prefixed names unstyled.
+style_branch_name() {
+  local branch="$1"
+  if [[ "$branch" =~ ^([^/]+)(/.+)$ ]]; then
+    local prefix="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]}" color
+    case "$prefix" in
+      feat|feature)              color=2  ;;  # green
+      fix|hotfix|bugfix|patch)   color=1  ;;  # red
+      chore)                     color=3  ;;  # yellow
+      docs|doc)                  color=4  ;;  # blue
+      test|tests|testing)        color=6  ;;  # cyan
+      refactor|refac)            color=5  ;;  # magenta
+      perf)                      color=11 ;;  # bright yellow
+      ci|build)                  color=12 ;;  # bright blue
+      style)                     color=13 ;;  # bright magenta
+      *)                         color=8  ;;  # muted/gray
+    esac
+    printf '%s%s' "$(gum style --foreground "$color" "${prefix}/")" "${rest#/}"
+  else
+    printf '%s' "$branch"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
@@ -1285,10 +1311,23 @@ cmd_resume() {
       die "No branches to resume."
     fi
 
-    branch="$(printf '%s\n' "$branches" | gum filter --header "Select a branch to resume:")"
+    local styled_list="" wt_path b
+    while IFS= read -r b; do
+      wt_path="$(get_branch_worktree_path "$b")"
+      if [[ -n "$wt_path" ]]; then
+        styled_list+="$(style_branch_name "$b")  $(gum style --foreground 6 "[worktree]")"$'\n'
+      else
+        styled_list+="$(style_branch_name "$b")"$'\n'
+      fi
+    done <<< "$branches"
+    styled_list="${styled_list%$'\n'}"
+
+    branch="$(printf '%s\n' "$styled_list" | gum filter --no-strip-ansi --header "Select a branch to resume:")"
     if [[ -z "$branch" ]]; then
       die "No branch selected."
     fi
+    branch="$(strip_ansi "$branch")"
+    branch="${branch%  \[worktree\]}"
   fi
 
   if ! git show-ref --verify --quiet "refs/heads/${branch}"; then
@@ -1671,21 +1710,22 @@ cmd_forget() {
     while IFS= read -r branch; do
       wt_path="$(get_branch_worktree_path "$branch")"
       if [[ -n "$wt_path" ]]; then
-        branch_display_list="${branch_display_list}${branch}  [worktree]"$'\n'
+        branch_display_list+="$(style_branch_name "$branch")  $(gum style --foreground 6 "[worktree]")"$'\n'
       else
-        branch_display_list="${branch_display_list}${branch}"$'\n'
+        branch_display_list+="$(style_branch_name "$branch")"$'\n'
       fi
     done <<< "$branches"
-    branch_display_list="${branch_display_list%?}"
+    branch_display_list="${branch_display_list%$'\n'}"
 
     local branch_choice
-    branch_choice="$(printf '%s\n' "$branch_display_list" | gum filter --header "Select a branch to forget:")" || true
+    branch_choice="$(printf '%s\n' "$branch_display_list" | gum filter --no-strip-ansi --header "Select a branch to forget:")" || true
     if [[ -z "$branch_choice" ]]; then
       gum_info "Cancelled."
       return 0
     fi
 
-    target="${branch_choice%  \[worktree\]}"
+    target="$(strip_ansi "$branch_choice")"
+    target="${target%  \[worktree\]}"
   else
     target="$(get_current_branch)"
   fi
