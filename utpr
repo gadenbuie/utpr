@@ -414,13 +414,9 @@ symlink_worktree_dirs() {
     [[ ! -e "${repo_root}/${item}" ]] && continue
     if [[ -e "${worktree_dir}/${item}" ]]; then
       # Item is tracked in git — already checked out into worktree; skip picker
-      # For .claude, still auto-symlink settings.json (untracked local config)
+      # For .claude, offer settings.json (untracked local config) in the picker
       if [[ "$item" == ".claude" ]] && [[ -f "${repo_root}/.claude/settings.json" ]] && [[ ! -f "${worktree_dir}/.claude/settings.json" ]]; then
-        if ln -s "${repo_root}/.claude/settings.json" "${worktree_dir}/.claude/settings.json"; then
-          gum_success "Symlinked .claude/settings.json"
-        else
-          gum_warn "Failed to symlink .claude/settings.json."
-        fi
+        available+=(".claude/settings.json")
       fi
     else
       available+=("$item")
