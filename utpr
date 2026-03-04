@@ -1638,6 +1638,9 @@ cmd_merge_main() {
   if "$do_rebase"; then
     gum_info "Rebasing ${current} onto ${SOURCE_REMOTE}/${DEFAULT_BRANCH}..."
     if ! git rebase "${SOURCE_REMOTE}/${DEFAULT_BRANCH}"; then
+      if ! git rev-parse --verify REBASE_HEAD >/dev/null 2>&1; then
+        die "Rebase failed to start. You may have unstaged changes — commit or stash them first."
+      fi
       local conflicts
       conflicts="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
       gum_warn "Rebase has conflicts. Resolve each file, then stage it:"
