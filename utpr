@@ -756,7 +756,8 @@ show_help() {
     "  $(gum style --foreground 4 "merge-main")  Merge or rebase default branch into current branch" \
     "  $(gum style --foreground 4 "forget")      Abandon and delete a local PR branch" \
     "  $(gum style --foreground 4 "finish")      Clean up after a merged PR" \
-    "  $(gum style --foreground 4 "view")        View PR details and comments" >&2
+    "  $(gum style --foreground 4 "view")        View PR details and comments" \
+    "  $(gum style --foreground 4 "bisect")      Find the commit that introduced a bug" >&2
   echo >&2
 
   gum style --faint "Run 'utpr <command> --help' for command-specific help." >&2
@@ -868,6 +869,29 @@ show_command_help() {
       gum style "  --issue[=<number>]  View an issue instead of a PR" >&2
       gum style "  --state <state>     Filter PR picker by state: open (default), closed, merged, all" >&2
       gum style "                      Filter issue picker by state: open (default), closed, all" >&2
+      ;;
+    bisect)
+      gum style --bold "utpr bisect [--run='<cmd>'] [--no-verify] [<bad-ref>]" >&2
+      echo >&2
+      gum style "Find the commit that introduced a bug using git bisect." >&2
+      echo >&2
+      gum style "In interactive mode (default), walks you through each commit step by step." >&2
+      gum style "In automated mode (--run), runs a test command at each step automatically." >&2
+      echo >&2
+      gum style --bold "Arguments:" >&2
+      gum style "  <bad-ref>  The known-bad commit (default: HEAD)" >&2
+      echo >&2
+      gum style --bold "Options:" >&2
+      gum style "  --run='<cmd>'  Run <cmd> at each bisect step; exit 0 = good, 1-124 = bad, 125 = skip" >&2
+      gum style "  --no-verify    Skip pre-validation of the test command" >&2
+      gum style "  --verify       Force pre-validation of the test command (default: ask)" >&2
+      echo >&2
+      gum style "You can also use $(gum style --bold '--') to pass a multi-word command:" >&2
+      gum style "  utpr bisect -- npm test" >&2
+      echo >&2
+      gum style --bold "Resuming:" >&2
+      gum style "  If a bisect is already in progress, utpr bisect will detect it" >&2
+      gum style "  and offer to resume or abort." >&2
       ;;
     *)
       echo >&2
@@ -2144,6 +2168,118 @@ cmd_view() {
   esac
 }
 
+cmd_bisect() {
+  local run_cmd="" verify_mode="ask" bad_ref="HEAD"
+  local saw_double_dash=false
+
+  while [[ $# -gt 0 ]]; do
+    if [[ "$saw_double_dash" == true ]]; then
+      run_cmd="$*"
+      break
+    fi
+    case "$1" in
+      --run=*)    run_cmd="${1#--run=}"; shift ;;
+      --run)
+        if [[ -z "${2:-}" ]]; then
+          die "--run requires a command argument."
+        fi
+        run_cmd="$2"; shift 2
+        ;;
+      --no-verify) verify_mode="no"; shift ;;
+      --verify)    verify_mode="yes"; shift ;;
+      --)          saw_double_dash=true; shift ;;
+      -*)          die "Unknown option: $1" ;;
+      *)
+        if [[ "$bad_ref" != "HEAD" ]]; then
+          die "Unexpected argument: $1 (bad ref already set to '${bad_ref}')"
+        fi
+        bad_ref="$1"; shift
+        ;;
+    esac
+  done
+
+  if bisect_is_in_progress; then
+    local resume_rc=0
+    bisect_detect_and_offer_resume || resume_rc=$?
+    if [[ "$resume_rc" -eq 0 ]]; then
+      # User chose to resume
+      local bad_sha
+      if [[ -n "$run_cmd" ]]; then
+        bad_sha="$(bisect_run_automated "$run_cmd")" || return 1
+      else
+        bad_sha="$(bisect_interactive_loop)" || return 1
+      fi
+      local pr_url
+      pr_url="$(bisect_show_result "$bad_sha")"
+      bisect_cleanup_prompt "$bad_sha" "$pr_url"
+      return 0
+    elif [[ "$resume_rc" -eq 1 ]]; then
+      : # User chose abort — fall through to start fresh
+    else
+      # User cancelled
+      return 0
+    fi
+  fi
+
+  gum_info "Starting bisect. First, select a known-good commit."
+  local good_ref
+  good_ref="$(bisect_pick_good_commit)" || {
+    gum_info "Cancelled."
+    return 0
+  }
+
+  if ! git rev-parse --verify "$bad_ref" >/dev/null 2>&1; then
+    die "Bad ref '${bad_ref}' does not exist."
+  fi
+  if ! git rev-parse --verify "$good_ref" >/dev/null 2>&1; then
+    die "Good ref '${good_ref}' does not exist."
+  fi
+
+  # Pre-validate test script BEFORE starting bisect (while still on the bad ref)
+  if [[ -n "$run_cmd" ]]; then
+    local bad_sha_resolved head_sha
+    bad_sha_resolved="$(git rev-parse --verify "$bad_ref" 2>/dev/null)"
+    head_sha="$(git rev-parse HEAD)"
+    if [[ "$bad_sha_resolved" != "$head_sha" ]]; then
+      gum_warn "Skipping pre-validation: bad ref '${bad_ref}' is not the current checkout."
+      gum_info "The test command will be validated by git bisect run directly."
+    else
+      case "$verify_mode" in
+        yes) bisect_verify_script "$run_cmd" ;;
+        no)  ;;
+        ask)
+          if gum confirm "Run a quick check that the test fails on current commit first?" --default=true --unselected.background=""; then
+            bisect_verify_script "$run_cmd"
+          fi
+          ;;
+      esac
+    fi
+  fi
+
+  local start_output
+  start_output="$(git bisect start "$bad_ref" "$good_ref" 2>&1)" || {
+    printf '%s\n' "$start_output" >&2
+    die "git bisect start failed."
+  }
+
+  local progress_line
+  progress_line="$(printf '%s\n' "$start_output" | grep -o 'Bisecting:.*' || true)"
+  if [[ -n "$progress_line" ]]; then
+    gum_info "$progress_line"
+  fi
+
+  local bad_sha
+  if [[ -n "$run_cmd" ]]; then
+    bad_sha="$(bisect_run_automated "$run_cmd")" || return 1
+  else
+    bad_sha="$(bisect_interactive_loop)" || return 1
+  fi
+
+  local pr_url
+  pr_url="$(bisect_show_result "$bad_sha")"
+  bisect_cleanup_prompt "$bad_sha" "$pr_url"
+}
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -2164,6 +2300,287 @@ _cleanup_utpr_remote() {
       git remote remove "$remote"
     fi
   done < <(git remote)
+}
+
+# ---------------------------------------------------------------------------
+# Bisect helpers
+# ---------------------------------------------------------------------------
+bisect_is_in_progress() {
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null)"
+  [[ -f "${git_dir}/BISECT_LOG" ]]
+}
+
+bisect_detect_and_offer_resume() {
+  local bisect_log choice
+  bisect_log="$(git bisect log 2>/dev/null)" || return 1
+
+  local n_steps
+  n_steps="$(printf '%s\n' "$bisect_log" | grep -cE '^# (good|bad|skip)' || true)"
+
+  gum_warn "A bisect is already in progress (${n_steps} step(s) recorded)."
+  choice="$(gum choose --header "What would you like to do?" \
+    "Resume the current bisect" \
+    "Abort and start fresh" \
+    "Cancel")" || true
+
+  case "$choice" in
+    "Resume"*)
+      gum_info "Resuming bisect..."
+      return 0
+      ;;
+    "Abort"*)
+      if gum confirm "This will reset the bisect state. Continue?" --unselected.background=""; then
+        if ! git bisect reset >/dev/null 2>&1; then
+          die "Failed to reset bisect state while aborting."
+        fi
+        gum_success "Bisect aborted."
+        return 1
+      fi
+      gum_info "Cancelled."
+      return 2
+      ;;
+    *)
+      gum_info "Cancelled."
+      return 2
+      ;;
+  esac
+}
+
+bisect_pick_good_commit() {
+  local picker_items="" tag_line commit_line choice ref
+
+  local tag_data
+  tag_data="$(git tag --sort=-creatordate --format='%(refname:short)	%(creatordate:relative)' 2>/dev/null | head -20)" || true
+  if [[ -n "$tag_data" ]]; then
+    while IFS=$'\t' read -r tag date; do
+      [[ -z "$tag" ]] && continue
+      tag_line="[tag]    ${tag}  (${date})"
+      picker_items="${picker_items}${tag_line}"$'\n'
+    done <<< "$tag_data"
+  fi
+
+  local commit_data
+  commit_data="$(git log --format='%h	%s	%cr' -20 2>/dev/null)" || true
+  if [[ -n "$commit_data" ]]; then
+    while IFS=$'\t' read -r hash subject reldate; do
+      [[ -z "$hash" ]] && continue
+      commit_line="[commit] ${hash} ${subject}  (${reldate})"
+      picker_items="${picker_items}${commit_line}"$'\n'
+    done <<< "$commit_data"
+  fi
+
+  picker_items="${picker_items}[date]   Enter a date or time..."
+
+  choice="$(printf '%s\n' "$picker_items" | gum filter --header "Select the last known good commit:")" || true
+  if [[ -z "$choice" ]]; then
+    return 1
+  fi
+
+  case "$choice" in
+    "[tag]"*)
+      ref="$(printf '%s' "$choice" | sed 's/^\[tag\] *//; s/  *(.*$//')"
+      ref="${ref%% }"
+      ;;
+    "[commit]"*)
+      ref="$(printf '%s' "$choice" | awk '{print $2}')"
+      ;;
+    "[date]"*)
+      local date_input date_ref
+      while true; do
+        date_input="$(gum input --header "Enter a date (e.g. '2 weeks ago', '2024-01-15'):" --placeholder "2 weeks ago")" || true
+        if [[ -z "$date_input" ]]; then
+          return 1
+        fi
+        date_ref="$(git rev-list -1 --before="$date_input" HEAD 2>/dev/null)" || true
+        if [[ -n "$date_ref" ]]; then
+          break
+        fi
+        gum_error "No commit found before '${date_input}'. Try again."
+      done
+      ref="$date_ref"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ -z "$ref" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$ref"
+}
+
+bisect_show_current_commit() {
+  local info
+  info="$(git log -1 --format='%C(yellow)%h%C(reset) %C(bold)%s%C(reset)%n%C(cyan)%an%C(reset) · %cr' HEAD 2>/dev/null)"
+  if [[ -n "$info" ]]; then
+    printf '%s\n' "$info" >&2
+  fi
+}
+
+bisect_interactive_loop() {
+  local output mark bad_sha
+
+  while true; do
+    echo >&2
+    bisect_show_current_commit
+
+    mark="$(gum choose --header "Is this commit good or bad?" "bad" "good" "skip")" || true
+    if [[ -z "$mark" ]]; then
+      gum_warn "No selection made."
+      if gum confirm "Abort the bisect?" --default=false --unselected.background=""; then
+        if ! git bisect reset >/dev/null 2>&1; then
+          die "Failed to reset bisect state while aborting."
+        fi
+        gum_info "Bisect aborted."
+        return 1
+      fi
+      continue
+    fi
+
+    local bisect_rc=0
+    output="$(git bisect "$mark" 2>&1)" || bisect_rc=$?
+
+    if [[ "$bisect_rc" -ne 0 ]] && ! printf '%s\n' "$output" | grep -q "is the first bad commit"; then
+      printf '%s\n' "$output" >&2
+      die "git bisect ${mark} failed."
+    fi
+
+    if printf '%s\n' "$output" | grep -q "is the first bad commit"; then
+      bad_sha="$(printf '%s\n' "$output" | head -1 | cut -d' ' -f1)"
+      printf '%s\n' "$bad_sha"
+      return 0
+    fi
+
+    local progress_line
+    progress_line="$(printf '%s\n' "$output" | grep -o 'Bisecting:.*' || true)"
+    if [[ -n "$progress_line" ]]; then
+      gum_info "$progress_line"
+    fi
+  done
+}
+
+bisect_verify_script() {
+  local cmd="$1"
+  local rc=0
+  gum_info "Verifying test command fails on current HEAD..."
+  sh -c "$cmd" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    die "Test command exited 0 (success) on current HEAD. Expected failure — check your command."
+  elif [[ "$rc" -eq 125 ]]; then
+    die "Test command exited 125 (skip) on current HEAD. Exit code 125 tells git bisect to skip the commit, not mark it as bad. Check your command."
+  elif [[ "$rc" -ge 128 ]]; then
+    die "Test command exited ${rc} on current HEAD. Exit codes >= 128 cause git bisect run to abort immediately. Check your command."
+  fi
+  gum_success "Test command correctly fails on HEAD (exit code ${rc})."
+}
+
+bisect_run_automated() {
+  local cmd="$1"
+  local tmpfile bad_sha bisect_rc=0
+
+  gum_info "Running automated bisect..."
+  echo >&2
+
+  tmpfile="$(mktemp)"
+  # Run directly (no pipe) so we capture the actual exit code
+  git bisect run sh -c "$cmd" > "$tmpfile" 2>&1 || bisect_rc=$?
+
+  # Display the output
+  cat "$tmpfile" >&2
+
+  bad_sha="$(grep "is the first bad commit" "$tmpfile" | head -1 | cut -d' ' -f1)"
+  rm -f "$tmpfile"
+
+  if [[ -z "$bad_sha" ]]; then
+    if [[ "$bisect_rc" -ne 0 ]]; then
+      die "git bisect run failed (exit code ${bisect_rc}). Check your test command."
+    fi
+    die "Could not determine the bad commit from bisect output."
+  fi
+
+  printf '%s\n' "$bad_sha"
+}
+
+bisect_find_pr() {
+  local sha="$1"
+  local pr_json pr_number pr_title pr_author pr_url
+
+  pr_json="$(gh pr list --search "$sha" --state all --json number,title,url,author --limit 1 2>/dev/null)" || true
+
+  if [[ -z "$pr_json" || "$(printf '%s' "$pr_json" | jq 'length')" -eq 0 ]]; then
+    gum_info "No associated PR found for this commit."
+    return 0
+  fi
+
+  pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number')"
+  pr_title="$(printf '%s' "$pr_json" | jq -r '.[0].title')"
+  pr_author="$(printf '%s' "$pr_json" | jq -r '.[0].author.login')"
+  pr_url="$(printf '%s' "$pr_json" | jq -r '.[0].url')"
+
+  echo >&2
+  gum style --bold "Associated PR:" >&2
+  gum style "  $(gum style --foreground 6 "#${pr_number}") ${pr_title}" >&2
+  gum style "  $(gum style --foreground 3 "${pr_author}") · ${pr_url}" >&2
+
+  # Print URL to stdout for caller to capture
+  printf '%s\n' "$pr_url"
+}
+
+bisect_show_result() {
+  local sha="$1"
+  local info
+
+  echo >&2
+  gum style --bold --foreground 1 "Found the first bad commit:" >&2
+  echo >&2
+
+  info="$(git log -1 --format='  %C(yellow)%H%C(reset)%n  %C(bold)%s%C(reset)%n  %C(cyan)%an <%ae>%C(reset) · %ci' "$sha" 2>/dev/null)"
+  if [[ -n "$info" ]]; then
+    printf '%s\n' "$info" >&2
+  fi
+
+  # Print PR URL to stdout (empty if no PR found)
+  bisect_find_pr "$sha"
+}
+
+bisect_cleanup_prompt() {
+  local bad_sha="$1" pr_url="${2:-}"
+  local options=("Reset to original branch (git bisect reset)" "Stay at the bad commit")
+  [[ -n "$pr_url" ]] && options+=("Open PR in browser")
+
+  echo >&2
+  local choice
+  choice="$(gum choose --header "What would you like to do?" "${options[@]}")" || true
+
+  case "$choice" in
+    "Reset"*)
+      if ! git bisect reset >/dev/null 2>&1; then
+        die "Failed to reset bisect state."
+      fi
+      gum_success "Bisect reset. Back on your original branch."
+      ;;
+    "Stay"*)
+      gum_info "Staying at commit ${bad_sha:0:10}. Run 'git bisect reset' when you're done."
+      ;;
+    "Open"*)
+      open_url "$pr_url"
+      gum_success "Opened PR in browser."
+      if gum confirm "Reset the bisect now?" --unselected.background=""; then
+        if ! git bisect reset >/dev/null 2>&1; then
+          die "Failed to reset bisect state after opening PR."
+        fi
+        gum_success "Bisect reset."
+      else
+        gum_info "Run 'git bisect reset' when you're done."
+      fi
+      ;;
+    *)
+      gum_info "Run 'git bisect reset' when you're done."
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -2212,6 +2629,7 @@ main() {
     forget)      cmd_forget "$@" ;;
     finish)      cmd_finish "$@" ;;
     view)        cmd_view "$@" ;;
+    bisect)      cmd_bisect "$@" ;;
     *)
       echo >&2
       show_help
