@@ -2,11 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
+	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -42,6 +41,15 @@ func runView(cmd *cobra.Command, args []string) error {
 
 	cfg := remote.Require()
 
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
+	if err != nil {
+		return ui.Dief("Could not determine remote URL for '%s'.", cfg.SourceRemote)
+	}
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
+		return ui.Dief("Could not parse repository from remote URL: %s", sourceURL)
+	}
+
 	viewType := "pr"
 	viewTypeExplicit := cmd.Flags().Changed("issue")
 	if viewTypeExplicit {
@@ -61,7 +69,11 @@ func runView(cmd *cobra.Command, args []string) error {
 
 	// Auto-detect PR vs issue when given a number
 	if numberArg != "" && !viewTypeExplicit {
-		detected, err := detectPROrIssue(numberArg)
+		n, convErr := strconv.Atoi(numberArg)
+		if convErr != nil {
+			return ui.Dief("Invalid number: %s", numberArg)
+		}
+		detected, err := detectPROrIssue(ownerRepo, n)
 		if err != nil {
 			return ui.Dief("Could not find issue or PR #%s.", numberArg)
 		}
@@ -69,23 +81,23 @@ func runView(cmd *cobra.Command, args []string) error {
 	}
 
 	if viewType == "issue" {
-		return viewIssue(numberArg)
+		return viewIssue(ownerRepo, numberArg)
 	}
-	return viewPR(numberArg, cfg)
+	return viewPR(ownerRepo, numberArg, cfg)
 }
 
-func detectPROrIssue(number string) (string, error) {
-	ghCmd := exec.Command("gh", "api",
-		fmt.Sprintf("repos/{owner}/{repo}/issues/%s", number),
-		"--jq", `if .pull_request then "pr" else "issue" end`)
-	out, err := ghCmd.Output()
+func detectPROrIssue(ownerRepo string, number int) (string, error) {
+	issue, err := gh.GetIssue(ownerRepo, number)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	if issue.PullRequest != nil {
+		return "pr", nil
+	}
+	return "issue", nil
 }
 
-func viewIssue(numberArg string) error {
+func viewIssue(ownerRepo, numberArg string) error {
 	// Validate state
 	switch flagViewState {
 	case "open", "closed", "all":
@@ -95,103 +107,129 @@ func viewIssue(numberArg string) error {
 		return ui.Dief("Invalid --state value: '%s' (expected: open, closed, all)", flagViewState)
 	}
 
-	var issueNumber string
+	var issueNumber int
 	if numberArg != "" {
-		issueNumber = numberArg
+		n, err := strconv.Atoi(numberArg)
+		if err != nil {
+			return ui.Dief("Invalid issue number: %s", numberArg)
+		}
+		issueNumber = n
 	} else {
-		n, err := pickForView("issue")
+		n, err := pickForView(ownerRepo, "issue")
 		if err != nil {
 			return err
 		}
-		issueNumber = strconv.Itoa(n)
+		issueNumber = n
 	}
 
 	if flagViewWeb {
-		webCmd := exec.Command("gh", "issue", "view", issueNumber, "--web")
-		webCmd.Stderr = os.Stderr
-		return webCmd.Run()
+		return openURL(fmt.Sprintf("https://github.com/%s/issues/%d", ownerRepo, issueNumber))
 	}
+
+	issue, err := gh.GetIssue(ownerRepo, issueNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch issue #%d.", issueNumber)
+	}
+
 	if flagViewSummary {
-		return ghViewSummary("issue", issueNumber)
+		return renderIssueSummary(issue)
 	}
-	ghCmd := exec.Command("gh", "issue", "view", issueNumber, "--comments")
-	ghCmd.Stdout = os.Stdout
-	ghCmd.Stderr = os.Stderr
-	return ghCmd.Run()
+
+	comments, err := gh.ListIssueComments(ownerRepo, issueNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch comments for issue #%d.", issueNumber)
+	}
+	return renderIssueWithComments(issue, comments)
 }
 
-func viewPR(numberArg string, cfg *remote.Config) error {
+func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	switch flagViewState {
 	case "open", "closed", "merged", "all":
 	default:
 		return ui.Dief("Invalid --state value: '%s' (expected: open, closed, merged, all)", flagViewState)
 	}
 
-	var prNumber string
+	var prNumber int
 	if numberArg != "" {
-		prNumber = numberArg
+		n, err := strconv.Atoi(numberArg)
+		if err != nil {
+			return ui.Dief("Invalid PR number: %s", numberArg)
+		}
+		prNumber = n
 	} else {
 		onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 		if !onDefault && flagViewState == "open" {
-			// Try to get PR for current branch
-			ghCmd := exec.Command("gh", "pr", "view", "--json", "number", "--jq", ".number")
-			out, err := ghCmd.Output()
-			if err == nil && strings.TrimSpace(string(out)) != "" {
-				prNumber = strings.TrimSpace(string(out))
+			branch, err := git.GetCurrentBranch()
+			if err == nil {
+				pr, err := gh.GetPRForBranch(ownerRepo, branch)
+				if err == nil && pr != nil {
+					prNumber = pr.Number
+				}
 			}
 		}
-		if prNumber == "" {
-			n, err := pickForView("pr")
+		if prNumber == 0 {
+			n, err := pickForView(ownerRepo, "pr")
 			if err != nil {
 				return err
 			}
-			prNumber = strconv.Itoa(n)
+			prNumber = n
 		}
 	}
 
 	if flagViewWeb {
-		webCmd := exec.Command("gh", "pr", "view", prNumber, "--web")
-		webCmd.Stderr = os.Stderr
-		return webCmd.Run()
+		return openURL(fmt.Sprintf("https://github.com/%s/pull/%d", ownerRepo, prNumber))
 	}
+
+	pr, err := gh.GetPR(ownerRepo, prNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch PR #%d.", prNumber)
+	}
+
 	if flagViewSummary {
-		return ghViewSummary("pr", prNumber)
+		return renderPRSummary(pr)
 	}
-	ghCmd := exec.Command("gh", "pr", "view", prNumber, "--comments")
-	ghCmd.Stdout = os.Stdout
-	ghCmd.Stderr = os.Stderr
-	return ghCmd.Run()
+
+	comments, err := gh.ListIssueComments(ownerRepo, prNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch comments for PR #%d.", prNumber)
+	}
+	return renderPRWithComments(pr, comments)
 }
 
 // pickForView lists issues or PRs and lets the user pick one.
 // entity is "issue" or "pr".
-func pickForView(entity string) (int, error) {
-	ghCmd := exec.Command("gh", entity, "list", "--state", flagViewState,
-		"--json", "number,title,author,updatedAt,state",
-		"--jq", `sort_by(.updatedAt) | reverse | .[] | "#\(.number)\t\(.title)\t\(.author.login)"`)
-
+func pickForView(ownerRepo, entity string) (int, error) {
 	label := "issues"
 	if entity == "pr" {
 		label = "PRs"
 	}
 
-	out, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() (string, error) {
-		output, err := ghCmd.Output()
-		return string(output), err
-	})
-	if err != nil {
-		return 0, ui.Dief("Failed to list %s.", label)
-	}
-	if strings.TrimSpace(out) == "" {
-		return 0, ui.Dief("No %s %s found.", flagViewState, label)
-	}
-
-	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var displayItems []string
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) >= 2 {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
+	if entity == "issue" {
+		issues, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.IssueInfo, error) {
+			return gh.ListIssues(ownerRepo, flagViewState)
+		})
+		if err != nil {
+			return 0, ui.Dief("Failed to list %s.", label)
+		}
+		if len(issues) == 0 {
+			return 0, ui.Dief("No %s %s found.", flagViewState, label)
+		}
+		for _, issue := range issues {
+			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", issue.Number, issue.Title))
+		}
+	} else {
+		prs, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
+			return gh.ListPRs(ownerRepo, flagViewState)
+		})
+		if err != nil {
+			return 0, ui.Dief("Failed to list %s.", label)
+		}
+		if len(prs) == 0 {
+			return 0, ui.Dief("No %s %s found.", flagViewState, label)
+		}
+		for _, pr := range prs {
+			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
 		}
 	}
 
@@ -211,16 +249,80 @@ func addArticle(entity string) string {
 	return "a PR"
 }
 
-// ghViewSummary displays a formatted summary of an issue or PR.
-// entity is "issue" or "pr".
-func ghViewSummary(entity, number string) error {
-	ghCmd := exec.Command("gh", entity, "view", number,
-		"--json", "number,title,body,author,state,labels",
-		"--jq", `"# #\(.number) \(.title)\n\n**Author:** \(.author.login) · **State:** \(.state)\(if (.labels | length) > 0 then (" · **Labels:** " + (.labels | map(.name) | join(", "))) else "" end)\n\n\(if (.body // "") != "" then .body else "*No description provided.*" end)"`)
-	out, err := ghCmd.Output()
-	if err != nil {
-		return ui.Dief("Failed to fetch %s #%s.", entity, number)
+func formatLabelNames(names []string) string {
+	if len(names) == 0 {
+		return ""
 	}
-	fmt.Print(string(out))
+	return " · **Labels:** " + strings.Join(names, ", ")
+}
+
+func renderIssueSummary(issue *gh.IssueInfo) error {
+	body := issue.Body
+	if body == "" {
+		body = "*No description provided.*"
+	}
+	var labelNames []string
+	for _, l := range issue.Labels {
+		labelNames = append(labelNames, l.Name)
+	}
+	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s\n\n%s",
+		issue.Number, issue.Title, issue.User.Login, issue.State,
+		formatLabelNames(labelNames), body)
+	rendered, err := ui.RenderMarkdown(md)
+	if err != nil {
+		return err
+	}
+	fmt.Print(rendered)
+	return nil
+}
+
+func renderIssueWithComments(issue *gh.IssueInfo, comments []gh.Comment) error {
+	if err := renderIssueSummary(issue); err != nil {
+		return err
+	}
+	return renderComments(comments)
+}
+
+func renderPRSummary(pr *gh.PRInfo) error {
+	body := pr.Body
+	if body == "" {
+		body = "*No description provided.*"
+	}
+	var labelNames []string
+	for _, l := range pr.Labels {
+		labelNames = append(labelNames, l.Name)
+	}
+	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s\n\n%s",
+		pr.Number, pr.Title, pr.User.Login, pr.State,
+		formatLabelNames(labelNames), body)
+	rendered, err := ui.RenderMarkdown(md)
+	if err != nil {
+		return err
+	}
+	fmt.Print(rendered)
+	return nil
+}
+
+func renderPRWithComments(pr *gh.PRInfo, comments []gh.Comment) error {
+	if err := renderPRSummary(pr); err != nil {
+		return err
+	}
+	return renderComments(comments)
+}
+
+func renderComments(comments []gh.Comment) error {
+	for _, c := range comments {
+		date := c.CreatedAt
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		commentMD := fmt.Sprintf("---\n**@%s** commented on %s:\n\n%s",
+			c.Author.Login, date, c.Body)
+		rendered, err := ui.RenderMarkdown(commentMD)
+		if err != nil {
+			return err
+		}
+		fmt.Print(rendered)
+	}
 	return nil
 }

@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
 
+	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -89,12 +88,27 @@ func pullDefaultBranch(cfg *remote.Config) error {
 	return nil
 }
 
-// ghPRViewState gets the PR state for the current branch via gh CLI.
+// ghPRViewState gets the PR state for the current branch via the GitHub API.
 func ghPRViewState() (string, error) {
-	cmd := exec.Command("gh", "pr", "view", "--json", "state", "--jq", ".state")
-	out, err := cmd.Output()
+	cfg := remote.Require()
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
+		return "", err
+	}
+	branch, err := git.GetCurrentBranch()
+	if err != nil {
+		return "", err
+	}
+	pr, err := gh.GetPRForBranch(ownerRepo, branch)
+	if err != nil {
+		return "", err
+	}
+	if pr == nil {
+		return "", fmt.Errorf("no open PR found for branch '%s'", branch)
+	}
+	return pr.State, nil
 }

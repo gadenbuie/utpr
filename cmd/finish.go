@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,16 +60,16 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			}
 			n := extractPRNumberFromURL(prURL)
 			if n == 0 {
-				// Try gh pr view
-				ghCmd := exec.Command("gh", "pr", "view", "--json", "number", "--jq", ".number")
-				out, err := ghCmd.Output()
-				if err != nil {
+				// Try GitHub API
+				currentBranch, branchErr := git.GetCurrentBranch()
+				if branchErr != nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
-				n, err = strconv.Atoi(strings.TrimSpace(string(out)))
-				if err != nil {
+				pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch)
+				if prErr != nil || pr == nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
+				n = pr.Number
 			}
 			prNumbers = []int{n}
 		} else {
@@ -187,39 +186,23 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 }
 
 func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
-	// Find merged PRs that have local branches
-	ghCmd := exec.Command("gh", "api", "graphql",
-		"-f", fmt.Sprintf("query=query { search(query: \"repo:%s is:pr is:merged\", type: ISSUE, first: 50) { nodes { ... on PullRequest { number title author { login } headRefName } } } }", sourceRepo),
-		"--jq", `.data.search.nodes[] | "#\(.number)\t\(.title)\t\(.author.login)\t\(.headRefName)"`)
-
-	out, err := ui.SpinWithResult("Checking for merged PRs...", func() (string, error) {
-		output, err := ghCmd.Output()
-		return string(output), err
+	mergedPRs, err := ui.SpinWithResult("Checking for merged PRs...", func() ([]gh.MergedPRInfo, error) {
+		return gh.SearchMergedPRs(sourceRepo, 50)
 	})
-	if err != nil || strings.TrimSpace(out) == "" {
+	if err != nil || len(mergedPRs) == 0 {
 		// Fallback: check branches individually
-		return pickMergedPRsFallback(cfg)
+		return pickMergedPRsFallback(cfg, sourceRepo)
 	}
 
 	// Filter to only PRs that have a local branch
 	var displayItems []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		parts := strings.SplitN(line, "\t", 4)
-		if len(parts) < 4 {
-			continue
-		}
-		headRef := parts[3]
-		hasLocal := git.BranchExists(headRef)
+	for _, pr := range mergedPRs {
+		hasLocal := git.BranchExists(pr.HeadRefName)
 		if !hasLocal {
-			// Check pr-N/branch pattern
-			re := regexp.MustCompile(`^#(\d+)`)
-			m := re.FindStringSubmatch(parts[0])
-			if m != nil {
-				hasLocal = git.BranchExists(fmt.Sprintf("pr-%s/%s", m[1], headRef))
-			}
+			hasLocal = git.BranchExists(fmt.Sprintf("pr-%d/%s", pr.Number, pr.HeadRefName))
 		}
 		if hasLocal {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
+			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
 		}
 	}
 
@@ -250,7 +233,7 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 	return []int{n}, nil
 }
 
-func pickMergedPRsFallback(cfg *remote.Config) ([]int, error) {
+func pickMergedPRsFallback(cfg *remote.Config, sourceRepo string) ([]int, error) {
 	branchOutput, _ := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
 	branches := strings.Split(branchOutput, "\n")
 
@@ -261,18 +244,11 @@ func pickMergedPRsFallback(cfg *remote.Config) ([]int, error) {
 		if branch == "" || branch == cfg.DefaultBranch {
 			continue
 		}
-		// Check if there's a merged PR for this branch
-		ghCmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "merged",
-			"--json", "number,title", "--jq", `first | select(. != null) | "#\(.number)\t\(.title)"`)
-		out, err := ghCmd.Output()
-		if err != nil || strings.TrimSpace(string(out)) == "" {
+		pr, err := gh.GetMergedPRForBranch(sourceRepo, branch)
+		if err != nil || pr == nil {
 			continue
 		}
-		line := strings.TrimSpace(string(out))
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) >= 2 {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-		}
+		displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
 	}
 
 	if len(displayItems) == 0 {

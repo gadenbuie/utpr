@@ -78,15 +78,11 @@ func checkPrerequisites() error {
 		fmt.Fprintln(os.Stderr, "Missing dependency: git")
 		return fmt.Errorf("git is not installed")
 	}
-	if !gh.IsInstalled() {
-		fmt.Fprintln(os.Stderr, "Missing dependency: gh")
-		return fmt.Errorf("gh is not installed")
-	}
 	if !git.IsInsideWorkTree() {
 		return ui.Die("Not inside a git repository (or worktree). Run utpr from a repository checkout.")
 	}
 	if !gh.IsAuthenticated() {
-		return ui.Die("gh is not authenticated. Run: gh auth login")
+		return ui.Die("GitHub authentication not found. Run 'gh auth login' or set GITHUB_TOKEN.")
 	}
 	return nil
 }

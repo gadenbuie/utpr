@@ -1,13 +1,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
+	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -350,20 +351,20 @@ func bisectShowResult(sha string) string {
 }
 
 func bisectFindPR(sha string) string {
-	ghCmd := exec.Command("gh", "pr", "list", "--search", sha, "--state", "all",
-		"--json", "number,title,url,author", "--limit", "1")
-	out, err := ghCmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "[]" {
+	cfg := remote.Require()
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
+	if err != nil {
+		ui.Info("No associated PR found for this commit.")
+		return ""
+	}
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
 		ui.Info("No associated PR found for this commit.")
 		return ""
 	}
 
-	var prs []struct {
-		Number int    `json:"number"`
-		Title  string `json:"title"`
-		URL    string `json:"url"`
-	}
-	if err := json.Unmarshal(out, &prs); err != nil || len(prs) == 0 {
+	prs, err := gh.SearchPRsByCommit(ownerRepo, sha)
+	if err != nil || len(prs) == 0 {
 		ui.Info("No associated PR found for this commit.")
 		return ""
 	}
@@ -371,8 +372,8 @@ func bisectFindPR(sha string) string {
 	pr := prs[0]
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "Associated PR: #%d %s\n", pr.Number, pr.Title)
-	fmt.Fprintf(os.Stderr, "  %s\n", pr.URL)
-	return pr.URL
+	fmt.Fprintf(os.Stderr, "  %s\n", pr.HTMLURL)
+	return pr.HTMLURL
 }
 
 func bisectCleanupPrompt(badSHA, prURL string) error {

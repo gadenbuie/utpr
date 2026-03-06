@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -129,28 +127,29 @@ func configureFetchedBranch(localBranch, remoteName, headRef, prURL string) {
 }
 
 func pickPR(header string) (int, error) {
-	ghCmd := exec.Command("gh", "pr", "list",
-		"--json", "number,title,author,headRefName,updatedAt",
-		"--jq", `sort_by(.updatedAt) | reverse | .[] | "#\(.number)\t\(.title)\t\(.author.login)"`)
+	cfg := remote.Require()
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
+	if err != nil {
+		return 0, ui.Die("Could not determine remote URL.")
+	}
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
+		return 0, ui.Die("Could not parse repository from remote URL.")
+	}
 
-	out, err := ui.SpinWithResult("Getting open PRs...", func() (string, error) {
-		output, err := ghCmd.Output()
-		return string(output), err
+	prs, err := ui.SpinWithResult("Getting open PRs...", func() ([]gh.PRInfo, error) {
+		return gh.ListPRs(ownerRepo, "open")
 	})
 	if err != nil {
 		return 0, ui.Die("Failed to list PRs.")
 	}
-	if strings.TrimSpace(out) == "" {
+	if len(prs) == 0 {
 		return 0, ui.Die("No open PRs found.")
 	}
 
-	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var displayItems []string
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) >= 2 {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-		}
+	for _, pr := range prs {
+		displayItems = append(displayItems, fmt.Sprintf("#%d\t%s\t%s", pr.Number, pr.Title, pr.User.Login))
 	}
 
 	selected, err := ui.Choose(header, displayItems)

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -132,28 +131,29 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func pickIssue() (int, error) {
-	ghCmd := exec.Command("gh", "issue", "list",
-		"--json", "number,title,author,assignees,labels,updatedAt",
-		"--jq", `sort_by(.updatedAt) | reverse | .[] | "#\(.number)\t\(.title)\t\(.author.login)"`)
+	cfg := remote.Require()
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
+	if err != nil {
+		return 0, ui.Die("Could not determine remote URL.")
+	}
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
+		return 0, ui.Die("Could not parse repository from remote URL.")
+	}
 
-	out, err := ui.SpinWithResult("Getting open issues...", func() (string, error) {
-		output, err := ghCmd.Output()
-		return string(output), err
+	issues, err := ui.SpinWithResult("Getting open issues...", func() ([]gh.IssueInfo, error) {
+		return gh.ListIssues(ownerRepo, "open")
 	})
 	if err != nil {
 		return 0, ui.Die("Failed to list issues.")
 	}
-	if strings.TrimSpace(out) == "" {
+	if len(issues) == 0 {
 		return 0, ui.Die("No open issues found. Provide a branch name to proceed.")
 	}
 
-	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var displayItems []string
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) >= 2 {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-		}
+	for _, issue := range issues {
+		displayItems = append(displayItems, fmt.Sprintf("#%d\t%s\t%s", issue.Number, issue.Title, issue.User.Login))
 	}
 
 	selected, err := ui.Choose("Select an issue to work on:", displayItems)
