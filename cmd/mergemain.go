@@ -44,8 +44,10 @@ func runMergeMain(cmd *cobra.Command, args []string) error {
 	}
 	tracking := git.GetTrackingBranch()
 
+	useRebase := mergeMainRebase
+
 	// If --rebase was not explicitly passed, decide strategy
-	if !mergeMainRebase {
+	if !useRebase {
 		if tracking == "" {
 			strategy, err := ui.Choose(
 				fmt.Sprintf("Branch '%s' hasn't been pushed yet — rebase or merge?", current),
@@ -57,14 +59,14 @@ func runMergeMain(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			if strategy == fmt.Sprintf("Rebase onto %s", cfg.DefaultBranch) {
-				mergeMainRebase = true
+			if strings.HasPrefix(strategy, "Rebase") {
+				useRebase = true
 			}
 		}
 	}
 
 	// Warn about rebase + already-pushed
-	if mergeMainRebase && tracking != "" {
+	if useRebase && tracking != "" {
 		ui.Warnf("Branch '%s' has already been pushed to '%s'.", current, tracking)
 		ui.Info("Rebasing rewrites history and will require a force push afterwards.")
 		if err := ui.MustConfirm("Rebase anyway?", false); err != nil {
@@ -86,7 +88,7 @@ func runMergeMain(cmd *cobra.Command, args []string) error {
 
 	upstreamRef := fmt.Sprintf("%s/%s", cfg.SourceRemote, cfg.DefaultBranch)
 
-	if mergeMainRebase {
+	if useRebase {
 		ui.Infof("Rebasing %s onto %s...", current, upstreamRef)
 		if err := git.RunInteractive("rebase", upstreamRef); err != nil {
 			// Check if rebase actually started (has conflicts) vs failed to start

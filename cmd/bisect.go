@@ -291,8 +291,11 @@ func bisectInteractiveLoop() (string, error) {
 		}
 
 		if strings.Contains(out, "is the first bad commit") {
-			badSHA := strings.Fields(out)[0]
-			return badSHA, nil
+			fields := strings.Fields(out)
+			if len(fields) == 0 {
+				return "", ui.Die("Could not parse bad commit SHA from bisect output.")
+			}
+			return fields[0], nil
 		}
 
 		if progress := extractBisectProgress(out); progress != "" {
@@ -313,7 +316,10 @@ func bisectRunAutomated(runCmd string) (string, error) {
 
 	for _, line := range strings.Split(string(combined), "\n") {
 		if strings.Contains(line, "is the first bad commit") {
-			return strings.Fields(line)[0], nil
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				return fields[0], nil
+			}
 		}
 	}
 

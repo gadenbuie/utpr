@@ -69,7 +69,7 @@ func runView(cmd *cobra.Command, args []string) error {
 	}
 
 	if viewType == "issue" {
-		return viewIssue(numberArg, cfg)
+		return viewIssue(numberArg)
 	}
 	return viewPR(numberArg, cfg)
 }
@@ -85,7 +85,7 @@ func detectPROrIssue(number string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func viewIssue(numberArg string, cfg *remote.Config) error {
+func viewIssue(numberArg string) error {
 	// Validate state
 	switch flagViewState {
 	case "open", "closed", "all":
@@ -99,7 +99,7 @@ func viewIssue(numberArg string, cfg *remote.Config) error {
 	if numberArg != "" {
 		issueNumber = numberArg
 	} else {
-		n, err := pickIssueForView(cfg)
+		n, err := pickForView("issue")
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func viewIssue(numberArg string, cfg *remote.Config) error {
 		return webCmd.Run()
 	}
 	if flagViewSummary {
-		return ghIssueViewSummary(issueNumber)
+		return ghViewSummary("issue", issueNumber)
 	}
 	ghCmd := exec.Command("gh", "issue", "view", issueNumber, "--comments")
 	ghCmd.Stdout = os.Stdout
@@ -141,7 +141,7 @@ func viewPR(numberArg string, cfg *remote.Config) error {
 			}
 		}
 		if prNumber == "" {
-			n, err := pickPRForView(cfg)
+			n, err := pickForView("pr")
 			if err != nil {
 				return err
 			}
@@ -155,7 +155,7 @@ func viewPR(numberArg string, cfg *remote.Config) error {
 		return webCmd.Run()
 	}
 	if flagViewSummary {
-		return ghPRViewSummary(prNumber)
+		return ghViewSummary("pr", prNumber)
 	}
 	ghCmd := exec.Command("gh", "pr", "view", prNumber, "--comments")
 	ghCmd.Stdout = os.Stdout
@@ -163,20 +163,27 @@ func viewPR(numberArg string, cfg *remote.Config) error {
 	return ghCmd.Run()
 }
 
-func pickIssueForView(cfg *remote.Config) (int, error) {
-	ghCmd := exec.Command("gh", "issue", "list", "--state", flagViewState,
+// pickForView lists issues or PRs and lets the user pick one.
+// entity is "issue" or "pr".
+func pickForView(entity string) (int, error) {
+	ghCmd := exec.Command("gh", entity, "list", "--state", flagViewState,
 		"--json", "number,title,author,updatedAt,state",
 		"--jq", `sort_by(.updatedAt) | reverse | .[] | "#\(.number)\t\(.title)\t\(.author.login)"`)
 
-	out, err := ui.SpinWithResult(fmt.Sprintf("Getting %s issues...", flagViewState), func() (string, error) {
+	label := "issues"
+	if entity == "pr" {
+		label = "PRs"
+	}
+
+	out, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() (string, error) {
 		output, err := ghCmd.Output()
 		return string(output), err
 	})
 	if err != nil {
-		return 0, ui.Die("Failed to list issues.")
+		return 0, ui.Dief("Failed to list %s.", label)
 	}
 	if strings.TrimSpace(out) == "" {
-		return 0, ui.Dief("No %s issues found.", flagViewState)
+		return 0, ui.Dief("No %s %s found.", flagViewState, label)
 	}
 
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -188,7 +195,8 @@ func pickIssueForView(cfg *remote.Config) (int, error) {
 		}
 	}
 
-	selected, err := ui.Choose("Select an issue to view:", displayItems)
+	header := fmt.Sprintf("Select %s to view:", addArticle(entity))
+	selected, err := ui.Choose(header, displayItems)
 	if err != nil || selected == "" {
 		ui.Info("Cancelled.")
 		return 0, fmt.Errorf("cancelled")
@@ -196,58 +204,22 @@ func pickIssueForView(cfg *remote.Config) (int, error) {
 	return parsePRNumber(selected)
 }
 
-func pickPRForView(cfg *remote.Config) (int, error) {
-	ghCmd := exec.Command("gh", "pr", "list", "--state", flagViewState,
-		"--json", "number,title,author,updatedAt,state",
-		"--jq", `sort_by(.updatedAt) | reverse | .[] | "#\(.number)\t\(.title)\t\(.author.login)"`)
-
-	out, err := ui.SpinWithResult(fmt.Sprintf("Getting %s PRs...", flagViewState), func() (string, error) {
-		output, err := ghCmd.Output()
-		return string(output), err
-	})
-	if err != nil {
-		return 0, ui.Die("Failed to list PRs.")
+func addArticle(entity string) string {
+	if entity == "issue" {
+		return "an issue"
 	}
-	if strings.TrimSpace(out) == "" {
-		return 0, ui.Dief("No %s PRs found.", flagViewState)
-	}
-
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	var displayItems []string
-	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) >= 2 {
-			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-		}
-	}
-
-	selected, err := ui.Choose("Select a PR to view:", displayItems)
-	if err != nil || selected == "" {
-		ui.Info("Cancelled.")
-		return 0, fmt.Errorf("cancelled")
-	}
-	return parsePRNumber(selected)
+	return "a PR"
 }
 
-func ghIssueViewSummary(number string) error {
-	ghCmd := exec.Command("gh", "issue", "view", number,
+// ghViewSummary displays a formatted summary of an issue or PR.
+// entity is "issue" or "pr".
+func ghViewSummary(entity, number string) error {
+	ghCmd := exec.Command("gh", entity, "view", number,
 		"--json", "number,title,body,author,state,labels",
 		"--jq", `"# #\(.number) \(.title)\n\n**Author:** \(.author.login) · **State:** \(.state)\(if (.labels | length) > 0 then (" · **Labels:** " + (.labels | map(.name) | join(", "))) else "" end)\n\n\(if (.body // "") != "" then .body else "*No description provided.*" end)"`)
 	out, err := ghCmd.Output()
 	if err != nil {
-		return ui.Dief("Failed to fetch issue #%s.", number)
-	}
-	fmt.Print(string(out))
-	return nil
-}
-
-func ghPRViewSummary(number string) error {
-	ghCmd := exec.Command("gh", "pr", "view", number,
-		"--json", "number,title,body,author,state,labels",
-		"--jq", `"# #\(.number) \(.title)\n\n**Author:** \(.author.login) · **State:** \(.state)\(if (.labels | length) > 0 then (" · **Labels:** " + (.labels | map(.name) | join(", "))) else "" end)\n\n\(if (.body // "") != "" then .body else "*No description provided.*" end)"`)
-	out, err := ghCmd.Output()
-	if err != nil {
-		return ui.Dief("Failed to fetch PR #%s.", number)
+		return ui.Dief("Failed to fetch %s #%s.", entity, number)
 	}
 	fmt.Print(string(out))
 	return nil

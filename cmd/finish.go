@@ -203,7 +203,6 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 
 	// Filter to only PRs that have a local branch
 	var displayItems []string
-	var matchingNumbers []int
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		parts := strings.SplitN(line, "\t", 4)
 		if len(parts) < 4 {
@@ -221,8 +220,6 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 		}
 		if hasLocal {
 			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-			n, _ := strconv.Atoi(strings.TrimPrefix(parts[0], "#"))
-			matchingNumbers = append(matchingNumbers, n)
 		}
 	}
 
@@ -258,7 +255,6 @@ func pickMergedPRsFallback(cfg *remote.Config) ([]int, error) {
 	branches := strings.Split(branchOutput, "\n")
 
 	var displayItems []string
-	var matchingNumbers []int
 
 	for _, branch := range branches {
 		branch = strings.TrimSpace(branch)
@@ -276,8 +272,6 @@ func pickMergedPRsFallback(cfg *remote.Config) ([]int, error) {
 		parts := strings.SplitN(line, "\t", 2)
 		if len(parts) >= 2 {
 			displayItems = append(displayItems, fmt.Sprintf("%s  %s", parts[0], parts[1]))
-			n, _ := strconv.Atoi(strings.TrimPrefix(parts[0], "#"))
-			matchingNumbers = append(matchingNumbers, n)
 		}
 	}
 
