@@ -315,8 +315,12 @@ func renderPRSummary(pr *gh.PRInfo) error {
 	for _, l := range pr.Labels {
 		labelNames = append(labelNames, l.Name)
 	}
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
 	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s\n\n%s",
-		pr.Number, pr.Title, pr.User.Login, pr.State,
+		pr.Number, pr.Title, pr.User.Login, state,
 		formatLabelNames(labelNames), body)
 	rendered, err := ui.RenderMarkdown(md)
 	if err != nil {

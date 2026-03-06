@@ -51,8 +51,8 @@ func runPause(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if the PR for this branch has been merged
-	prState, _ := ghPRViewState()
-	if prState == "MERGED" {
+	currentPR := ghGetPRForCurrentBranch()
+	if currentPR != nil && currentPR.Merged {
 		ui.Infof("The PR for branch '%s' has already been merged.", current)
 		confirmed, err := ui.Confirm("Finish this PR instead?", true)
 		if err != nil {

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -75,8 +74,7 @@ func Execute() error {
 
 func checkPrerequisites() error {
 	if !git.IsInstalled() {
-		fmt.Fprintln(os.Stderr, "Missing dependency: git")
-		return fmt.Errorf("git is not installed")
+		return ui.Die("Missing dependency: git. Install from https://git-scm.com")
 	}
 	if !git.IsInsideWorkTree() {
 		return ui.Die("Not inside a git repository (or worktree). Run utpr from a repository checkout.")

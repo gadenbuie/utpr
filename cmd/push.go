@@ -208,32 +208,3 @@ func openCompareURL(cfg *remote.Config, branch string) error {
 	return openURL(compareURL)
 }
 
-func ghGetPRURL() (string, error) {
-	cfg, err := remote.Detect()
-	if err != nil {
-		return "", err
-	}
-
-	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
-	if err != nil {
-		return "", err
-	}
-	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
-	if err != nil {
-		return "", err
-	}
-
-	branch, err := git.GetCurrentBranch()
-	if err != nil {
-		return "", err
-	}
-
-	pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
-	if err != nil {
-		return "", err
-	}
-	if pr == nil {
-		return "", nil
-	}
-	return pr.HTMLURL, nil
-}

@@ -88,27 +88,25 @@ func pullDefaultBranch(cfg *remote.Config) error {
 	return nil
 }
 
-// ghPRViewState gets the PR state for the current branch via the GitHub API.
-func ghPRViewState() (string, error) {
+// ghGetPRForCurrentBranch finds the PR (any state) for the current branch.
+// Returns nil if no PR is found or on error.
+func ghGetPRForCurrentBranch() *gh.PRInfo {
 	cfg := remote.Require()
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
-		return "", err
+		return nil
 	}
 	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {
-		return "", err
+		return nil
 	}
 	branch, err := git.GetCurrentBranch()
 	if err != nil {
-		return "", err
+		return nil
 	}
-	pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
+	pr, err := gh.GetPRForBranch(ownerRepo, branch, "all")
 	if err != nil {
-		return "", err
+		return nil
 	}
-	if pr == nil {
-		return "", fmt.Errorf("no open PR found for branch '%s'", branch)
-	}
-	return pr.State, nil
+	return pr
 }

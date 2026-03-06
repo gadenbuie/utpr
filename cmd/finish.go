@@ -53,25 +53,16 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	} else {
 		onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 		if !onDefault {
-			// Infer from current branch
-			prURL, _ := ghGetPRURL()
-			if prURL == "" {
+			// Infer from current branch — search all states (open, closed, merged)
+			currentBranch, branchErr := git.GetCurrentBranch()
+			if branchErr != nil {
 				return ui.Die("Could not determine PR number for current branch.")
 			}
-			n := extractPRNumberFromURL(prURL)
-			if n == 0 {
-				// Try GitHub API
-				currentBranch, branchErr := git.GetCurrentBranch()
-				if branchErr != nil {
-					return ui.Die("Could not determine PR number for current branch.")
-				}
-				pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch, "all")
-				if prErr != nil || pr == nil {
-					return ui.Die("Could not determine PR number for current branch.")
-				}
-				n = pr.Number
+			pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch, "all")
+			if prErr != nil || pr == nil {
+				return ui.Die("Could not determine PR number for current branch.")
 			}
-			prNumbers = []int{n}
+			prNumbers = []int{pr.Number}
 		} else {
 			fromPicker = true
 			prNumbers, err = pickMergedPRs(cfg, sourceRepo)
