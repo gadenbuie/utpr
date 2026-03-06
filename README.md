@@ -15,7 +15,7 @@ after merges. The [usethis] R package solved this beautifully with its
 into simple, memorable commands.
 
 **utpr brings that same workflow to any terminal** — no R required.
-It wraps `git` and `gh` to provide a polished, interactive
+It wraps `git` and the GitHub API to provide a polished, interactive
 experience for the full pull request round-trip:
 
 - **Start work** with `utpr init`, which creates a branch from a
@@ -53,18 +53,17 @@ go install github.com/gadenbuie/utpr@latest
 
 ### Prerequisites
 
-utpr requires the following tools to be installed and available on your `PATH`:
+utpr requires [git](https://git-scm.com) to be installed and available on
+your `PATH`.
 
-| Tool | Purpose |
-|------|---------|
-| [git](https://git-scm.com) | Version control |
-| [gh](https://cli.github.com) | GitHub CLI (must be authenticated) |
+utpr also needs GitHub authentication. You have two options:
 
-After installing, authenticate the GitHub CLI if you haven't already:
+1. **GitHub CLI** (recommended): Install [gh](https://cli.github.com) and run
+   `gh auth login`. utpr reads the stored token automatically — `gh` is not
+   needed at runtime after initial setup.
 
-```bash
-gh auth login
-```
+2. **Environment variable**: Set `GITHUB_TOKEN` (or `GH_TOKEN`) with a
+   [personal access token](https://github.com/settings/tokens).
 
 ## Usage
 
@@ -209,20 +208,21 @@ Then reload your shell (`source ~/.zshrc`) or open a new terminal.
 
 ### GitHub API errors or authentication failures
 
-utpr uses the `gh` CLI for all GitHub operations. If you see errors like
-"authentication required" or "HTTP 401", authenticate first:
+utpr reads GitHub authentication from the `gh` CLI config or from the
+`GITHUB_TOKEN`/`GH_TOKEN` environment variable. If you see errors like
+"authentication required" or "HTTP 401":
 
 ```bash
+# Option 1: Use gh CLI for auth
 gh auth login
+gh auth status   # verify current auth
+
+# Option 2: Set a token directly
+export GITHUB_TOKEN="ghp_your_token_here"
 ```
 
-To check your current auth status:
-
-```bash
-gh auth status
-```
-
-If you have multiple GitHub accounts, make sure the correct one is active:
+If you have multiple GitHub accounts with `gh`, make sure the correct one is
+active:
 
 ```bash
 gh auth switch
