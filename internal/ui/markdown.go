@@ -17,8 +17,13 @@ var (
 func getMarkdownRenderer() (*glamour.TermRenderer, error) {
 	mdRendererOnce.Do(func() {
 		width := 80
-		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 {
 			width = w
+		}
+		if width < 40 {
+			width = 40
+		} else if width > 120 {
+			width = 120
 		}
 		mdRenderer, mdRendererErr = glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
