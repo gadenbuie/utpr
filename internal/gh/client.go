@@ -20,14 +20,11 @@ func GraphQLClient() (*api.GraphQLClient, error) {
 	return api.DefaultGraphQLClient()
 }
 
-// IsAuthenticated checks if we can make authenticated GitHub API calls.
+// IsAuthenticated checks if GitHub API auth is configured.
+// This checks if the go-gh library can resolve auth credentials
+// (from gh config or GITHUB_TOKEN) without making a network call.
 func IsAuthenticated() bool {
-	client, err := RESTClient()
-	if err != nil {
-		return false
-	}
-	var result interface{}
-	err = client.Get("user", &result)
+	_, err := RESTClient()
 	return err == nil
 }
 
@@ -169,8 +166,10 @@ func DeleteRemoteBranch(ownerRepo, branch string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
+	// Branch names can contain slashes (e.g. "feature/foo") and the git refs
+	// API expects them as literal path segments, so we must not PathEscape the branch.
 	return client.Delete(fmt.Sprintf("repos/%s/%s/git/refs/heads/%s",
-		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(branch)), nil)
+		url.PathEscape(owner), url.PathEscape(repo), branch), nil)
 }
 
 // AddIssueAssignee assigns a user to an issue.
@@ -395,6 +394,9 @@ func SearchMergedPRs(ownerRepo string, limit int) ([]MergedPRInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	if limit > 100 {
 		limit = 100
 	}
@@ -495,8 +497,8 @@ type Comment struct {
 }
 
 // ListIssueComments lists comments on an issue or pull request.
-// Returns up to 100 comments. For issues with more comments, the most
-// recent 100 are returned.
+// Returns up to 100 comments in chronological order. For issues with
+// more than 100 comments, only the first 100 are returned.
 func ListIssueComments(ownerRepo string, number int) ([]Comment, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
