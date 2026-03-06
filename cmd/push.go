@@ -217,7 +217,7 @@ func ghGetPRURL() (string, error) {
 		return "", err
 	}
 
-	pr, err := gh.GetPRForBranch(ownerRepo, branch)
+	pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
 	if err != nil {
 		return "", err
 	}

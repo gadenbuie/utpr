@@ -161,7 +161,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		if !onDefault && flagViewState == "open" {
 			branch, err := git.GetCurrentBranch()
 			if err == nil {
-				pr, err := gh.GetPRForBranch(ownerRepo, branch)
+				pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
 				if err == nil && pr != nil {
 					prNumber = pr.Number
 				}

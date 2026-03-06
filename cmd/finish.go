@@ -65,7 +65,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 				if branchErr != nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
-				pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch)
+				pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch, "all")
 				if prErr != nil || pr == nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
