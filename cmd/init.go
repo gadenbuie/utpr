@@ -165,9 +165,10 @@ func pickIssue() (int, error) {
 }
 
 func handleIssue(issueNumber int, existingBranch string) (string, error) {
-	sourceURL, err := git.Run("remote", "get-url", "origin")
+	cfg := remote.Require()
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
-		return "", ui.Die("Could not determine remote URL for 'origin'.")
+		return "", ui.Dief("Could not determine remote URL for '%s'.", cfg.SourceRemote)
 	}
 	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {

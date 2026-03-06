@@ -41,6 +41,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if prNumber == 0 {
+			return nil
+		}
 	}
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
@@ -154,7 +157,8 @@ func pickPR(header string) (int, error) {
 
 	selected, err := ui.Choose(header, displayItems)
 	if err != nil || selected == "" {
-		return 0, ui.Die("No PR selected.")
+		ui.Info("Cancelled.")
+		return 0, nil
 	}
 
 	return parsePRNumber(selected)

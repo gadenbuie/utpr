@@ -67,37 +67,33 @@ func runView(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Auto-detect PR vs issue when given a number
+	// Auto-detect PR vs issue when given a number.
+	// We cache the fetched issue to avoid a double API call when viewType == "issue".
+	var cachedIssue *gh.IssueInfo
 	if numberArg != "" && !viewTypeExplicit {
 		n, convErr := strconv.Atoi(numberArg)
 		if convErr != nil {
 			return ui.Dief("Invalid number: %s", numberArg)
 		}
-		detected, err := detectPROrIssue(ownerRepo, n)
+		issue, err := gh.GetIssue(ownerRepo, n)
 		if err != nil {
 			return ui.Dief("Could not find issue or PR #%s.", numberArg)
 		}
-		viewType = detected
+		if issue.PullRequest != nil {
+			viewType = "pr"
+		} else {
+			viewType = "issue"
+			cachedIssue = issue
+		}
 	}
 
 	if viewType == "issue" {
-		return viewIssue(ownerRepo, numberArg)
+		return viewIssue(ownerRepo, numberArg, cachedIssue)
 	}
 	return viewPR(ownerRepo, numberArg, cfg)
 }
 
-func detectPROrIssue(ownerRepo string, number int) (string, error) {
-	issue, err := gh.GetIssue(ownerRepo, number)
-	if err != nil {
-		return "", err
-	}
-	if issue.PullRequest != nil {
-		return "pr", nil
-	}
-	return "issue", nil
-}
-
-func viewIssue(ownerRepo, numberArg string) error {
+func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
 	// Validate state
 	switch flagViewState {
 	case "open", "closed", "all":
@@ -119,6 +115,9 @@ func viewIssue(ownerRepo, numberArg string) error {
 		if err != nil {
 			return err
 		}
+		if n == 0 {
+			return nil
+		}
 		issueNumber = n
 	}
 
@@ -126,9 +125,14 @@ func viewIssue(ownerRepo, numberArg string) error {
 		return openURL(fmt.Sprintf("https://github.com/%s/issues/%d", ownerRepo, issueNumber))
 	}
 
-	issue, err := gh.GetIssue(ownerRepo, issueNumber)
-	if err != nil {
-		return ui.Dief("Failed to fetch issue #%d.", issueNumber)
+	// Use cached issue from auto-detect if available
+	issue := cachedIssue
+	if issue == nil || issue.Number != issueNumber {
+		var err error
+		issue, err = gh.GetIssue(ownerRepo, issueNumber)
+		if err != nil {
+			return ui.Dief("Failed to fetch issue #%d.", issueNumber)
+		}
 	}
 
 	if flagViewSummary {
@@ -172,6 +176,9 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 			if err != nil {
 				return err
 			}
+			if n == 0 {
+				return nil
+			}
 			prNumber = n
 		}
 	}
@@ -204,10 +211,16 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		label = "PRs"
 	}
 
+	// Map "merged" to "closed" for the API (REST doesn't support "merged" state).
+	apiState := flagViewState
+	if apiState == "merged" {
+		apiState = "closed"
+	}
+
 	var displayItems []string
 	if entity == "issue" {
 		issues, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.IssueInfo, error) {
-			return gh.ListIssues(ownerRepo, flagViewState)
+			return gh.ListIssues(ownerRepo, apiState)
 		})
 		if err != nil {
 			return 0, ui.Dief("Failed to list %s.", label)
@@ -220,10 +233,20 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		}
 	} else {
 		prs, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
-			return gh.ListPRs(ownerRepo, flagViewState)
+			return gh.ListPRs(ownerRepo, apiState)
 		})
 		if err != nil {
 			return 0, ui.Dief("Failed to list %s.", label)
+		}
+		// Filter for merged if requested
+		if flagViewState == "merged" {
+			var filtered []gh.PRInfo
+			for _, pr := range prs {
+				if pr.Merged {
+					filtered = append(filtered, pr)
+				}
+			}
+			prs = filtered
 		}
 		if len(prs) == 0 {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
@@ -237,7 +260,7 @@ func pickForView(ownerRepo, entity string) (int, error) {
 	selected, err := ui.Choose(header, displayItems)
 	if err != nil || selected == "" {
 		ui.Info("Cancelled.")
-		return 0, fmt.Errorf("cancelled")
+		return 0, nil
 	}
 	return parsePRNumber(selected)
 }

@@ -100,10 +100,14 @@ func runPush(cmd *cobra.Command, args []string) error {
 		if err == nil && subjects != "" {
 			title = strings.Split(subjects, "\n")[0]
 		}
-		bodies, err := git.Run("log", cfg.DefaultBranch+"..HEAD", "--format=%b", "--reverse")
-		if err == nil && bodies != "" {
-			firstBody := strings.Split(bodies, "\n\n")[0]
-			body = strings.TrimSpace(firstBody)
+		// Get body from first commit only (--format=%b with -1 --reverse gives first commit's body)
+		firstCommit, err := git.Run("log", cfg.DefaultBranch+"..HEAD", "--format=%H", "--reverse")
+		if err == nil && firstCommit != "" {
+			hash := strings.Split(firstCommit, "\n")[0]
+			commitBody, err := git.Run("log", "-1", "--format=%b", hash)
+			if err == nil {
+				body = strings.TrimSpace(commitBody)
+			}
 		}
 
 		var draft bool
@@ -119,6 +123,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 		if err := form.Run(); err != nil {
 			ui.Info("Cancelled.")
 			return nil
+		}
+
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return ui.Die("PR title cannot be empty.")
 		}
 
 		// Build head ref: for forks, qualify with fork owner
@@ -139,7 +148,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 			return ui.Dief("Failed to create pull request: %v", err)
 		}
 
-		git.SetBranchPRURL(current, pr.HTMLURL)
+		if err := git.SetBranchPRURL(current, pr.HTMLURL); err != nil {
+			ui.Warnf("Could not store PR URL in git config: %v", err)
+		}
 		ui.Successf("PR created: %s", pr.HTMLURL)
 		return nil
 	}
