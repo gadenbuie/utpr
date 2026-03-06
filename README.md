@@ -15,7 +15,7 @@ after merges. The [usethis] R package solved this beautifully with its
 into simple, memorable commands.
 
 **utpr brings that same workflow to any terminal** — no R required.
-It uses `git`, `gh`, and `gum` to provide a polished, interactive
+It wraps `git` and `gh` to provide a polished, interactive
 experience for the full pull request round-trip:
 
 - **Start work** with `utpr init`, which creates a branch from a
@@ -28,6 +28,8 @@ experience for the full pull request round-trip:
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
 - **Clean up** with `utpr finish` after a merge, or `utpr forget`
   to abandon work.
+- **Track down bugs** with `utpr bisect`, an interactive wrapper
+  around `git bisect`.
 - **Isolate AI coding agents** with `--worktree` on `utpr init` and
   `utpr fetch`: each agent gets its own Git worktree, pre-wired with
   your project's shared config, and `utpr finish` tears it down cleanly
@@ -43,43 +45,25 @@ For more background on the workflow that inspired utpr, see
 
 ## Installation
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/install.sh | bash
-```
-
-This installs utpr and all prerequisites to `~/.local/bin`. Supported
-platforms: **macOS** (via Homebrew), **Linux** (Debian/Ubuntu and
-Fedora/RHEL), and **WSL**.
-
-After installation, authenticate the GitHub CLI if you haven't already:
+### From source (requires Go 1.25+)
 
 ```bash
-gh auth login
+go install github.com/gadenbuie/utpr@latest
 ```
 
-### Manual installation
+### Prerequisites
 
-utpr requires the following tools:
+utpr requires the following tools to be installed and available on your `PATH`:
 
 | Tool | Purpose |
 |------|---------|
 | [git](https://git-scm.com) | Version control |
 | [gh](https://cli.github.com) | GitHub CLI (must be authenticated) |
-| [jq](https://jqlang.github.io/jq/) | JSON processing |
-| [gum](https://github.com/charmbracelet/gum) | Interactive terminal UI |
 
-Once prerequisites are installed, download utpr:
+After installing, authenticate the GitHub CLI if you haven't already:
 
 ```bash
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr -o ~/.local/bin/utpr
-chmod +x ~/.local/bin/utpr
-```
-
-Make sure `~/.local/bin` is in your `PATH` (add to `~/.zshrc` or `~/.bashrc`):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
+gh auth login
 ```
 
 ## Usage
@@ -100,6 +84,7 @@ utpr <command> [options]
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
 | `utpr view [<pr>]` | View PR in browser |
+| `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
 Run `utpr <command> --help` for detailed usage of any command.
 
@@ -206,18 +191,18 @@ export UTPR_SYMLINK_DIRS="_dev,.claude,.env,.Renviron,secrets"
 
 ### `utpr: command not found` after installation
 
-The installer places `utpr` in `~/.local/bin`. Make sure that directory is
-in your `PATH`:
+If you installed with `go install`, make sure `$GOPATH/bin` (or `$GOBIN`)
+is in your `PATH`:
 
 ```bash
-echo $PATH | tr ':' '\n' | grep local
+echo $PATH | tr ':' '\n' | grep go
 ```
 
-If `~/.local/bin` is missing, add it to your shell profile:
+If missing, add it to your shell profile:
 
 ```bash
 # ~/.zshrc or ~/.bashrc
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 Then reload your shell (`source ~/.zshrc`) or open a new terminal.
