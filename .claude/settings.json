@@ -1,7 +1,15 @@
 {
   "allowedTools": [
     "Bash(tmux *)",
-    "Bash(git worktree *)"
+    "Bash(git worktree *)",
+    "Bash(crosslink comment:*)",
+    "Bash(go version:*)",
+    "Bash(go mod:*)",
+    "Bash(go get:*)",
+    "Bash(go build:*)",
+    "Bash(go test:*)",
+    "Bash(go vet:*)",
+    "Bash(gofmt:*)"
   ],
   "enableAllProjectMcpServers": true,
   "hooks": {
