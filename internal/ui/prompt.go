@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var ErrCancelled = errors.New("cancelled")
@@ -20,6 +21,7 @@ func defaultConfirm(title string, defaultVal bool) (bool, error) {
 		Title(title).
 		Affirmative("Yes").
 		Negative("No").
+		WithButtonAlignment(lipgloss.Left).
 		Value(&confirmed).
 		Run()
 	if err != nil {
