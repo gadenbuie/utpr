@@ -94,12 +94,12 @@ func defaultChoose(header string, options []string) (string, error) {
 	}
 
 	var selected string
-	err := huh.NewSelect[string]().
+	sel := huh.NewSelect[string]().
 		Title(header).
 		Options(huhOpts...).
 		Value(&selected).
-		Height(SelectHeight(len(options))).
-		Run()
+		Height(SelectHeight(len(options)))
+	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
 		return "", err
 	}
@@ -129,12 +129,12 @@ func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T,
 	}
 
 	var selected T
-	err := huh.NewSelect[T]().
+	sel := huh.NewSelect[T]().
 		Title(header).
 		Options(options...).
 		Value(&selected).
-		Height(SelectHeight(len(options))).
-		Run()
+		Height(SelectHeight(len(options)))
+	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
 		return zero, err
 	}
@@ -149,13 +149,13 @@ func ChooseMultiWithOptions[T comparable](header string, options []huh.Option[T]
 	}
 
 	var selected []T
-	err := huh.NewMultiSelect[T]().
+	sel := huh.NewMultiSelect[T]().
 		Title(header).
 		Options(options...).
 		Value(&selected).
 		Height(SelectHeight(len(options))).
-		Filterable(true).
-		Run()
+		Filterable(true)
+	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
 		return nil, err
 	}
