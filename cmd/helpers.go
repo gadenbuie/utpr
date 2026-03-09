@@ -20,7 +20,11 @@ func challengeUncommittedChanges() error {
 }
 
 // challengeUnpushedCommits warns about unpushed commits and asks for confirmation.
+// Skips silently if the branch has never been pushed (no tracking branch).
 func challengeUnpushedCommits() error {
+	if git.GetTrackingBranch() == "" {
+		return nil
+	}
 	if !git.HasUnpushedCommits() {
 		return nil
 	}
