@@ -133,17 +133,82 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 	}
 }
 
+// setupHook defines a project-specific setup command to run in a worktree.
+type setupHook struct {
+	trigger string   // file that must exist in wtDir to trigger this hook
+	tool    string   // binary name that must be on PATH
+	spinMsg string   // spinner message
+	warnMsg string   // warning on failure
+	args    []string // command + args
+}
+
+var defaultSetupHooks = []setupHook{
+	{
+		trigger: "package.json",
+		tool:    "npm",
+		spinMsg: "Running npm install...",
+		warnMsg: "npm install failed (non-fatal).",
+		args:    []string{"npm", "install"},
+	},
+	{
+		trigger: "pyproject.toml",
+		tool:    "uv",
+		spinMsg: "Running uv sync...",
+		warnMsg: "uv sync failed (non-fatal).",
+		args:    []string{"uv", "sync", "--all-groups"},
+	},
+	{
+		trigger: "renv.lock",
+		tool:    "Rscript",
+		spinMsg: "Running renv::restore()...",
+		warnMsg: "renv::restore() failed (non-fatal).",
+		args:    []string{"Rscript", "-e", "renv::restore(prompt = FALSE)"},
+	},
+}
+
 // runWorktreeSetup runs project-specific setup commands in the worktree.
 func runWorktreeSetup(wtDir string) {
-	if _, err := os.Stat(filepath.Join(wtDir, "package.json")); err == nil {
-		ui.Spin("Running npm install...", func() error {
-			cmd := exec.Command("npm", "install")
+	for _, hook := range defaultSetupHooks {
+		if _, err := os.Stat(filepath.Join(wtDir, hook.trigger)); err != nil {
+			continue
+		}
+		if _, err := exec.LookPath(hook.tool); err != nil {
+			continue
+		}
+		if err := ui.Spin(hook.spinMsg, func() error {
+			cmd := exec.Command(hook.args[0], hook.args[1:]...)
 			cmd.Dir = wtDir
-			cmd.Stdout = nil
-			cmd.Stderr = nil
 			return cmd.Run()
-		})
+		}); err != nil {
+			ui.Warn(hook.warnMsg)
+		}
 	}
+
+	if makefile := filepath.Join(wtDir, "Makefile"); fileHasTarget(makefile, "setup") {
+		if _, err := exec.LookPath("make"); err == nil {
+			if err := ui.Spin("Running make setup...", func() error {
+				cmd := exec.Command("make", "setup")
+				cmd.Dir = wtDir
+				return cmd.Run()
+			}); err != nil {
+				ui.Warn("make setup failed (non-fatal).")
+			}
+		}
+	}
+}
+
+// fileHasTarget checks if a Makefile exists and contains a given target.
+func fileHasTarget(path, target string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, target+":") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseSymlinkItems(symlinkDirs string) []string {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -207,6 +208,8 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 
 	ui.Infof("Issue #%d: %s", issueNumber, issue.Title)
 
+	previewIssue(issue)
+
 	if existingBranch == "" {
 		suggested := issueToSlug(issueNumber, issue.Title)
 		existingBranch, err = ui.Input("Branch name:", suggested, "branch name")
@@ -239,6 +242,33 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 	}
 
 	return existingBranch, nil
+}
+
+func previewIssue(issue *gh.IssueInfo) {
+	confirmed, _ := ui.Confirm(fmt.Sprintf("Preview issue #%d?", issue.Number), false)
+	if !confirmed {
+		return
+	}
+
+	createdDate := issue.CreatedAt
+	if len(createdDate) >= 10 {
+		createdDate = createdDate[:10]
+	}
+	body := issue.Body
+	if body == "" {
+		body = "*No description provided.*"
+	}
+
+	md := fmt.Sprintf("# #%d %s\n\n**State:** %s · **Author:** @%s · **Created:** %s\n\n%s\n",
+		issue.Number, issue.Title, issue.State, issue.User.Login, createdDate, body)
+
+	rendered, err := ui.RenderMarkdown(md)
+	if err != nil {
+		fmt.Fprint(os.Stderr, md)
+		return
+	}
+
+	ui.Pager(rendered)
 }
 
 func issueToSlug(number int, title string) string {
