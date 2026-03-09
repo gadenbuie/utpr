@@ -226,6 +226,23 @@ func Push(remote string, setUpstream bool) error {
 	return nil
 }
 
+// FindBranchByUpstream returns the name of a local branch whose upstream
+// matches remote/ref, or empty string if none found.
+func FindBranchByUpstream(remote, ref string) string {
+	target := remote + "/" + ref
+	out, err := ForEachRef("%(refname:short) %(upstream:short)", "-committerdate", "refs/heads/")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 2)
+		if len(parts) == 2 && parts[1] == target {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
 // GetTopLevel returns the repository root directory.
 func GetTopLevel() (string, error) {
 	return Run("rev-parse", "--show-toplevel")

@@ -217,7 +217,7 @@ func CleanupUtprRemotes() {
 		if remote == "" {
 			continue
 		}
-		if !git.IsRemoteCreatedByUtpr(remote) {
+		if !git.IsRemoteCreatedByPRTool(remote) {
 			continue
 		}
 		// Check if any branch tracks this remote

@@ -75,12 +75,17 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Use a pr/{number}-{author}-{branch} local name when the current user
-	// is not the PR author, so it's clear whose work you're looking at.
-	currentUser, _ := gh.GetLogin()
-	isOwnPR := currentUser != "" && pr.User.Login == currentUser
-	if !isOwnPR {
-		localBranch = fmt.Sprintf("pr/%d-%s-%s", prNumber, pr.User.Login, headRef)
+	// If a local branch already tracks this remote ref, reuse it.
+	if existing := git.FindBranchByUpstream(remoteName, headRef); existing != "" {
+		localBranch = existing
+	} else {
+		// Use a pr/{number}-{author}-{branch} local name when the current user
+		// is not the PR author, so it's clear whose work you're looking at.
+		currentUser, _ := gh.GetLogin()
+		isOwnPR := currentUser != "" && pr.User.Login == currentUser
+		if !isOwnPR {
+			localBranch = fmt.Sprintf("pr/%d-%s-%s", prNumber, pr.User.Login, headRef)
+		}
 	}
 
 	err = ui.Spin(

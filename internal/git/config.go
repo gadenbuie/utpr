@@ -1,6 +1,9 @@
 package git
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const CreatedByValue = "utpr"
 
@@ -42,6 +45,12 @@ func MarkRemoteCreatedByUtpr(remote string) error {
 // IsRemoteCreatedByUtpr checks if a remote was created by utpr.
 func IsRemoteCreatedByUtpr(remote string) bool {
 	return ConfigGet(fmt.Sprintf("remote.%s.created-by", remote)) == CreatedByValue
+}
+
+// IsRemoteCreatedByPRTool checks if a remote was created by utpr or usethis.
+func IsRemoteCreatedByPRTool(remote string) bool {
+	val := ConfigGet(fmt.Sprintf("remote.%s.created-by", remote))
+	return val == CreatedByValue || strings.HasPrefix(val, "usethis::")
 }
 
 // SetBranchUpstream sets the upstream tracking branch.
