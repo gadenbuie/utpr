@@ -7,6 +7,9 @@ import (
 	"github.com/charmbracelet/huh/spinner"
 )
 
+// spinFunc is the implementation for Spin (and by extension SpinWithResult).
+// Tests can replace it via SetSpinFunc(). Not safe for concurrent use;
+// do not use t.Parallel() in tests that stub this function.
 var spinFunc = defaultSpin
 
 func defaultSpin(title string, fn func() error) error {
@@ -32,20 +35,18 @@ func SetSpinFunc(fn func(string, func() error) error) func() {
 }
 
 // SpinWithResult shows a spinner while running a function that returns a value.
+// It delegates to Spin, so stubbing Spin (via SetSpinFunc) also stubs this.
 func SpinWithResult[T any](title string, fn func() (T, error)) (T, error) {
 	var result T
-	var fnErr error
-	err := spinner.New().
-		Title(title).
-		ActionWithErr(func(_ context.Context) error {
-			result, fnErr = fn()
-			return fnErr
-		}).
-		Run()
-	if err != nil && fnErr == nil {
+	var actionErr error
+	err := Spin(title, func() error {
+		result, actionErr = fn()
+		return actionErr
+	})
+	if err != nil {
 		return result, err
 	}
-	return result, fnErr
+	return result, actionErr
 }
 
 // Die prints an error message and returns a formatted error.

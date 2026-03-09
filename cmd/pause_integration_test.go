@@ -11,34 +11,15 @@ import (
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/git"
-	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/testutil"
 	"github.com/gadenbuie/utpr/internal/ui"
 )
-
-func setFakeGitHubOrigin(t *testing.T, clonePath, realRemotePath string) {
-	t.Helper()
-	fakeURL := "https://github.com/test-owner/test-repo.git"
-	testutil.RunGit(t, clonePath, "config", "url."+realRemotePath+".insteadOf", fakeURL)
-	testutil.RunGit(t, clonePath, "remote", "set-url", "origin", fakeURL)
-}
-
-func seedPauseRemoteCache(t *testing.T) {
-	t.Helper()
-	remote.SetCacheForTest(&remote.Config{
-		Layout:        "ours",
-		SourceRemote:  "origin",
-		PushRemote:    "origin",
-		DefaultBranch: "main",
-	})
-	t.Cleanup(func() { remote.ResetCacheForTest() })
-}
 
 func TestPauseFromPRBranch(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(true)()
-	seedPauseRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "feature-branch")
 	testutil.AddCommit(t, clonePath, "feature work")
@@ -62,7 +43,7 @@ func TestPauseAlreadyOnDefault(t *testing.T) {
 	testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(true)()
-	seedPauseRemoteCache(t)
+	seedRemoteCache(t)
 
 	err := runPause(nil, nil)
 	if err == nil {
@@ -74,7 +55,7 @@ func TestPauseWithUncommittedChanges(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(false)()
-	seedPauseRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "dirty-branch")
 	testutil.AddCommit(t, clonePath, "initial feature work")
@@ -101,7 +82,7 @@ func TestPauseWithUncommittedChangesAccepted(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(true)()
-	seedPauseRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "dirty-accepted-branch")
 	testutil.AddCommit(t, clonePath, "initial feature work")

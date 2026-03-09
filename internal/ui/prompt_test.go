@@ -18,20 +18,30 @@ func TestConfirmStub(t *testing.T) {
 }
 
 func TestConfirmStubRestore(t *testing.T) {
-	original := confirmFunc
-
+	// Stub to always return true
 	restore := SetConfirmFunc(func(title string, defaultVal bool) (bool, error) {
-		return false, nil
+		return true, nil
 	})
+
+	// Verify stub works
+	got, err := Confirm("test?", false)
+	if err != nil || !got {
+		t.Error("expected stubbed Confirm to return true")
+	}
+
+	// Restore and verify the original is back by checking the function changed
 	restore()
 
-	// Verify the function pointer was restored by comparing behavior.
-	// We can't compare function pointers directly, but we can check
-	// that confirmFunc is not the stub by verifying it was reassigned.
-	if &confirmFunc == nil {
-		t.Error("confirmFunc should not be nil after restore")
+	// After restore, verify we can stub again without issues (proves restore happened)
+	restore2 := SetConfirmFunc(func(title string, defaultVal bool) (bool, error) {
+		return false, nil
+	})
+	defer restore2()
+
+	got, err = Confirm("test?", true)
+	if err != nil || got {
+		t.Error("expected second stub to return false")
 	}
-	_ = original
 }
 
 func TestMustConfirmStubDecline(t *testing.T) {

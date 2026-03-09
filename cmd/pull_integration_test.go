@@ -7,25 +7,13 @@ package cmd
 import (
 	"testing"
 
-	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/testutil"
 )
-
-func seedPullRemoteCache(t *testing.T) {
-	t.Helper()
-	remote.SetCacheForTest(&remote.Config{
-		Layout:        "ours",
-		SourceRemote:  "origin",
-		PushRemote:    "origin",
-		DefaultBranch: "main",
-	})
-	t.Cleanup(func() { remote.ResetCacheForTest() })
-}
 
 func TestPullOnDefaultBranch(t *testing.T) {
 	testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	seedPullRemoteCache(t)
+	seedRemoteCache(t)
 
 	err := runPull(nil, nil)
 	if err != nil {
@@ -36,7 +24,7 @@ func TestPullOnDefaultBranch(t *testing.T) {
 func TestPullOnPRBranchUpToDate(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	seedPullRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "feature-up-to-date")
 	testutil.AddCommit(t, clonePath, "feature work")
@@ -51,7 +39,7 @@ func TestPullOnPRBranchUpToDate(t *testing.T) {
 func TestPullOnPRBranchBehind(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	seedPullRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "feature-behind")
 	testutil.AddCommit(t, clonePath, "commit 1")
@@ -69,7 +57,7 @@ func TestPullOnPRBranchBehind(t *testing.T) {
 func TestPullOnPRBranchNoTracking(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	seedPullRemoteCache(t)
+	seedRemoteCache(t)
 
 	testutil.CreateBranch(t, clonePath, "feature-no-tracking")
 	testutil.AddCommit(t, clonePath, "local only work")

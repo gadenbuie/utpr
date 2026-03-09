@@ -8,6 +8,10 @@ import (
 
 var ErrCancelled = errors.New("cancelled")
 
+// confirmFunc, chooseFunc, and inputFunc are the implementations for their
+// respective public functions. Tests can replace them via Set*Func().
+// These are not safe for concurrent use; do not use t.Parallel() in tests
+// that stub these functions.
 var confirmFunc = defaultConfirm
 
 func defaultConfirm(title string, defaultVal bool) (bool, error) {

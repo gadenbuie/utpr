@@ -8,24 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/testutil"
 )
-
-func testRemoteConfig() *remote.Config {
-	return &remote.Config{
-		Layout:        "ours",
-		SourceRemote:  "origin",
-		PushRemote:    "origin",
-		DefaultBranch: "main",
-	}
-}
 
 func TestMergeMainOnDefaultBranch(t *testing.T) {
 	testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	remote.SetCacheForTest(testRemoteConfig())
-	t.Cleanup(func() { remote.ResetCacheForTest() })
+	seedRemoteCache(t)
 
 	err := runMergeMain(nil, nil)
 	if err == nil {
@@ -37,8 +26,9 @@ func TestMergeMainMerge(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(true)()
-	remote.SetCacheForTest(testRemoteConfig())
-	t.Cleanup(func() { remote.ResetCacheForTest() })
+	seedRemoteCache(t)
+	oldRebase := mergeMainRebase
+	t.Cleanup(func() { mergeMainRebase = oldRebase })
 	mergeMainRebase = false
 
 	testutil.CreateBranch(t, clonePath, "feature")
@@ -66,8 +56,9 @@ func TestMergeMainRebase(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
 	defer testutil.StubConfirm(true)()
-	remote.SetCacheForTest(testRemoteConfig())
-	t.Cleanup(func() { remote.ResetCacheForTest() })
+	seedRemoteCache(t)
+	oldRebase := mergeMainRebase
+	t.Cleanup(func() { mergeMainRebase = oldRebase })
 	mergeMainRebase = true
 
 	testutil.CreateBranch(t, clonePath, "feature-rebase")
@@ -99,8 +90,9 @@ func TestMergeMainRebase(t *testing.T) {
 func TestMergeMainNoChanges(t *testing.T) {
 	clonePath, _ := testutil.TempRepoWithRemote(t)
 	defer testutil.StubSpin()()
-	remote.SetCacheForTest(testRemoteConfig())
-	t.Cleanup(func() { remote.ResetCacheForTest() })
+	seedRemoteCache(t)
+	oldRebase := mergeMainRebase
+	t.Cleanup(func() { mergeMainRebase = oldRebase })
 	mergeMainRebase = false
 
 	testutil.CreateBranch(t, clonePath, "feature-noop")

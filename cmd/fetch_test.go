@@ -27,6 +27,14 @@ func TestDetermineFetchRemote(t *testing.T) {
 			wantRemote:   "contributor",
 			wantFork:     true,
 		},
+		{
+			name:         "head repo without slash",
+			prHeadRepo:   "contributor",
+			prBaseRepo:   "owner/repo",
+			sourceRemote: "origin",
+			wantRemote:   "contributor",
+			wantFork:     true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -87,6 +95,24 @@ func TestDetermineFetchBranchName(t *testing.T) {
 			prNumber:         42,
 			headRef:          "feature-x",
 			want:             "tracked",
+		},
+		{
+			name:             "gh login failed uses pr/ prefix",
+			existingTracking: "",
+			currentUser:      "",
+			prAuthor:         "other",
+			prNumber:         42,
+			headRef:          "feature-x",
+			want:             "pr/42-other-feature-x",
+		},
+		{
+			name:             "both users empty returns headRef",
+			existingTracking: "",
+			currentUser:      "",
+			prAuthor:         "",
+			prNumber:         42,
+			headRef:          "feature-x",
+			want:             "feature-x",
 		},
 	}
 
