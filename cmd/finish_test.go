@@ -2,6 +2,55 @@ package cmd
 
 import "testing"
 
+func TestShouldDeleteRemoteBranch(t *testing.T) {
+	tests := []struct {
+		name               string
+		prMerged           bool
+		prHeadRepoFullName string
+		pushRepoFullName   string
+		want               bool
+	}{
+		{
+			name:               "merged and repos match",
+			prMerged:           true,
+			prHeadRepoFullName: "owner/repo",
+			pushRepoFullName:   "owner/repo",
+			want:               true,
+		},
+		{
+			name:               "merged but repos differ (fork)",
+			prMerged:           true,
+			prHeadRepoFullName: "contributor/repo",
+			pushRepoFullName:   "owner/repo",
+			want:               false,
+		},
+		{
+			name:               "not merged repos match",
+			prMerged:           false,
+			prHeadRepoFullName: "owner/repo",
+			pushRepoFullName:   "owner/repo",
+			want:               false,
+		},
+		{
+			name:               "not merged repos differ",
+			prMerged:           false,
+			prHeadRepoFullName: "contributor/repo",
+			pushRepoFullName:   "owner/repo",
+			want:               false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldDeleteRemoteBranch(tt.prMerged, tt.prHeadRepoFullName, tt.pushRepoFullName)
+			if got != tt.want {
+				t.Errorf("shouldDeleteRemoteBranch(%v, %q, %q) = %v, want %v",
+					tt.prMerged, tt.prHeadRepoFullName, tt.pushRepoFullName, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractPRNumberFromURL(t *testing.T) {
 	tests := []struct {
 		name string
