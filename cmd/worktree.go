@@ -93,35 +93,16 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		symlinkDirs = "_dev,.claude,.env,.env.local,.Renviron,.Rprofile,.agents,.secrets,secrets,.htpasswd,.vscode,.vscode/settings.json"
 	}
 
-	var available []string
-	for _, item := range strings.Split(symlinkDirs, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		srcPath := filepath.Join(repoRoot, item)
-		dstPath := filepath.Join(wtDir, item)
-
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			continue
-		}
-
-		if _, err := os.Stat(dstPath); err == nil {
-			// Already exists in worktree (tracked by git)
-			// Special case: .claude dir exists but settings.json doesn't
-			if item == ".claude" {
-				settingsSrc := filepath.Join(repoRoot, ".claude/settings.json")
-				settingsDst := filepath.Join(wtDir, ".claude/settings.json")
-				if _, err := os.Stat(settingsSrc); err == nil {
-					if _, err := os.Stat(settingsDst); os.IsNotExist(err) {
-						available = append(available, ".claude/settings.json")
-					}
-				}
-			}
-			continue
-		}
-		available = append(available, item)
+	items := parseSymlinkItems(symlinkDirs)
+	existsInRepo := func(name string) bool {
+		_, err := os.Stat(filepath.Join(repoRoot, name))
+		return err == nil
 	}
+	existsInWorktree := func(name string) bool {
+		_, err := os.Stat(filepath.Join(wtDir, name))
+		return err == nil
+	}
+	available := computeSymlinkCandidates(items, existsInRepo, existsInWorktree)
 
 	if len(available) == 0 {
 		return
@@ -155,4 +136,36 @@ func runWorktreeSetup(wtDir string) {
 			return cmd.Run()
 		})
 	}
+}
+
+func parseSymlinkItems(symlinkDirs string) []string {
+	var items []string
+	for _, item := range strings.Split(symlinkDirs, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func computeSymlinkCandidates(
+	items []string,
+	existsInRepo func(string) bool,
+	existsInWorktree func(string) bool,
+) []string {
+	var candidates []string
+	for _, item := range items {
+		if !existsInRepo(item) {
+			continue
+		}
+		if existsInWorktree(item) {
+			if item == ".claude" && existsInRepo(".claude/settings.json") && !existsInWorktree(".claude/settings.json") {
+				candidates = append(candidates, ".claude/settings.json")
+			}
+			continue
+		}
+		candidates = append(candidates, item)
+	}
+	return candidates
 }

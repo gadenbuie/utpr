@@ -11,29 +11,33 @@ import (
 // AutoDetect determines the user's editor from environment variables.
 // Returns empty string if no editor can be detected.
 func AutoDetect() string {
-	if e := os.Getenv("UTPR_EDITOR"); e != "" {
+	return autoDetectFromEnv(os.Getenv)
+}
+
+func autoDetectFromEnv(getenv func(string) string) string {
+	if e := getenv("UTPR_EDITOR"); e != "" {
 		return e
 	}
-	if os.Getenv("POSITRON") == "1" {
+	if getenv("POSITRON") == "1" {
 		return "positron"
 	}
-	if os.Getenv("CURSOR_TRACE_ID") != "" || os.Getenv("CURSOR_SESSION_ID") != "" {
+	if getenv("CURSOR_TRACE_ID") != "" || getenv("CURSOR_SESSION_ID") != "" {
 		return "cursor"
 	}
-	if os.Getenv("WINDSURF") != "" || os.Getenv("CODEIUM_WIND_SURF") != "" {
+	if getenv("WINDSURF") != "" || getenv("CODEIUM_WIND_SURF") != "" {
 		return "windsurf"
 	}
-	if os.Getenv("ZED_SESSION") != "" || os.Getenv("TERM_PROGRAM") == "zed" {
+	if getenv("ZED_SESSION") != "" || getenv("TERM_PROGRAM") == "zed" {
 		return "zed"
 	}
-	if os.Getenv("TERM_PROGRAM") == "vscode" {
-		if strings.Contains(os.Getenv("VSCODE_GIT_IPC_HANDLE"), "Code - Insiders") {
+	if getenv("TERM_PROGRAM") == "vscode" {
+		if strings.Contains(getenv("VSCODE_GIT_IPC_HANDLE"), "Code - Insiders") {
 			return "code-insiders"
 		}
 		return "code"
 	}
-	if os.Getenv("VSCODE_GIT_IPC_HANDLE") != "" || os.Getenv("VSCODE_PID") != "" {
-		if strings.Contains(os.Getenv("VSCODE_GIT_IPC_HANDLE"), "Code - Insiders") {
+	if getenv("VSCODE_GIT_IPC_HANDLE") != "" || getenv("VSCODE_PID") != "" {
+		if strings.Contains(getenv("VSCODE_GIT_IPC_HANDLE"), "Code - Insiders") {
 			return "code-insiders"
 		}
 		return "code"

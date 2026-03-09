@@ -11,9 +11,13 @@ build:
 install:
     go install -ldflags '{{ldflags}}' .
 
-# Run tests
+# Run unit tests
 test:
     go test ./...
+
+# Run all tests (unit + integration)
+test-all:
+    go test -tags integration ./...
 
 # Run go vet
 vet:

@@ -19,10 +19,14 @@ func WorktreeList() ([]Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseWorktreeListOutput(out), nil
+}
 
+// ParseWorktreeListOutput parses the porcelain output of `git worktree list`.
+func ParseWorktreeListOutput(output string) []Worktree {
 	var worktrees []Worktree
 	var current Worktree
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			if current.Path != "" {
@@ -43,7 +47,7 @@ func WorktreeList() ([]Worktree, error) {
 	if current.Path != "" {
 		worktrees = append(worktrees, current)
 	}
-	return worktrees, nil
+	return worktrees
 }
 
 // GetBranchWorktreePath returns the worktree path for a branch, or empty string
@@ -54,10 +58,16 @@ func GetBranchWorktreePath(branch string) string {
 		return ""
 	}
 
+	return FindWorktreeForBranch(worktrees, branch)
+}
+
+// FindWorktreeForBranch searches worktrees (skipping index 0, the main worktree)
+// for a branch and returns its path, or empty string if not found.
+func FindWorktreeForBranch(worktrees []Worktree, branch string) string {
 	ref := fmt.Sprintf("refs/heads/%s", branch)
 	for i, wt := range worktrees {
 		if i == 0 {
-			continue // skip the main worktree
+			continue
 		}
 		if wt.Branch == ref {
 			return wt.Path
@@ -72,9 +82,15 @@ func GetWorktreeDir(branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return ComputeWorktreeDir(topLevel, branch), nil
+}
+
+// ComputeWorktreeDir computes the conventional worktree directory path
+// from a repo top-level path and branch name.
+func ComputeWorktreeDir(topLevel, branch string) string {
 	repoName := filepath.Base(topLevel)
 	parentDir := filepath.Dir(topLevel)
-	return filepath.Join(parentDir, repoName+".worktrees", branch), nil
+	return filepath.Join(parentDir, repoName+".worktrees", branch)
 }
 
 // IsInWorktree returns true if the current directory is in a git worktree

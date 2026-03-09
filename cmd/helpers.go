@@ -14,21 +14,25 @@ import (
 // scheme, and the legacy pr-{number}/{branch} scheme. Returns "" if no local
 // branch is found.
 func findLocalBranchForPR(prNumber int, headRef, author string) string {
-	if git.BranchExists(headRef) {
+	return findLocalBranchForPRWith(prNumber, headRef, author, git.BranchExists)
+}
+
+func findLocalBranchForPRWith(prNumber int, headRef, author string, branchExists func(string) bool) string {
+	if branchExists(headRef) {
 		return headRef
 	}
 	newName := fmt.Sprintf("pr/%d-%s-%s", prNumber, author, headRef)
-	if git.BranchExists(newName) {
+	if branchExists(newName) {
 		return newName
 	}
 	oldName := fmt.Sprintf("pr-%d/%s", prNumber, headRef)
-	if git.BranchExists(oldName) {
+	if branchExists(oldName) {
 		return oldName
 	}
 	// usethis::pr_fetch() naming scheme: {author}-{branch}
 	if author != "" {
 		usethisName := author + "-" + headRef
-		if git.BranchExists(usethisName) {
+		if branchExists(usethisName) {
 			return usethisName
 		}
 	}
