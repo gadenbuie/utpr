@@ -265,7 +265,7 @@ func CleanupUtprRemotes() {
 		trackingRefs := strings.Split(refs, "\n")
 		if shouldCleanupRemote(remote, trackingRefs) {
 			ui.Infof("Removing unused remote '%s'.", remote)
-			git.Run("remote", "remove", remote)
+			_, _ = git.Run("remote", "remove", remote)
 		}
 	}
 }

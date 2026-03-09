@@ -118,7 +118,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if _, err := git.Run("branch", branch, baseRef); err != nil {
 			return ui.Dief("Failed to create branch '%s' from '%s'.", branch, baseRef)
 		}
-		git.MarkBranchCreatedByUtpr(branch)
+		_ = git.MarkBranchCreatedByUtpr(branch)
 		ui.Successf("Created branch '%s' from '%s'.", branch, baseRef)
 		return initWorktree(branch)
 	}
@@ -126,7 +126,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if _, err := git.Run("switch", "-c", branch, baseRef); err != nil {
 		return ui.Dief("Failed to create branch '%s' from '%s'.", branch, baseRef)
 	}
-	git.MarkBranchCreatedByUtpr(branch)
+	_ = git.MarkBranchCreatedByUtpr(branch)
 	ui.Successf("Created branch '%s' from '%s'.", branch, baseRef)
 	return nil
 }
@@ -268,7 +268,7 @@ func previewIssue(issue *gh.IssueInfo) {
 		return
 	}
 
-	ui.Pager(rendered)
+	_ = ui.Pager(rendered)
 }
 
 func issueToSlug(number int, title string) string {
@@ -315,7 +315,7 @@ func fetchAndUpdateBase(baseRef string, cfg *remote.Config) error {
 	if localSHA != "" && remoteSHA != "" && localSHA != remoteSHA {
 		mergeBase, _ := git.Run("merge-base", baseRef, upstream)
 		if mergeBase == localSHA {
-			git.Run("update-ref", fmt.Sprintf("refs/heads/%s", baseRef), remoteSHA)
+			_, _ = git.Run("update-ref", fmt.Sprintf("refs/heads/%s", baseRef), remoteSHA)
 			ui.Successf("Fast-forwarded '%s' to '%s'.", baseRef, upstream)
 		} else {
 			ui.Warnf("'%s' has diverged from '%s'.", baseRef, upstream)

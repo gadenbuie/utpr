@@ -21,7 +21,7 @@ func SetVersionInfo(v, c, d string) {
 	commit = c
 	date = d
 	rootCmd.Version = version
-	rootCmd.SetVersionTemplate(fmt.Sprintf("utpr %s\n", version))
+	rootCmd.SetVersionTemplate(fmt.Sprintf("utpr %s (%s, %s)\n", version, commit, date))
 }
 
 var rootCmd *cobra.Command

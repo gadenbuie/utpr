@@ -37,7 +37,7 @@ func initWorktree(branch string) error {
 
 	ed := editor.AutoDetect()
 	if ed != "" {
-		editor.Open(ed, wtDir)
+		_ = editor.Open(ed, wtDir)
 	}
 	ui.Infof("cd \"%s\"", wtDir)
 	return nil
@@ -63,7 +63,7 @@ func offerWorktreeNavigation(targetPath string) {
 	case choice == "Open in editor...":
 		pickAndOpenEditor(targetPath)
 	case strings.HasPrefix(choice, "Open in "):
-		editor.Open(ed, targetPath)
+		_ = editor.Open(ed, targetPath)
 	case choice == "Show path":
 		ui.Infof("cd \"%s\"", targetPath)
 	}
@@ -84,7 +84,7 @@ func pickAndOpenEditor(targetPath string) {
 			return
 		}
 	}
-	editor.Open(choice, targetPath)
+	_ = editor.Open(choice, targetPath)
 }
 
 // symlinkWorktreeDirs symlinks configured dirs from main repo into worktree.
@@ -123,7 +123,7 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		src := filepath.Join(repoRoot, item)
 		dst := filepath.Join(wtDir, item)
 
-		os.MkdirAll(filepath.Dir(dst), 0o755)
+		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
 
 		if err := os.Symlink(src, dst); err != nil {
 			ui.Warnf("Failed to symlink %s.", item)

@@ -166,7 +166,7 @@ func bisectOfferResume() (string, error) {
 	case strings.HasPrefix(choice, "Abort"):
 		confirmed, _ := ui.Confirm("This will reset the bisect state. Continue?", true)
 		if confirmed {
-			git.Run("bisect", "reset")
+			_, _ = git.Run("bisect", "reset")
 			ui.Success("Bisect aborted.")
 			return "abort", nil
 		}
@@ -279,7 +279,7 @@ func bisectInteractiveLoop() (string, error) {
 			ui.Warn("No selection made.")
 			confirmed, _ := ui.Confirm("Abort the bisect?", false)
 			if confirmed {
-				git.Run("bisect", "reset")
+				_, _ = git.Run("bisect", "reset")
 				ui.Info("Bisect aborted.")
 				return "", fmt.Errorf("bisect aborted")
 			}
@@ -413,7 +413,7 @@ func bisectCleanupPrompt(badSHA, prURL string) error {
 
 	switch {
 	case strings.HasPrefix(choice, "Reset"):
-		git.Run("bisect", "reset")
+		_, _ = git.Run("bisect", "reset")
 		ui.Success("Bisect reset. Back on your original branch.")
 	case strings.HasPrefix(choice, "Stay"):
 		shortSHA := badSHA
@@ -422,11 +422,11 @@ func bisectCleanupPrompt(badSHA, prURL string) error {
 		}
 		ui.Infof("Staying at commit %s. Run 'git bisect reset' when you're done.", shortSHA)
 	case strings.HasPrefix(choice, "Open"):
-		openURL(prURL)
+		_ = openURL(prURL)
 		ui.Success("Opened PR in browser.")
 		confirmed, _ := ui.Confirm("Reset the bisect now?", true)
 		if confirmed {
-			git.Run("bisect", "reset")
+			_, _ = git.Run("bisect", "reset")
 			ui.Success("Bisect reset.")
 		} else {
 			ui.Info("Run 'git bisect reset' when you're done.")

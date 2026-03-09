@@ -23,8 +23,12 @@ test-all:
 vet:
     go vet ./...
 
-# Run vet and tests
-check: vet test
+# Run golangci-lint
+lint:
+    go run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run
+
+# Run vet, lint, and tests
+check: vet lint test
 
 # Format code
 fmt:

@@ -189,7 +189,7 @@ func RevListCount(rangeSpec string) (int, error) {
 		return 0, err
 	}
 	var n int
-	fmt.Sscanf(out, "%d", &n)
+	_, _ = fmt.Sscanf(out, "%d", &n)
 	return n, nil
 }
 

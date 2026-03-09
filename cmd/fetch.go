@@ -68,8 +68,8 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		// Add remote if needed
 		if _, err := git.Run("remote", "get-url", remoteName); err != nil {
 			ui.Infof("Adding remote '%s' for '%s'.", remoteName, pr.Head.Repo.FullName)
-			git.Run("remote", "add", remoteName, pr.Head.Repo.CloneURL)
-			git.MarkRemoteCreatedByUtpr(remoteName)
+			_, _ = git.Run("remote", "add", remoteName, pr.Head.Repo.CloneURL)
+			_ = git.MarkRemoteCreatedByUtpr(remoteName)
 		}
 	}
 
@@ -89,9 +89,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 
 	if flagFetchWorktree {
 		if git.BranchExists(localBranch) {
-			git.Run("fetch", ".", "FETCH_HEAD:"+localBranch)
+			_, _ = git.Run("fetch", ".", "FETCH_HEAD:"+localBranch)
 		} else {
-			git.Run("branch", localBranch, "FETCH_HEAD")
+			_, _ = git.Run("branch", localBranch, "FETCH_HEAD")
 		}
 		configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
 		ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
@@ -147,9 +147,9 @@ func determineFetchBranchName(existingTracking, currentUser, prAuthor string, pr
 }
 
 func configureFetchedBranch(localBranch, remoteName, headRef, prURL string) {
-	git.SetBranchUpstream(localBranch, remoteName+"/"+headRef)
-	git.MarkBranchCreatedByUtpr(localBranch)
-	git.SetBranchPRURL(localBranch, prURL)
+	_ = git.SetBranchUpstream(localBranch, remoteName+"/"+headRef)
+	_ = git.MarkBranchCreatedByUtpr(localBranch)
+	_ = git.SetBranchPRURL(localBranch, prURL)
 }
 
 func pickPR(header string) (int, error) {
