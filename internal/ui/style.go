@@ -37,6 +37,28 @@ func GetTermWidth() int {
 	return w
 }
 
+// GetTermHeight returns the current terminal height, defaulting to 24.
+func GetTermHeight() int {
+	_, h, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil || h <= 0 {
+		return 24
+	}
+	return h
+}
+
+// SelectHeight returns a sensible height for a Select/MultiSelect picker,
+// leaving room for the title and filter input.
+func SelectHeight(optionCount int) int {
+	h := GetTermHeight() - 4
+	if h < 5 {
+		h = 5
+	}
+	if optionCount < h {
+		return optionCount
+	}
+	return h
+}
+
 // TruncateWithEllipsis truncates s to maxLen characters, adding "…" if truncated.
 func TruncateWithEllipsis(s string, maxLen int) string {
 	if maxLen <= 0 {
