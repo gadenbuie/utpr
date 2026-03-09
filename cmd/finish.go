@@ -125,12 +125,7 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 	}
 
 	// Find and delete local branch
-	localBranch := ""
-	if git.BranchExists(pr.Head.Ref) {
-		localBranch = pr.Head.Ref
-	} else if git.BranchExists(fmt.Sprintf("pr-%d/%s", prNumber, pr.Head.Ref)) {
-		localBranch = fmt.Sprintf("pr-%d/%s", prNumber, pr.Head.Ref)
-	}
+	localBranch := findLocalBranchForPR(prNumber, pr.Head.Ref, pr.User.Login)
 
 	if localBranch != "" {
 		if err := removeWorktree(localBranch); err != nil {
@@ -190,10 +185,7 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 	// Filter to only PRs that have a local branch
 	var items []ui.PRPickerItem
 	for _, pr := range mergedPRs {
-		hasLocal := git.BranchExists(pr.HeadRefName)
-		if !hasLocal {
-			hasLocal = git.BranchExists(fmt.Sprintf("pr-%d/%s", pr.Number, pr.HeadRefName))
-		}
+		hasLocal := findLocalBranchForPR(pr.Number, pr.HeadRefName, pr.Author) != ""
 		if hasLocal {
 			items = append(items, ui.PRPickerItem{
 				Number:      pr.Number,

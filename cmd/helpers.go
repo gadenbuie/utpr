@@ -9,6 +9,32 @@ import (
 	"github.com/gadenbuie/utpr/internal/ui"
 )
 
+// findLocalBranchForPR returns the local branch name corresponding to a PR,
+// checking the plain headRef, the current pr/{number}-{author}-{branch}
+// scheme, and the legacy pr-{number}/{branch} scheme. Returns "" if no local
+// branch is found.
+func findLocalBranchForPR(prNumber int, headRef, author string) string {
+	if git.BranchExists(headRef) {
+		return headRef
+	}
+	newName := fmt.Sprintf("pr/%d-%s-%s", prNumber, author, headRef)
+	if git.BranchExists(newName) {
+		return newName
+	}
+	oldName := fmt.Sprintf("pr-%d/%s", prNumber, headRef)
+	if git.BranchExists(oldName) {
+		return oldName
+	}
+	// usethis::pr_fetch() naming scheme: {author}-{branch}
+	if author != "" {
+		usethisName := author + "-" + headRef
+		if git.BranchExists(usethisName) {
+			return usethisName
+		}
+	}
+	return ""
+}
+
 // challengeUncommittedChanges warns the user about uncommitted changes and
 // asks for confirmation to proceed.
 func challengeUncommittedChanges() error {

@@ -73,7 +73,14 @@ func runFetch(cmd *cobra.Command, args []string) error {
 			git.Run("remote", "add", remoteName, pr.Head.Repo.CloneURL)
 			git.MarkRemoteCreatedByUtpr(remoteName)
 		}
-		localBranch = fmt.Sprintf("pr-%d/%s", prNumber, headRef)
+	}
+
+	// Use a pr/{number}-{author}-{branch} local name when the current user
+	// is not the PR author, so it's clear whose work you're looking at.
+	currentUser, _ := gh.GetLogin()
+	isOwnPR := currentUser != "" && pr.User.Login == currentUser
+	if !isOwnPR {
+		localBranch = fmt.Sprintf("pr/%d-%s-%s", prNumber, pr.User.Login, headRef)
 	}
 
 	err = ui.Spin(
