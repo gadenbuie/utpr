@@ -8,9 +8,9 @@ import (
 
 var ErrCancelled = errors.New("cancelled")
 
-// Confirm shows a yes/no confirmation prompt. Returns the user's choice.
-// defaultVal sets the pre-selected answer.
-func Confirm(title string, defaultVal bool) (bool, error) {
+var confirmFunc = defaultConfirm
+
+func defaultConfirm(title string, defaultVal bool) (bool, error) {
 	confirmed := defaultVal
 	err := huh.NewConfirm().
 		Title(title).
@@ -22,6 +22,19 @@ func Confirm(title string, defaultVal bool) (bool, error) {
 		return false, err
 	}
 	return confirmed, nil
+}
+
+// Confirm shows a yes/no confirmation prompt. Returns the user's choice.
+// defaultVal sets the pre-selected answer.
+func Confirm(title string, defaultVal bool) (bool, error) {
+	return confirmFunc(title, defaultVal)
+}
+
+// SetConfirmFunc replaces the Confirm implementation. Returns a restore function.
+func SetConfirmFunc(fn func(string, bool) (bool, error)) func() {
+	old := confirmFunc
+	confirmFunc = fn
+	return func() { confirmFunc = old }
 }
 
 // MustConfirm shows a confirmation prompt and returns an error if the user
@@ -37,8 +50,9 @@ func MustConfirm(title string, defaultVal bool) error {
 	return nil
 }
 
-// Input shows a single-line text input with an optional default value and placeholder.
-func Input(header, value, placeholder string) (string, error) {
+var inputFunc = defaultInput
+
+func defaultInput(header, value, placeholder string) (string, error) {
 	result := value
 	err := huh.NewInput().
 		Title(header).
@@ -51,9 +65,21 @@ func Input(header, value, placeholder string) (string, error) {
 	return result, nil
 }
 
-// Choose shows a single-select picker with string options and filtering enabled.
-// Returns the selected option's value.
-func Choose(header string, options []string) (string, error) {
+// Input shows a single-line text input with an optional default value and placeholder.
+func Input(header, value, placeholder string) (string, error) {
+	return inputFunc(header, value, placeholder)
+}
+
+// SetInputFunc replaces the Input implementation. Returns a restore function.
+func SetInputFunc(fn func(string, string, string) (string, error)) func() {
+	old := inputFunc
+	inputFunc = fn
+	return func() { inputFunc = old }
+}
+
+var chooseFunc = defaultChoose
+
+func defaultChoose(header string, options []string) (string, error) {
 	if len(options) == 0 {
 		return "", errors.New("no options provided")
 	}
@@ -74,6 +100,19 @@ func Choose(header string, options []string) (string, error) {
 		return "", err
 	}
 	return selected, nil
+}
+
+// Choose shows a single-select picker with string options and filtering enabled.
+// Returns the selected option's value.
+func Choose(header string, options []string) (string, error) {
+	return chooseFunc(header, options)
+}
+
+// SetChooseFunc replaces the Choose implementation. Returns a restore function.
+func SetChooseFunc(fn func(string, []string) (string, error)) func() {
+	old := chooseFunc
+	chooseFunc = fn
+	return func() { chooseFunc = old }
 }
 
 // ChooseWithOptions shows a single-select picker with pre-built options and

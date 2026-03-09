@@ -20,6 +20,98 @@ type Config struct {
 
 var cached *Config
 
+// RemoteInfo holds raw data gathered by detect() before layout resolution.
+type RemoteInfo struct {
+	OriginName  string       // name of the primary remote ("origin" or first available)
+	OriginRepo  string       // owner/repo parsed from the remote URL
+	HasUpstream bool         // whether an "upstream" remote exists
+	GHRepo      *gh.RepoInfo // nil if GitHub API unavailable
+}
+
+// resolveLayout determines the remote config from gathered remote info.
+func resolveLayout(info RemoteInfo, defaultBranch string) *Config {
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	if info.GHRepo != nil {
+		repo := info.GHRepo
+
+		if !repo.Fork && repo.Permissions.Push {
+			return &Config{
+				Layout:        "ours",
+				SourceRemote:  info.OriginName,
+				PushRemote:    info.OriginName,
+				DefaultBranch: defaultBranch,
+			}
+		}
+
+		if repo.Fork {
+			cfg := &Config{
+				Layout:        "fork",
+				PushRemote:    info.OriginName,
+				DefaultBranch: defaultBranch,
+			}
+			if info.HasUpstream {
+				cfg.SourceRemote = "upstream"
+			} else {
+				cfg.SourceRemote = info.OriginName
+			}
+			return cfg
+		}
+
+		// Fallback: not a fork, no push permission
+		return &Config{
+			Layout:        "ours",
+			SourceRemote:  info.OriginName,
+			PushRemote:    info.OriginName,
+			DefaultBranch: defaultBranch,
+		}
+	}
+
+	// No GitHub API info — infer from local remotes
+	if info.HasUpstream {
+		return &Config{
+			Layout:        "fork",
+			SourceRemote:  "upstream",
+			PushRemote:    info.OriginName,
+			DefaultBranch: defaultBranch,
+		}
+	}
+	return &Config{
+		Layout:        "ours",
+		SourceRemote:  info.OriginName,
+		PushRemote:    info.OriginName,
+		DefaultBranch: defaultBranch,
+	}
+}
+
+// shouldCleanupRemote returns true if no tracking refs reference the given remote.
+func shouldCleanupRemote(remote string, trackingRefs []string) bool {
+	prefix := remote + "/"
+	for _, ref := range trackingRefs {
+		if strings.HasPrefix(ref, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// resetCache clears the cached remote config. Used by tests.
+func resetCache() {
+	cached = nil
+}
+
+// ResetCacheForTest clears the cached remote config. Exported for integration tests.
+func ResetCacheForTest() {
+	resetCache()
+}
+
+// SetCacheForTest sets the cached remote config directly. Exported for integration tests.
+func SetCacheForTest(cfg *Config) {
+	cached = cfg
+}
+
 // Detect determines the remote configuration by inspecting git remotes
 // and the GitHub API. The result is cached after the first call.
 func Detect() (*Config, error) {
@@ -44,6 +136,7 @@ func Require() *Config {
 }
 
 func detect() (*Config, error) {
+	originName := "origin"
 	originURL, err := git.Run("remote", "get-url", "origin")
 	if err != nil {
 		// No origin — use first available remote
@@ -51,18 +144,10 @@ func detect() (*Config, error) {
 		if err != nil || remotes == "" {
 			return nil, fmt.Errorf("no git remotes configured. Add a remote before using utpr")
 		}
-		fallback := strings.Split(remotes, "\n")[0]
-		ui.Warnf("No 'origin' remote found. Using '%s'.", fallback)
-		defaultBranch, _ := git.GetDefaultBranch(fallback)
-		if defaultBranch == "" {
-			defaultBranch = "main"
-		}
-		return &Config{
-			Layout:        "ours",
-			SourceRemote:  fallback,
-			PushRemote:    fallback,
-			DefaultBranch: defaultBranch,
-		}, nil
+		originName = strings.Split(remotes, "\n")[0]
+		ui.Warnf("No 'origin' remote found. Using '%s'.", originName)
+		defaultBranch, _ := git.GetDefaultBranch(originName)
+		return resolveLayout(RemoteInfo{OriginName: originName}, defaultBranch), nil
 	}
 
 	ownerRepo, err := ParseRepoSpec(originURL)
@@ -70,106 +155,62 @@ func detect() (*Config, error) {
 		return nil, err
 	}
 
+	// Check for existing upstream remote
+	_, upstreamErr := git.Run("remote", "get-url", "upstream")
+	hasUpstream := upstreamErr == nil
+
 	// Try GitHub API to detect fork status
-	repo, apiErr := gh.GetRepo(ownerRepo)
+	ghRepo, apiErr := gh.GetRepo(ownerRepo)
 	if apiErr != nil {
-		// API unavailable — infer from local remotes
 		ui.Warn("Could not reach GitHub API. Inferring remote config from local remotes.")
-		return inferFromLocalRemotes()
+		ghRepo = nil
 	}
 
-	if !repo.Fork && repo.Permissions.Push {
-		defaultBranch, _ := git.GetDefaultBranch("origin")
-		if defaultBranch == "" {
-			defaultBranch = "main"
-		}
-		return &Config{
-			Layout:        "ours",
-			SourceRemote:  "origin",
-			PushRemote:    "origin",
-			DefaultBranch: defaultBranch,
-		}, nil
+	info := RemoteInfo{
+		OriginName:  originName,
+		OriginRepo:  ownerRepo,
+		HasUpstream: hasUpstream,
+		GHRepo:      ghRepo,
 	}
 
-	if repo.Fork {
-		cfg := &Config{
-			Layout:     "fork",
-			PushRemote: "origin",
-		}
+	// Determine default branch based on what will be the source remote
+	preliminary := resolveLayout(info, "")
+	defaultBranch, _ := git.GetDefaultBranch(preliminary.SourceRemote)
 
-		// Check for existing upstream remote
-		_, err := git.Run("remote", "get-url", "upstream")
-		if err == nil {
-			cfg.SourceRemote = "upstream"
-		} else if repo.Parent.FullName != "" {
+	cfg := resolveLayout(info, defaultBranch)
+
+	// Side effect: offer to add upstream remote for forks without one
+	if ghRepo != nil && ghRepo.Fork && !hasUpstream {
+		if ghRepo.Parent.FullName != "" {
 			confirmed, _ := ui.Confirm(
-				fmt.Sprintf("Add 'upstream' remote for '%s'?", repo.Parent.FullName),
+				fmt.Sprintf("Add 'upstream' remote for '%s'?", ghRepo.Parent.FullName),
 				true,
 			)
 			if confirmed {
 				_, addErr := git.Run("remote", "add", "upstream",
-					fmt.Sprintf("https://github.com/%s.git", repo.Parent.FullName))
+					fmt.Sprintf("https://github.com/%s.git", ghRepo.Parent.FullName))
 				if addErr == nil {
 					cfg.SourceRemote = "upstream"
+					newDefault, _ := git.GetDefaultBranch("upstream")
+					if newDefault != "" {
+						cfg.DefaultBranch = newDefault
+					}
 				} else {
 					ui.Warn("Using origin as source remote (no upstream configured).")
-					cfg.SourceRemote = "origin"
 				}
 			} else {
 				ui.Warn("Using origin as source remote (no upstream configured).")
-				cfg.SourceRemote = "origin"
 			}
 		} else {
 			ui.Warn("Fork detected but could not determine parent repo. Using origin as source.")
-			cfg.SourceRemote = "origin"
 		}
-
-		cfg.DefaultBranch, _ = git.GetDefaultBranch(cfg.SourceRemote)
-		if cfg.DefaultBranch == "" {
-			cfg.DefaultBranch = "main"
-		}
-		return cfg, nil
 	}
 
-	// Fallback
-	ui.Warn("Could not determine remote config. Falling back to 'ours'.")
-	defaultBranch, _ := git.GetDefaultBranch("origin")
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-	return &Config{
-		Layout:        "ours",
-		SourceRemote:  "origin",
-		PushRemote:    "origin",
-		DefaultBranch: defaultBranch,
-	}, nil
-}
-
-func inferFromLocalRemotes() (*Config, error) {
-	_, err := git.Run("remote", "get-url", "upstream")
-	if err == nil {
-		defaultBranch, _ := git.GetDefaultBranch("upstream")
-		if defaultBranch == "" {
-			defaultBranch = "main"
-		}
-		return &Config{
-			Layout:        "fork",
-			SourceRemote:  "upstream",
-			PushRemote:    "origin",
-			DefaultBranch: defaultBranch,
-		}, nil
+	if ghRepo != nil && !ghRepo.Fork && !ghRepo.Permissions.Push {
+		ui.Warn("Could not determine remote config. Falling back to 'ours'.")
 	}
 
-	defaultBranch, _ := git.GetDefaultBranch("origin")
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-	return &Config{
-		Layout:        "ours",
-		SourceRemote:  "origin",
-		PushRemote:    "origin",
-		DefaultBranch: defaultBranch,
-	}, nil
+	return cfg, nil
 }
 
 // ParseRepoSpec extracts "owner/repo" from a git remote URL.
@@ -220,16 +261,9 @@ func CleanupUtprRemotes() {
 		if !git.IsRemoteCreatedByPRTool(remote) {
 			continue
 		}
-		// Check if any branch tracks this remote
 		refs, _ := git.ForEachRef("%(upstream:short)", "-committerdate", "refs/heads/")
-		hasTracking := false
-		for _, ref := range strings.Split(refs, "\n") {
-			if strings.HasPrefix(ref, remote+"/") {
-				hasTracking = true
-				break
-			}
-		}
-		if !hasTracking {
+		trackingRefs := strings.Split(refs, "\n")
+		if shouldCleanupRemote(remote, trackingRefs) {
 			ui.Infof("Removing unused remote '%s'.", remote)
 			git.Run("remote", "remove", remote)
 		}
