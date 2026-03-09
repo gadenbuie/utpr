@@ -99,7 +99,6 @@ func defaultChoose(header string, options []string) (string, error) {
 		Options(huhOpts...).
 		Value(&selected).
 		Height(SelectHeight(len(options))).
-		Filtering(true).
 		Run()
 	if err != nil {
 		return "", err
@@ -135,7 +134,6 @@ func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T,
 		Options(options...).
 		Value(&selected).
 		Height(SelectHeight(len(options))).
-		Filtering(true).
 		Run()
 	if err != nil {
 		return zero, err
