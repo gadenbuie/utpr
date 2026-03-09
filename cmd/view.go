@@ -217,7 +217,10 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		apiState = "closed"
 	}
 
-	var displayItems []string
+	currentUser, _ := gh.GetLogin()
+	showState := flagViewState != "open"
+
+	var items []ui.PRPickerItem
 	if entity == "issue" {
 		issues, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.IssueInfo, error) {
 			return gh.ListIssues(ownerRepo, apiState)
@@ -229,7 +232,13 @@ func pickForView(ownerRepo, entity string) (int, error) {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
 		}
 		for _, issue := range issues {
-			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", issue.Number, issue.Title))
+			items = append(items, ui.PRPickerItem{
+				Number:      issue.Number,
+				Title:       issue.Title,
+				Author:      issue.User.Login,
+				State:       strings.ToLower(issue.State),
+				IsHighlight: currentUser != "" && issue.User.Login == currentUser,
+			})
 		}
 	} else {
 		prs, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
@@ -252,17 +261,33 @@ func pickForView(ownerRepo, entity string) (int, error) {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
 		}
 		for _, pr := range prs {
-			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
+			state := strings.ToLower(pr.State)
+			if pr.Merged {
+				state = "merged"
+			}
+			items = append(items, ui.PRPickerItem{
+				Number:      pr.Number,
+				Title:       pr.Title,
+				Author:      pr.User.Login,
+				State:       state,
+				IsHighlight: currentUser != "" && pr.User.Login == currentUser,
+			})
 		}
 	}
 
+	mode := ui.PickerDefault
+	if showState {
+		mode = ui.PickerWithState
+	}
+	opts := ui.FormatPRPickerOptions(items, mode)
+
 	header := fmt.Sprintf("Select %s to view:", addArticle(entity))
-	selected, err := ui.Choose(header, displayItems)
-	if err != nil || selected == "" {
+	selected, err := ui.ChooseWithOptions(header, opts)
+	if err != nil {
 		ui.Info("Cancelled.")
 		return 0, nil
 	}
-	return parsePRNumber(selected)
+	return selected, nil
 }
 
 func addArticle(entity string) string {

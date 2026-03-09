@@ -79,30 +79,23 @@ func pickBranch(defaultBranch, header string) (string, error) {
 		return "", err
 	}
 
-	var branches []string
+	var items []ui.BranchPickerItem
 	for _, b := range strings.Split(branchOutput, "\n") {
 		b = strings.TrimSpace(b)
 		if b != "" && b != defaultBranch {
-			branches = append(branches, b)
+			items = append(items, ui.BranchPickerItem{
+				Name:        b,
+				HasWorktree: git.GetBranchWorktreePath(b) != "",
+			})
 		}
 	}
 
-	if len(branches) == 0 {
+	if len(items) == 0 {
 		return "", ui.Die("No branches to select.")
 	}
 
-	// Build styled display list with worktree annotations
-	var displayItems []string
-	for _, b := range branches {
-		wtPath := git.GetBranchWorktreePath(b)
-		if wtPath != "" {
-			displayItems = append(displayItems, ui.StyleBranchName(b)+"  [worktree]")
-		} else {
-			displayItems = append(displayItems, ui.StyleBranchName(b))
-		}
-	}
-
-	selected, err := ui.Choose(header, displayItems)
+	opts := ui.FormatBranchPickerOptions(items)
+	selected, err := ui.ChooseWithOptions(header, opts)
 	if err != nil {
 		return "", err
 	}
@@ -110,8 +103,5 @@ func pickBranch(defaultBranch, header string) (string, error) {
 		return "", ui.Die("No branch selected.")
 	}
 
-	// Strip ANSI codes and worktree annotation
-	plain := ui.StripANSI(selected)
-	plain = strings.TrimSuffix(plain, "  [worktree]")
-	return plain, nil
+	return selected, nil
 }

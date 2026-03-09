@@ -185,50 +185,62 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 		return pickMergedPRsFallback(cfg, sourceRepo)
 	}
 
+	currentUser, _ := gh.GetLogin()
+
 	// Filter to only PRs that have a local branch
-	var displayItems []string
+	var items []ui.PRPickerItem
 	for _, pr := range mergedPRs {
 		hasLocal := git.BranchExists(pr.HeadRefName)
 		if !hasLocal {
 			hasLocal = git.BranchExists(fmt.Sprintf("pr-%d/%s", pr.Number, pr.HeadRefName))
 		}
 		if hasLocal {
-			displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
+			items = append(items, ui.PRPickerItem{
+				Number:      pr.Number,
+				Title:       pr.Title,
+				Author:      pr.Author,
+				IsHighlight: currentUser != "" && pr.Author == currentUser,
+			})
 		}
 	}
 
-	if len(displayItems) == 0 {
+	if len(items) == 0 {
 		ui.Info("No merged PRs with a local branch to clean up.")
 		return nil, nil
 	}
 
-	// For simplicity, use single-select (the bash version uses multi-select)
-	selected, err := ui.Choose("Select a PR to finish:", displayItems)
-	if err != nil || selected == "" {
+	opts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
+	selected, err := ui.ChooseMultiWithOptions("Select PR(s) to finish:", opts)
+	if err != nil || len(selected) == 0 {
 		ui.Info("Cancelled.")
 		return nil, nil
 	}
 
-	n, err := parsePRNumber(selected)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := ui.MustConfirm(fmt.Sprintf("Finish PR #%d?", n), true); err != nil {
-		if err == ui.ErrCancelled {
-			ui.Info("Cancelled.")
+	if len(selected) == 1 {
+		if err := ui.MustConfirm(fmt.Sprintf("Finish PR #%d?", selected[0]), true); err != nil {
+			if err == ui.ErrCancelled {
+				ui.Info("Cancelled.")
+			}
+			return nil, nil
 		}
-		return nil, nil
+	} else {
+		if err := ui.MustConfirm(fmt.Sprintf("Finish %d selected PRs?", len(selected)), true); err != nil {
+			if err == ui.ErrCancelled {
+				ui.Info("Cancelled.")
+			}
+			return nil, nil
+		}
 	}
 
-	return []int{n}, nil
+	return selected, nil
 }
 
 func pickMergedPRsFallback(cfg *remote.Config, sourceRepo string) ([]int, error) {
 	branchOutput, _ := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
 	branches := strings.Split(branchOutput, "\n")
 
-	var displayItems []string
+	currentUser, _ := gh.GetLogin()
+	var items []ui.PRPickerItem
 
 	for _, branch := range branches {
 		branch = strings.TrimSpace(branch)
@@ -239,25 +251,27 @@ func pickMergedPRsFallback(cfg *remote.Config, sourceRepo string) ([]int, error)
 		if err != nil || pr == nil {
 			continue
 		}
-		displayItems = append(displayItems, fmt.Sprintf("#%d  %s", pr.Number, pr.Title))
+		items = append(items, ui.PRPickerItem{
+			Number:      pr.Number,
+			Title:       pr.Title,
+			Author:      pr.User.Login,
+			IsHighlight: currentUser != "" && pr.User.Login == currentUser,
+		})
 	}
 
-	if len(displayItems) == 0 {
+	if len(items) == 0 {
 		ui.Info("No merged PRs with a local branch to clean up.")
 		return nil, nil
 	}
 
-	selected, err := ui.Choose("Select a PR to finish:", displayItems)
-	if err != nil || selected == "" {
+	opts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
+	selected, err := ui.ChooseMultiWithOptions("Select PR(s) to finish:", opts)
+	if err != nil || len(selected) == 0 {
 		ui.Info("Cancelled.")
 		return nil, nil
 	}
 
-	n, err := parsePRNumber(selected)
-	if err != nil {
-		return nil, err
-	}
-	return []int{n}, nil
+	return selected, nil
 }
 
 func extractPRNumberFromURL(url string) int {

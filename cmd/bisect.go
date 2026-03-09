@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
@@ -175,8 +176,11 @@ func bisectOfferResume() (string, error) {
 	}
 }
 
+// bisectRefDate is a sentinel value that triggers date input mode.
+const bisectRefDate = "__DATE_INPUT__"
+
 func bisectPickGoodCommit() (string, error) {
-	var items []string
+	var opts []huh.Option[string]
 
 	// Tags
 	tagOut, _ := git.Run("tag", "--sort=-creatordate", "--format=%(refname:short)\t%(creatordate:relative)")
@@ -190,7 +194,11 @@ func bisectPickGoodCommit() (string, error) {
 			if len(parts) > 1 {
 				date = parts[1]
 			}
-			items = append(items, fmt.Sprintf("[tag]    %s  (%s)", parts[0], date))
+			display := fmt.Sprintf("%s %s  %s",
+				ui.StyleMuted.Render("[tag]"),
+				ui.StyleBranch.Render(parts[0]),
+				ui.StyleMuted.Render("("+date+")"))
+			opts = append(opts, huh.NewOption(display, parts[0]))
 		}
 	}
 
@@ -205,33 +213,24 @@ func bisectPickGoodCommit() (string, error) {
 			if len(parts) < 3 {
 				continue
 			}
-			items = append(items, fmt.Sprintf("[commit] %s %s  (%s)", parts[0], parts[1], parts[2]))
+			display := fmt.Sprintf("%s %s %s  %s",
+				ui.StyleMuted.Render("[commit]"),
+				ui.StyleHash.Render(parts[0]),
+				parts[1],
+				ui.StyleMuted.Render("("+parts[2]+")"))
+			opts = append(opts, huh.NewOption(display, parts[0]))
 		}
 	}
 
-	items = append(items, "[date]   Enter a date or time...")
+	dateDisplay := fmt.Sprintf("%s Enter a date or time...", ui.StyleMuted.Render("[date]"))
+	opts = append(opts, huh.NewOption(dateDisplay, bisectRefDate))
 
-	selected, err := ui.Choose("Select the last known good commit:", items)
+	selected, err := ui.ChooseWithOptions("Select the last known good commit:", opts)
 	if err != nil || selected == "" {
 		return "", fmt.Errorf("cancelled")
 	}
 
-	switch {
-	case strings.HasPrefix(selected, "[tag]"):
-		// Extract tag name between spaces
-		s := strings.TrimPrefix(selected, "[tag]")
-		s = strings.TrimSpace(s)
-		if idx := strings.Index(s, "  "); idx > 0 {
-			s = s[:idx]
-		}
-		return strings.TrimSpace(s), nil
-
-	case strings.HasPrefix(selected, "[commit]"):
-		s := strings.TrimPrefix(selected, "[commit]")
-		s = strings.TrimSpace(s)
-		return strings.Fields(s)[0], nil
-
-	case strings.HasPrefix(selected, "[date]"):
+	if selected == bisectRefDate {
 		for {
 			dateInput, err := ui.Input("Enter a date (e.g. '2 weeks ago', '2024-01-15'):", "", "2 weeks ago")
 			if err != nil || dateInput == "" {
@@ -244,7 +243,8 @@ func bisectPickGoodCommit() (string, error) {
 			ui.Errorf("No commit found before '%s'. Try again.", dateInput)
 		}
 	}
-	return "", fmt.Errorf("cancelled")
+
+	return selected, nil
 }
 
 func bisectVerifyScript(cmd string) error {
@@ -331,20 +331,38 @@ func bisectRunAutomated(runCmd string) (string, error) {
 }
 
 func bisectShowCurrentCommit() {
-	out, _ := git.Run("log", "-1", "--format=%h %s%n%an · %cr", "HEAD")
+	out, _ := git.Run("log", "-1", "--format=%h\t%s\t%an\t%cr", "HEAD")
 	if out != "" {
-		fmt.Fprintln(os.Stderr, out)
+		parts := strings.SplitN(out, "\t", 4)
+		if len(parts) >= 4 {
+			fmt.Fprintf(os.Stderr, "%s %s\n%s · %s\n",
+				ui.StyleHash.Render(parts[0]),
+				ui.StyleSubject.Render(parts[1]),
+				ui.StyleCyan.Render(parts[2]),
+				parts[3])
+		} else {
+			fmt.Fprintln(os.Stderr, out)
+		}
 	}
 }
 
 func bisectShowResult(sha string) string {
 	fmt.Fprintln(os.Stderr)
-	ui.Error("Found the first bad commit:")
+	fmt.Fprintln(os.Stderr, ui.StyleBold.Render(ui.StyleStateClosed.Render("Found the first bad commit:")))
 	fmt.Fprintln(os.Stderr)
 
-	info, _ := git.Run("log", "-1", "--format=  %H%n  %s%n  %an <%ae> · %ci", sha)
-	if info != "" {
-		fmt.Fprintln(os.Stderr, info)
+	out, _ := git.Run("log", "-1", "--format=%H\t%s\t%an <%ae>\t%ci", sha)
+	if out != "" {
+		parts := strings.SplitN(out, "\t", 4)
+		if len(parts) >= 4 {
+			fmt.Fprintf(os.Stderr, "  %s\n  %s\n  %s · %s\n",
+				ui.StyleHash.Render(parts[0]),
+				ui.StyleSubject.Render(parts[1]),
+				ui.StyleCyan.Render(parts[2]),
+				parts[3])
+		} else {
+			fmt.Fprintln(os.Stderr, "  "+out)
+		}
 	}
 
 	return bisectFindPR(sha)
@@ -371,8 +389,13 @@ func bisectFindPR(sha string) string {
 
 	pr := prs[0]
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "Associated PR: #%d %s\n", pr.Number, pr.Title)
-	fmt.Fprintf(os.Stderr, "  %s\n", pr.HTMLURL)
+	fmt.Fprintln(os.Stderr, ui.StyleBold.Render("Associated PR:"))
+	fmt.Fprintf(os.Stderr, "  %s %s\n",
+		ui.StyleNumber.Render(fmt.Sprintf("#%d", pr.Number)),
+		pr.Title)
+	fmt.Fprintf(os.Stderr, "  %s · %s\n",
+		ui.StyleAuthor.Render(pr.User.Login),
+		pr.HTMLURL)
 	return pr.HTMLURL
 }
 

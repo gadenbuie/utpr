@@ -150,16 +150,25 @@ func pickPR(header string) (int, error) {
 		return 0, ui.Die("No open PRs found.")
 	}
 
-	var displayItems []string
+	currentUser, _ := gh.GetLogin()
+	items := make([]ui.PRPickerItem, 0, len(prs))
 	for _, pr := range prs {
-		displayItems = append(displayItems, fmt.Sprintf("#%d\t%s\t%s", pr.Number, pr.Title, pr.User.Login))
+		isCross := pr.Head.Repo.FullName != pr.Base.Repo.FullName
+		items = append(items, ui.PRPickerItem{
+			Number:      pr.Number,
+			Title:       pr.Title,
+			Author:      pr.User.Login,
+			Branch:      pr.Head.Ref,
+			IsCrossRepo: isCross,
+			IsHighlight: currentUser != "" && pr.User.Login == currentUser,
+		})
 	}
 
-	selected, err := ui.Choose(header, displayItems)
-	if err != nil || selected == "" {
+	opts := ui.FormatPRPickerOptions(items, ui.PickerFetch)
+	selected, err := ui.ChooseWithOptions(header, opts)
+	if err != nil {
 		ui.Info("Cancelled.")
 		return 0, nil
 	}
-
-	return parsePRNumber(selected)
+	return selected, nil
 }

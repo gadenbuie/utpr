@@ -51,7 +51,7 @@ func Input(header, value, placeholder string) (string, error) {
 	return result, nil
 }
 
-// Choose shows a single-select picker with the given options.
+// Choose shows a single-select picker with string options and filtering enabled.
 // Returns the selected option's value.
 func Choose(header string, options []string) (string, error) {
 	if len(options) == 0 {
@@ -68,9 +68,52 @@ func Choose(header string, options []string) (string, error) {
 		Title(header).
 		Options(huhOpts...).
 		Value(&selected).
+		Filtering(true).
 		Run()
 	if err != nil {
 		return "", err
+	}
+	return selected, nil
+}
+
+// ChooseWithOptions shows a single-select picker with pre-built options and
+// filtering enabled. The display key can contain ANSI styling; the value is
+// returned cleanly.
+func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T, error) {
+	var zero T
+	if len(options) == 0 {
+		return zero, errors.New("no options provided")
+	}
+
+	var selected T
+	err := huh.NewSelect[T]().
+		Title(header).
+		Options(options...).
+		Value(&selected).
+		Filtering(true).
+		Run()
+	if err != nil {
+		return zero, err
+	}
+	return selected, nil
+}
+
+// ChooseMultiWithOptions shows a multi-select picker with pre-built options
+// and filtering enabled. Returns the selected values.
+func ChooseMultiWithOptions[T comparable](header string, options []huh.Option[T]) ([]T, error) {
+	if len(options) == 0 {
+		return nil, errors.New("no options provided")
+	}
+
+	var selected []T
+	err := huh.NewMultiSelect[T]().
+		Title(header).
+		Options(options...).
+		Value(&selected).
+		Filterable(true).
+		Run()
+	if err != nil {
+		return nil, err
 	}
 	return selected, nil
 }

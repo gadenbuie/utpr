@@ -151,17 +151,42 @@ func pickIssue() (int, error) {
 		return 0, ui.Die("No open issues found. Provide a branch name to proceed.")
 	}
 
-	var displayItems []string
+	currentUser, _ := gh.GetLogin()
+	items := make([]ui.PRPickerItem, 0, len(issues))
 	for _, issue := range issues {
-		displayItems = append(displayItems, fmt.Sprintf("#%d\t%s\t%s", issue.Number, issue.Title, issue.User.Login))
+		var assignees []string
+		for _, a := range issue.Assignees {
+			assignees = append(assignees, a.Login)
+		}
+		var labels []string
+		for _, l := range issue.Labels {
+			labels = append(labels, l.Name)
+		}
+		isAssigned := false
+		if currentUser != "" {
+			for _, a := range assignees {
+				if a == currentUser {
+					isAssigned = true
+					break
+				}
+			}
+		}
+		items = append(items, ui.PRPickerItem{
+			Number:      issue.Number,
+			Title:       issue.Title,
+			Author:      issue.User.Login,
+			Assignees:   strings.Join(assignees, ","),
+			Labels:      strings.Join(labels, ", "),
+			IsHighlight: isAssigned,
+		})
 	}
 
-	selected, err := ui.Choose("Select an issue to work on:", displayItems)
-	if err != nil || selected == "" {
+	opts := ui.FormatPRPickerOptions(items, ui.PickerIssue)
+	selected, err := ui.ChooseWithOptions("Select an issue to work on:", opts)
+	if err != nil {
 		return 0, nil
 	}
-
-	return parsePRNumber(selected)
+	return selected, nil
 }
 
 func handleIssue(issueNumber int, existingBranch string) (string, error) {
