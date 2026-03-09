@@ -15,7 +15,7 @@ after merges. The [usethis] R package solved this beautifully with its
 into simple, memorable commands.
 
 **utpr brings that same workflow to any terminal** — no R required.
-It uses `git`, `gh`, and `gum` to provide a polished, interactive
+It wraps `git` and the GitHub API to provide a polished, interactive
 experience for the full pull request round-trip:
 
 - **Start work** with `utpr init`, which creates a branch from a
@@ -28,6 +28,8 @@ experience for the full pull request round-trip:
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
 - **Clean up** with `utpr finish` after a merge, or `utpr forget`
   to abandon work.
+- **Track down bugs** with `utpr bisect`, an interactive wrapper
+  around `git bisect`.
 - **Isolate AI coding agents** with `--worktree` on `utpr init` and
   `utpr fetch`: each agent gets its own Git worktree, pre-wired with
   your project's shared config, and `utpr finish` tears it down cleanly
@@ -43,44 +45,44 @@ For more background on the workflow that inspired utpr, see
 
 ## Installation
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/install.sh | bash
-```
-
-This installs utpr and all prerequisites to `~/.local/bin`. Supported
-platforms: **macOS** (via Homebrew), **Linux** (Debian/Ubuntu and
-Fedora/RHEL), and **WSL**.
-
-After installation, authenticate the GitHub CLI if you haven't already:
+### Quick install (macOS / Linux)
 
 ```bash
-gh auth login
+curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/scripts/install.sh | bash
 ```
 
-### Manual installation
+### Quick install (Windows PowerShell)
 
-utpr requires the following tools:
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/gadenbuie/utpr/main/scripts/install.ps1 | iex"
+```
 
-| Tool | Purpose |
-|------|---------|
-| [git](https://git-scm.com) | Version control |
-| [gh](https://cli.github.com) | GitHub CLI (must be authenticated) |
-| [jq](https://jqlang.github.io/jq/) | JSON processing |
-| [gum](https://github.com/charmbracelet/gum) | Interactive terminal UI |
-
-Once prerequisites are installed, download utpr:
+### From source (requires Go 1.25+)
 
 ```bash
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/utpr -o ~/.local/bin/utpr
-chmod +x ~/.local/bin/utpr
+go install github.com/gadenbuie/utpr@latest
 ```
 
-Make sure `~/.local/bin` is in your `PATH` (add to `~/.zshrc` or `~/.bashrc`):
+### Download a release
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+Pre-built binaries for macOS, Linux, and Windows are available on the
+[releases page](https://github.com/gadenbuie/utpr/releases).
+Download the archive for your platform, extract it, and place the `utpr`
+binary somewhere on your `PATH`.
+
+### Prerequisites
+
+utpr requires [git](https://git-scm.com) to be installed and available on
+your `PATH`.
+
+utpr also needs GitHub authentication. You have two options:
+
+1. **GitHub CLI** (recommended): Install [gh](https://cli.github.com) and run
+   `gh auth login`. utpr reads the stored token automatically — `gh` is not
+   needed at runtime after initial setup.
+
+2. **Environment variable**: Set `GITHUB_TOKEN` (or `GH_TOKEN`) with a
+   [personal access token](https://github.com/settings/tokens).
 
 ## Usage
 
@@ -100,6 +102,7 @@ utpr <command> [options]
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
 | `utpr view [<pr>]` | View PR in browser |
+| `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
 Run `utpr <command> --help` for detailed usage of any command.
 
@@ -206,38 +209,39 @@ export UTPR_SYMLINK_DIRS="_dev,.claude,.env,.Renviron,secrets"
 
 ### `utpr: command not found` after installation
 
-The installer places `utpr` in `~/.local/bin`. Make sure that directory is
-in your `PATH`:
+If you installed with `go install`, make sure `$GOPATH/bin` (or `$GOBIN`)
+is in your `PATH`:
 
 ```bash
-echo $PATH | tr ':' '\n' | grep local
+echo $PATH | tr ':' '\n' | grep go
 ```
 
-If `~/.local/bin` is missing, add it to your shell profile:
+If missing, add it to your shell profile:
 
 ```bash
 # ~/.zshrc or ~/.bashrc
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 Then reload your shell (`source ~/.zshrc`) or open a new terminal.
 
 ### GitHub API errors or authentication failures
 
-utpr uses the `gh` CLI for all GitHub operations. If you see errors like
-"authentication required" or "HTTP 401", authenticate first:
+utpr reads GitHub authentication from the `gh` CLI config or from the
+`GITHUB_TOKEN`/`GH_TOKEN` environment variable. If you see errors like
+"authentication required" or "HTTP 401":
 
 ```bash
+# Option 1: Use gh CLI for auth
 gh auth login
+gh auth status   # verify current auth
+
+# Option 2: Set a token directly
+export GITHUB_TOKEN="ghp_your_token_here"
 ```
 
-To check your current auth status:
-
-```bash
-gh auth status
-```
-
-If you have multiple GitHub accounts, make sure the correct one is active:
+If you have multiple GitHub accounts with `gh`, make sure the correct one is
+active:
 
 ```bash
 gh auth switch

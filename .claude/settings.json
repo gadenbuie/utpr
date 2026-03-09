@@ -1,0 +1,13 @@
+{
+  "allowedTools": [
+    "Bash(tmux *)",
+    "Bash(git worktree *)",
+    "Bash(go version:*)",
+    "Bash(go mod:*)",
+    "Bash(go get:*)",
+    "Bash(go build:*)",
+    "Bash(go test:*)",
+    "Bash(go vet:*)",
+    "Bash(gofmt:*)"
+  ]
+}
