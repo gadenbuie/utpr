@@ -45,11 +45,30 @@ For more background on the workflow that inspired utpr, see
 
 ## Installation
 
+### Quick install (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gadenbuie/utpr/main/scripts/install.sh | bash
+```
+
+### Quick install (Windows PowerShell)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/gadenbuie/utpr/main/scripts/install.ps1 | iex"
+```
+
 ### From source (requires Go 1.25+)
 
 ```bash
 go install github.com/gadenbuie/utpr@latest
 ```
+
+### Download a release
+
+Pre-built binaries for macOS, Linux, and Windows are available on the
+[releases page](https://github.com/gadenbuie/utpr/releases).
+Download the archive for your platform, extract it, and place the `utpr`
+binary somewhere on your `PATH`.
 
 ### Prerequisites
 
