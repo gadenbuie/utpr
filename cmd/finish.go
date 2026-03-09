@@ -143,24 +143,22 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 	}
 
 	// Delete remote branch if merged and we own the repo
-	if pr.Merged {
-		pushURL, _ := git.Run("remote", "get-url", cfg.PushRemote)
-		pushRepo, _ := remote.ParseRepoSpec(pushURL)
-		if pr.Head.Repo.FullName == pushRepo {
-			err := gh.DeleteRemoteBranch(pr.Head.Repo.FullName, pr.Head.Ref)
-			if err != nil {
-				errStr := err.Error()
-				if strings.Contains(errStr, "Reference does not exist") {
-					ui.Infof("Remote branch '%s' already deleted.", pr.Head.Ref)
-				} else {
-					ui.Warnf("Could not delete remote branch '%s' (may require manual cleanup).", pr.Head.Ref)
-				}
+	pushURL, _ := git.Run("remote", "get-url", cfg.PushRemote)
+	pushRepo, _ := remote.ParseRepoSpec(pushURL)
+	if shouldDeleteRemoteBranch(pr.Merged, pr.Head.Repo.FullName, pushRepo) {
+		err := gh.DeleteRemoteBranch(pr.Head.Repo.FullName, pr.Head.Ref)
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "Reference does not exist") {
+				ui.Infof("Remote branch '%s' already deleted.", pr.Head.Ref)
 			} else {
-				ui.Successf("Deleted remote branch '%s'.", pr.Head.Ref)
+				ui.Warnf("Could not delete remote branch '%s' (may require manual cleanup).", pr.Head.Ref)
 			}
 		} else {
-			ui.Infof("Remote branch '%s' is on '%s' (not yours). Skipping deletion.", pr.Head.Ref, pr.Head.Repo.FullName)
+			ui.Successf("Deleted remote branch '%s'.", pr.Head.Ref)
 		}
+	} else if pr.Merged {
+		ui.Infof("Remote branch '%s' is on '%s' (not yours). Skipping deletion.", pr.Head.Ref, pr.Head.Repo.FullName)
 	}
 
 	if localBranch != "" {
@@ -169,6 +167,12 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 
 	ui.Successf("Finished PR #%d.", prNumber)
 	return nil
+}
+
+// shouldDeleteRemoteBranch returns true if the PR is merged and the
+// head repo matches the push remote repo (we own the branch).
+func shouldDeleteRemoteBranch(prMerged bool, prHeadRepoFullName, pushRepoFullName string) bool {
+	return prMerged && prHeadRepoFullName == pushRepoFullName
 }
 
 func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {

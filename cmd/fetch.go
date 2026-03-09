@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -61,12 +62,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 	}
 
 	headRef := pr.Head.Ref
-	isForkPR := pr.Head.Repo.FullName != pr.Base.Repo.FullName
-	remoteName := cfg.SourceRemote
-	localBranch := headRef
+	remoteName, isForkPR := determineFetchRemote(pr.Head.Repo.FullName, pr.Base.Repo.FullName, cfg.SourceRemote)
 
 	if isForkPR {
-		remoteName = pr.Head.Repo.Owner.Login
 		// Add remote if needed
 		if _, err := git.Run("remote", "get-url", remoteName); err != nil {
 			ui.Infof("Adding remote '%s' for '%s'.", remoteName, pr.Head.Repo.FullName)
@@ -75,18 +73,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// If a local branch already tracks this remote ref, reuse it.
-	if existing := git.FindBranchByUpstream(remoteName, headRef); existing != "" {
-		localBranch = existing
-	} else {
-		// Use a pr/{number}-{author}-{branch} local name when the current user
-		// is not the PR author, so it's clear whose work you're looking at.
-		currentUser, _ := gh.GetLogin()
-		isOwnPR := currentUser != "" && pr.User.Login == currentUser
-		if !isOwnPR {
-			localBranch = fmt.Sprintf("pr/%d-%s-%s", prNumber, pr.User.Login, headRef)
-		}
-	}
+	existingTracking := git.FindBranchByUpstream(remoteName, headRef)
+	currentUser, _ := gh.GetLogin()
+	localBranch := determineFetchBranchName(existingTracking, currentUser, pr.User.Login, prNumber, headRef)
 
 	err = ui.Spin(
 		fmt.Sprintf("Fetching '%s' from %s...", headRef, remoteName),
@@ -133,6 +122,28 @@ func runFetch(cmd *cobra.Command, args []string) error {
 	configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
 	ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
 	return nil
+}
+
+// determineFetchRemote returns the remote name to fetch from and whether the PR is from a fork.
+func determineFetchRemote(prHeadRepo, prBaseRepo, sourceRemote string) (remoteName string, isFork bool) {
+	isFork = prHeadRepo != prBaseRepo
+	if isFork {
+		remoteName = strings.Split(prHeadRepo, "/")[0]
+	} else {
+		remoteName = sourceRemote
+	}
+	return
+}
+
+// determineFetchBranchName returns the local branch name for a fetched PR.
+func determineFetchBranchName(existingTracking, currentUser, prAuthor string, prNumber int, headRef string) string {
+	if existingTracking != "" {
+		return existingTracking
+	}
+	if currentUser != prAuthor {
+		return fmt.Sprintf("pr/%d-%s-%s", prNumber, prAuthor, headRef)
+	}
+	return headRef
 }
 
 func configureFetchedBranch(localBranch, remoteName, headRef, prURL string) {

@@ -88,10 +88,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			targetRepo, err = remote.ParseRepoSpec(sourceURL)
+			sourceOwnerRepo, err := remote.ParseRepoSpec(sourceURL)
 			if err != nil {
 				return err
 			}
+			targetRepo = determinePRTarget(cfg.Layout, pushOwnerRepo, sourceOwnerRepo)
 		}
 
 		// Pre-fill title from first commit on the branch
@@ -130,12 +131,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			return ui.Die("PR title cannot be empty.")
 		}
 
-		// Build head ref: for forks, qualify with fork owner
-		head := current
-		if cfg.Layout == "fork" {
-			forkOwner := strings.Split(pushOwnerRepo, "/")[0]
-			head = forkOwner + ":" + current
-		}
+		head := buildPRHeadRef(cfg.Layout, pushOwnerRepo, current)
 
 		pr, err := gh.CreatePR(targetRepo, gh.CreatePRParams{
 			Title: title,
@@ -182,29 +178,54 @@ func openCompareURL(cfg *remote.Config, branch string) error {
 	if err != nil {
 		return err
 	}
-	ownerRepo, err := remote.ParseRepoSpec(pushURL)
+	pushOwnerRepo, err := remote.ParseRepoSpec(pushURL)
 	if err != nil {
 		return err
 	}
 
-	var compareURL string
+	sourceOwnerRepo := pushOwnerRepo
 	if cfg.Layout == "fork" {
 		sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 		if err != nil {
 			return err
 		}
-		sourceRepo, err := remote.ParseRepoSpec(sourceURL)
+		sourceOwnerRepo, err = remote.ParseRepoSpec(sourceURL)
 		if err != nil {
 			return err
 		}
-		forkOwner := strings.Split(ownerRepo, "/")[0]
-		compareURL = fmt.Sprintf("https://github.com/%s/compare/%s...%s:%s?expand=1",
-			sourceRepo, cfg.DefaultBranch, forkOwner, branch)
-	} else {
-		compareURL = fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1",
-			ownerRepo, cfg.DefaultBranch, branch)
 	}
 
+	compareURL := buildCompareURL(cfg.Layout, pushOwnerRepo, sourceOwnerRepo, cfg.DefaultBranch, branch)
 	return openURL(compareURL)
+}
+
+// determinePRTarget returns the repo to create the PR against.
+// In fork layout, PRs target the source (upstream) repo.
+func determinePRTarget(layout, pushRepo, sourceRepo string) string {
+	if layout == "fork" {
+		return sourceRepo
+	}
+	return pushRepo
+}
+
+// buildPRHeadRef returns the head ref for PR creation.
+// In fork layout, qualifies with the fork owner prefix.
+func buildPRHeadRef(layout, pushOwnerRepo, branch string) string {
+	if layout == "fork" {
+		forkOwner := strings.Split(pushOwnerRepo, "/")[0]
+		return forkOwner + ":" + branch
+	}
+	return branch
+}
+
+// buildCompareURL returns the GitHub compare URL for browser-mode push.
+func buildCompareURL(layout, pushOwnerRepo, sourceOwnerRepo, defaultBranch, branch string) string {
+	if layout == "fork" {
+		forkOwner := strings.Split(pushOwnerRepo, "/")[0]
+		return fmt.Sprintf("https://github.com/%s/compare/%s...%s:%s?expand=1",
+			sourceOwnerRepo, defaultBranch, forkOwner, branch)
+	}
+	return fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1",
+		pushOwnerRepo, defaultBranch, branch)
 }
 

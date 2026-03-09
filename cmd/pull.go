@@ -67,12 +67,14 @@ func runPull(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if behind == 0 {
+	strategy := determinePullStrategy(ahead, behind)
+
+	if strategy == PullUpToDate {
 		ui.Success("Already up to date.")
 		return nil
 	}
 
-	if ahead > 0 {
+	if strategy == PullDiverged {
 		ui.Warnf("The remote branch has diverged from your local branch (%d local commit(s) not on remote).", ahead)
 		ui.Warn("This usually means the PR author force-pushed. A force-update will discard your local commits.")
 
@@ -105,4 +107,23 @@ func runPull(cmd *cobra.Command, args []string) error {
 		ui.Success("Pulled latest changes.")
 	}
 	return nil
+}
+
+type PullStrategy int
+
+const (
+	PullUpToDate PullStrategy = iota
+	PullFastForward
+	PullDiverged
+)
+
+// determinePullStrategy decides how to update based on ahead/behind counts.
+func determinePullStrategy(ahead, behind int) PullStrategy {
+	if behind == 0 {
+		return PullUpToDate
+	}
+	if ahead > 0 {
+		return PullDiverged
+	}
+	return PullFastForward
 }
