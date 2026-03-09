@@ -20,6 +20,8 @@ func SetVersionInfo(v, c, d string) {
 	version = v
 	commit = c
 	date = d
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate(fmt.Sprintf("utpr %s\n", version))
 }
 
 var rootCmd *cobra.Command
@@ -63,8 +65,6 @@ func init() {
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(bisectCmd)
 
-	rootCmd.SetVersionTemplate(fmt.Sprintf("utpr %s\n", version))
-	rootCmd.Version = version
 }
 
 // Execute runs the root command.
