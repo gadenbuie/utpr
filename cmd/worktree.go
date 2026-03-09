@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/gadenbuie/utpr/internal/editor"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -108,13 +109,20 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		return
 	}
 
-	// For now, symlink all available items (the bash version uses gum choose --no-limit
-	// with all pre-selected; we'll do the same by default)
-	for _, item := range available {
+	opts := make([]huh.Option[string], len(available))
+	for i, item := range available {
+		opts[i] = huh.NewOption(item, item).Selected(true)
+	}
+
+	selected, err := ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
+	if err != nil || len(selected) == 0 {
+		return
+	}
+
+	for _, item := range selected {
 		src := filepath.Join(repoRoot, item)
 		dst := filepath.Join(wtDir, item)
 
-		// Ensure parent directory exists
 		os.MkdirAll(filepath.Dir(dst), 0o755)
 
 		if err := os.Symlink(src, dst); err != nil {
