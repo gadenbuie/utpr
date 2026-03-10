@@ -20,10 +20,13 @@ var pushCmd = &cobra.Command{
 }
 
 var pushEditMode string
+var pushForce bool
 
 func init() {
 	pushCmd.Flags().StringVar(&pushEditMode, "edit", "terminal",
 		"PR creation mode: 'terminal' (default) or 'browser'")
+	pushCmd.Flags().BoolVar(&pushForce, "force", false,
+		"Force push using --force-with-lease (safe force push after rebase)")
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
@@ -152,18 +155,24 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Subsequent push — check if behind remote
-	behind, err := git.RevListCount("HEAD..@{u}")
-	if err != nil {
-		behind = 0
-	}
-	if behind > 0 {
-		ui.Warnf("Your branch is %d commit(s) behind the remote.", behind)
-		ui.Warn("Pull first with 'utpr pull'.")
-		return fmt.Errorf("branch is behind remote")
+	if !pushForce {
+		behind, err := git.RevListCount("HEAD..@{u}")
+		if err != nil {
+			behind = 0
+		}
+		if behind > 0 {
+			ui.Warnf("Your branch is %d commit(s) behind the remote.", behind)
+			ui.Warn("Pull first with 'utpr pull'.")
+			return fmt.Errorf("branch is behind remote")
+		}
 	}
 
+	pushArgs := []string{"push"}
+	if pushForce {
+		pushArgs = append(pushArgs, "--force-with-lease")
+	}
 	err = ui.Spin(fmt.Sprintf("Pushing to %s...", tracking), func() error {
-		_, pushErr := git.Run("push")
+		_, pushErr := git.Run(pushArgs...)
 		return pushErr
 	})
 	if err != nil {
