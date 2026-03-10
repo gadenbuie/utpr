@@ -111,14 +111,14 @@ func runPush(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		var draft bool
+		ready := true
 
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewInput().Title("PR Title").Value(&title),
 				huh.NewText().Title("PR Body").Value(&body).Lines(6),
-				huh.NewConfirm().Title("Create as draft?").Value(&draft).
-					Affirmative("Yes").Negative("No"),
+				huh.NewConfirm().Title("Ready for review?").Value(&ready).
+					Affirmative("Yes").Negative("Create as draft"),
 			),
 		)
 		if err := form.Run(); err != nil {
@@ -138,7 +138,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			Body:  body,
 			Head:  head,
 			Base:  cfg.DefaultBranch,
-			Draft: draft,
+			Draft: !ready,
 		})
 		if err != nil {
 			return ui.Dief("Failed to create pull request: %v", err)
