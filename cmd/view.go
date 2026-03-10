@@ -30,6 +30,7 @@ func init() {
 	viewCmd.Flags().BoolVarP(&flagViewWeb, "web", "w", false, "Open in the browser")
 	viewCmd.Flags().BoolVar(&flagViewSummary, "summary", false, "Show brief summary (no comments)")
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
+	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
 }
 
