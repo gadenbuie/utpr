@@ -10,19 +10,19 @@ import (
 
 // Reusable styles for picker formatting and other colored output.
 var (
-	StyleNumber  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
-	StyleAuthor  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // yellow
-	StyleBranch  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // magenta
-	StyleMuted   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // gray
-	StyleLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // magenta
+	StyleNumber  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // cyan
+	StyleAuthor  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	StyleBranch  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // magenta
+	StyleMuted   = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // gray
+	StyleLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // magenta
 	StyleBold    = lipgloss.NewStyle().Bold(true)
-	StyleHash    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // yellow
+	StyleHash    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
 	StyleSubject = lipgloss.NewStyle().Bold(true)
-	StyleCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
+	StyleCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // cyan
 
-	StyleStateOpen   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))  // blue
-	StyleStateClosed = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))  // red
-	StyleStateMerged = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // magenta
+	StyleStateOpen   = lipgloss.NewStyle().Foreground(lipgloss.Color("4")) // blue
+	StyleStateClosed = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red
+	StyleStateMerged = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // magenta
 )
 
 // Worktree tag shown in branch pickers.

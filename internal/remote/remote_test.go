@@ -82,21 +82,23 @@ func TestParseRepoSpec(t *testing.T) {
 
 func TestResolveLayout(t *testing.T) {
 	tests := []struct {
-		name         string
-		info         RemoteInfo
+		name          string
+		info          RemoteInfo
 		defaultBranch string
-		wantLayout   string
-		wantSource   string
-		wantPush     string
-		wantDefault  string
+		wantLayout    string
+		wantSource    string
+		wantPush      string
+		wantDefault   string
 	}{
 		{
 			name: "not a fork with push permission",
 			info: RemoteInfo{
 				OriginName: "origin",
 				GHRepo: &gh.RepoInfo{
-					Fork:        false,
-					Permissions: struct{ Push bool `json:"push"` }{Push: true},
+					Fork: false,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: true},
 				},
 			},
 			defaultBranch: "main",
@@ -111,8 +113,10 @@ func TestResolveLayout(t *testing.T) {
 				OriginName:  "origin",
 				HasUpstream: true,
 				GHRepo: &gh.RepoInfo{
-					Fork:        true,
-					Permissions: struct{ Push bool `json:"push"` }{Push: true},
+					Fork: true,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: true},
 				},
 			},
 			defaultBranch: "develop",
@@ -127,8 +131,10 @@ func TestResolveLayout(t *testing.T) {
 				OriginName:  "origin",
 				HasUpstream: false,
 				GHRepo: &gh.RepoInfo{
-					Fork:        true,
-					Permissions: struct{ Push bool `json:"push"` }{Push: true},
+					Fork: true,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: true},
 				},
 			},
 			defaultBranch: "main",
@@ -169,8 +175,10 @@ func TestResolveLayout(t *testing.T) {
 				OriginName:  "origin",
 				HasUpstream: false,
 				GHRepo: &gh.RepoInfo{
-					Fork:        true,
-					Permissions: struct{ Push bool `json:"push"` }{Push: false},
+					Fork: true,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: false},
 				},
 			},
 			defaultBranch: "main",
@@ -184,8 +192,10 @@ func TestResolveLayout(t *testing.T) {
 			info: RemoteInfo{
 				OriginName: "origin",
 				GHRepo: &gh.RepoInfo{
-					Fork:        false,
-					Permissions: struct{ Push bool `json:"push"` }{Push: false},
+					Fork: false,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: false},
 				},
 			},
 			defaultBranch: "main",
@@ -199,8 +209,10 @@ func TestResolveLayout(t *testing.T) {
 			info: RemoteInfo{
 				OriginName: "origin",
 				GHRepo: &gh.RepoInfo{
-					Fork:        false,
-					Permissions: struct{ Push bool `json:"push"` }{Push: true},
+					Fork: false,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: true},
 				},
 			},
 			defaultBranch: "",
@@ -214,8 +226,10 @@ func TestResolveLayout(t *testing.T) {
 			info: RemoteInfo{
 				OriginName: "myremote",
 				GHRepo: &gh.RepoInfo{
-					Fork:        false,
-					Permissions: struct{ Push bool `json:"push"` }{Push: true},
+					Fork: false,
+					Permissions: struct {
+						Push bool `json:"push"`
+					}{Push: true},
 				},
 			},
 			defaultBranch: "main",

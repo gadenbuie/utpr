@@ -264,4 +264,3 @@ func buildCompareURL(layout, pushOwnerRepo, sourceOwnerRepo, defaultBranch, bran
 	return fmt.Sprintf("https://github.com/%s/compare/%s...%s?expand=1",
 		pushOwnerRepo, defaultBranch, branch)
 }
-
