@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -42,6 +43,13 @@ func newRootCmd() *cobra.Command {
 
 func init() {
 	rootCmd = newRootCmd()
+
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		ui.Error(err.Error())
+		cmd.SetOut(os.Stderr)
+		_ = cmd.Help()
+		return err
+	})
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if cmd.Name() == "help" || cmd.CalledAs() == "help" {
