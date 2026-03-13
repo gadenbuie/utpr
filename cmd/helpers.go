@@ -12,13 +12,15 @@ import (
 // findLocalBranchForPR returns the local branch name corresponding to a PR,
 // checking the plain headRef, the current pr/{number}-{author}-{branch}
 // scheme, and the legacy pr-{number}/{branch} scheme. Returns "" if no local
-// branch is found.
-func findLocalBranchForPR(prNumber int, headRef, author string) string {
-	return findLocalBranchForPRWith(prNumber, headRef, author, git.BranchExists)
+// branch is found. The defaultBranch is excluded from the bare headRef check
+// to avoid matching the repo's own default branch when a fork's PR uses the
+// same branch name.
+func findLocalBranchForPR(prNumber int, headRef, author, defaultBranch string) string {
+	return findLocalBranchForPRWith(prNumber, headRef, author, defaultBranch, git.BranchExists)
 }
 
-func findLocalBranchForPRWith(prNumber int, headRef, author string, branchExists func(string) bool) string {
-	if branchExists(headRef) {
+func findLocalBranchForPRWith(prNumber int, headRef, author, defaultBranch string, branchExists func(string) bool) string {
+	if headRef != defaultBranch && branchExists(headRef) {
 		return headRef
 	}
 	newName := fmt.Sprintf("pr/%d-%s-%s", prNumber, author, headRef)

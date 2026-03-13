@@ -125,7 +125,7 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 	}
 
 	// Find and delete local branch
-	localBranch := findLocalBranchForPR(prNumber, pr.Head.Ref, pr.User.Login)
+	localBranch := findLocalBranchForPR(prNumber, pr.Head.Ref, pr.User.Login, cfg.DefaultBranch)
 
 	if localBranch != "" {
 		if err := removeWorktree(localBranch); err != nil {
@@ -189,7 +189,7 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 	// Filter to only PRs that have a local branch
 	var items []ui.PRPickerItem
 	for _, pr := range mergedPRs {
-		hasLocal := findLocalBranchForPR(pr.Number, pr.HeadRefName, pr.Author) != ""
+		hasLocal := findLocalBranchForPR(pr.Number, pr.HeadRefName, pr.Author, cfg.DefaultBranch) != ""
 		if hasLocal {
 			items = append(items, ui.PRPickerItem{
 				Number:      pr.Number,
