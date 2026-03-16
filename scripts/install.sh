@@ -117,8 +117,8 @@ main() {
     *)
       echo ""
       echo "Note: ${install_dir} is not in your PATH."
-      echo "Add it to your shell profile:"
-      echo "  echo 'export PATH=\"${install_dir}:\$PATH\"' >> ~/.zshrc"
+      echo "Add this to your shell profile and restart your shell:"
+      echo "  export PATH=\"${install_dir}:\$PATH\""
       ;;
   esac
 
