@@ -121,6 +121,59 @@ main() {
       echo "  echo 'export PATH=\"${install_dir}:\$PATH\"' >> ~/.zshrc"
       ;;
   esac
+
+  # Install shell completions
+  install_completions "${install_dir}"
+}
+
+install_completions() {
+  local install_dir="$1"
+  local utpr="${install_dir}/utpr"
+  local shell_name comp_dir comp_file
+
+  shell_name="$(basename "${SHELL:-}")"
+
+  case "${shell_name}" in
+    zsh)
+      comp_dir="${HOME}/.zsh/completions"
+      comp_file="${comp_dir}/_utpr"
+      ;;
+    bash)
+      comp_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/bash-completion/completions"
+      comp_file="${comp_dir}/utpr"
+      ;;
+    fish)
+      comp_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/fish/completions"
+      comp_file="${comp_dir}/utpr.fish"
+      ;;
+    *)
+      echo ""
+      echo "Shell completions: run 'utpr completion --help' for setup instructions."
+      return 0
+      ;;
+  esac
+
+  mkdir -p "${comp_dir}" 2>/dev/null || {
+    echo ""
+    echo "Could not create ${comp_dir} for shell completions."
+    echo "Run 'utpr completion --help' for manual setup instructions."
+    return 0
+  }
+
+  if "${utpr}" completion "${shell_name}" > "${comp_file}" 2>/dev/null; then
+    echo ""
+    echo "Installed ${shell_name} completions to ${comp_file}"
+    if [ "${shell_name}" = "zsh" ]; then
+      echo "Ensure this is in your .zshrc (before compinit):"
+      echo "  fpath=(~/.zsh/completions \$fpath)"
+    fi
+    echo "Restart your shell or open a new terminal to activate completions."
+  else
+    rm -f "${comp_file}" 2>/dev/null
+    echo ""
+    echo "Could not generate shell completions."
+    echo "Run 'utpr completion --help' for manual setup instructions."
+  fi
 }
 
 main

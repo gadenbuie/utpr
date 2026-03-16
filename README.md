@@ -70,6 +70,11 @@ Pre-built binaries for macOS, Linux, and Windows are available on the
 Download the archive for your platform, extract it, and place the `utpr`
 binary somewhere on your `PATH`.
 
+### Shell completions
+
+The install script automatically sets up tab completions for your shell.
+For manual installation or other shells, run `utpr completion --help`.
+
 ### Prerequisites
 
 utpr requires [git](https://git-scm.com) to be installed and available on
