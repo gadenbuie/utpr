@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -48,7 +49,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return ui.Dief("Failed to check for updates: %s", err)
 	}
 
-	if !updateForce && version != "dev" && latestTag == version {
+	if !updateForce && version != "dev" && isCurrentOrNewer(version, latestTag) {
 		ui.Successf("Already up to date (%s).", version)
 		return nil
 	}
@@ -84,6 +85,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	ui.Successf("Updated to %s.", latestTag)
 	return nil
+}
+
+// isCurrentOrNewer reports whether the running version is the latest release
+// or a development build made after it (git-describe: "v0.2.2-2-gabcdef").
+func isCurrentOrNewer(current, latestTag string) bool {
+	return current == latestTag || strings.HasPrefix(current, latestTag+"-")
 }
 
 func getLatestReleaseTag() (string, error) {
