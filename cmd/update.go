@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	goghapi "github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/ui"
 	"github.com/spf13/cobra"
@@ -113,7 +114,11 @@ func getLatestReleaseTag() (string, error) {
 // downloadAndReplace fetches the release archive for the current platform and
 // atomically replaces the running executable at execPath.
 func downloadAndReplace(url, goos, goarch, execPath string) error {
-	resp, err := http.Get(url) //nolint:gosec // URL constructed from known constants + release tag
+	httpClient, err := goghapi.DefaultHTTPClient()
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+	resp, err := httpClient.Get(url) //nolint:gosec // URL constructed from known constants + release tag
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
