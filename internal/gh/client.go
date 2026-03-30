@@ -28,6 +28,13 @@ func IsAuthenticated() bool {
 	return err == nil
 }
 
+// IsReachable checks if the GitHub API is reachable by making a lightweight
+// network request. Returns false if offline or if the request fails for any reason.
+func IsReachable() bool {
+	_, err := GetLogin()
+	return err == nil
+}
+
 // GetLogin returns the current authenticated GitHub username.
 func GetLogin() (string, error) {
 	client, err := RESTClient()

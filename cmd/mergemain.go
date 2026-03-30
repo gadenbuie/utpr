@@ -82,11 +82,15 @@ func runMergeMain(cmd *cobra.Command, args []string) error {
 			return git.Fetch(cfg.SourceRemote, cfg.DefaultBranch)
 		},
 	)
-	if err != nil {
-		return err
-	}
 
 	upstreamRef := fmt.Sprintf("%s/%s", cfg.SourceRemote, cfg.DefaultBranch)
+
+	if err != nil {
+		if _, refErr := git.RevParse(upstreamRef); refErr != nil {
+			return ui.Dief("Could not fetch %s and no local copy of %s exists.", cfg.DefaultBranch, upstreamRef)
+		}
+		ui.Warnf("Could not fetch from %s. Using last known state of %s.", cfg.SourceRemote, upstreamRef)
+	}
 
 	if useRebase {
 		ui.Infof("Rebasing %s onto %s...", current, upstreamRef)

@@ -27,6 +27,11 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		return ui.Dief("Navigate to the main repo first. Run: cd \"%s\"", mainRoot)
 	}
 
+	if !gh.IsReachable() {
+		ui.Warn("utpr finish requires a network connection to check PR status.")
+		return ui.Die("To delete a local branch without checking GitHub, run: utpr forget")
+	}
+
 	cfg, err := remote.Detect()
 	if err != nil {
 		return err

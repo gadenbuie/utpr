@@ -56,15 +56,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// If no args, show issue picker
+	// If no args, show issue picker (or ask for branch name if offline)
 	if branch == "" && issueNumber == 0 {
-		issueNumber, err = pickIssue()
-		if err != nil {
-			return err
-		}
-		if issueNumber == 0 {
-			ui.Info("Cancelled.")
-			return nil
+		if !gh.IsReachable() {
+			ui.Warn("No network connection. Enter a branch name to create.")
+			branch, err = ui.Input("Branch name:", "", "branch name")
+			if err != nil || branch == "" {
+				return ui.Die("Branch name required.")
+			}
+		} else {
+			issueNumber, err = pickIssue()
+			if err != nil {
+				return err
+			}
+			if issueNumber == 0 {
+				ui.Info("Cancelled.")
+				return nil
+			}
 		}
 	}
 

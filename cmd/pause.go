@@ -77,7 +77,7 @@ func runPause(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err := pullDefaultBranch(cfg); err != nil {
-		return err
+		ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)
 	}
 
 	ui.Successf("Paused '%s'. Switched to %s.", current, cfg.DefaultBranch)

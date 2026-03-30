@@ -61,8 +61,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 			return pullErr
 		})
 		if err != nil {
-			ui.Warn("Pull failed (you may have merge conflicts to resolve).")
-			return err
+			ui.Warn("Could not pull latest changes. Run 'git pull' to update.")
 		}
 	}
 
