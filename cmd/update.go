@@ -133,7 +133,7 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: HTTP %d for %s", resp.StatusCode, url)
@@ -143,7 +143,7 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to decompress archive: %w", err)
 	}
-	defer gzr.Close()
+	defer gzr.Close() //nolint:errcheck
 
 	tr := tar.NewReader(gzr)
 	binaryName := fmt.Sprintf("utpr-%s-%s/utpr", goos, goarch)
@@ -171,19 +171,19 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 		tmpPath := tmp.Name()
 
 		_, copyErr := io.Copy(tmp, tr)
-		tmp.Close()
+		_ = tmp.Close()
 		if copyErr != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("failed to write update: %w", copyErr)
 		}
 
 		if err := os.Chmod(tmpPath, 0755); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("failed to set permissions: %w", err)
 		}
 
 		if err := os.Rename(tmpPath, execPath); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("failed to install update to %s: %w", execPath, err)
 		}
 		return nil
