@@ -27,3 +27,18 @@ A Go CLI for GitHub PR workflows, inspired by the `pr_*()` functions from the R 
 
 - Run `go vet ./...` and `go test ./...` before committing — both must pass clean.
 - If present, the implementation plan and review history are in `_dev/plan.md`.
+
+## Cutting a release
+
+1. Push `main`.
+2. Draft release notes from commits since last tag (`git log $(git describe --tags --abbrev=0)..HEAD --oneline`): one summary line + bullets for user-facing changes; skip chore/internal commits.
+3. Create an annotated tag:
+   ```
+   git tag -a vX.Y.Z -m "Summary line
+
+   - Change one
+   - Change two"
+   ```
+4. `git push origin vX.Y.Z`
+
+The workflow builds cross-platform binaries and publishes a GitHub release. The tag message becomes the release body; without one, only the Full Changelog link is shown.

@@ -76,6 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v7
         with:
@@ -86,10 +88,23 @@ jobs:
         working-directory: artifacts
         run: sha256sum *.tar.gz > SHA256SUMS
 
+      - name: Build release notes
+        run: |
+          touch release_notes.txt
+          TAG_MSG=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          if [ -n "${TAG_MSG}" ]; then
+            printf '%s\n' "${TAG_MSG}" > release_notes.txt
+          fi
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1)
+          if [ -n "${PREV_TAG}" ]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "${{ github.repository }}" "${PREV_TAG}" "${GITHUB_REF_NAME}" >> release_notes.txt
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release_notes.txt
           files: |
             artifacts/*.tar.gz
             artifacts/SHA256SUMS
