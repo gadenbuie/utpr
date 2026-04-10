@@ -34,9 +34,11 @@ var updateCmd = &cobra.Command{
 }
 
 var updateForce bool
+var updateYes bool
 
 func init() {
 	updateCmd.Flags().BoolVar(&updateForce, "force", false, "Re-download even if already on the latest version")
+	updateCmd.Flags().BoolVarP(&updateYes, "yes", "y", false, "Skip confirmation prompt")
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -55,14 +57,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if version == "dev" {
-		ui.Infof("Development build — installing latest release %s.", latestTag)
-	} else if updateForce {
-		ui.Infof("Force-reinstalling %s.", latestTag)
-	} else {
-		ui.Infof("Updating %s → %s.", version, latestTag)
-	}
-
 	execPath, err := os.Executable()
 	if err != nil {
 		return ui.Die("Could not determine executable path.")
@@ -74,6 +68,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
+
+	if version == "dev" {
+		ui.Infof("Development build — will install latest release %s.", latestTag)
+	} else if updateForce {
+		ui.Infof("Force-reinstalling %s.", latestTag)
+	} else {
+		ui.Infof("Updating %s → %s.", version, latestTag)
+	}
+	ui.Infof("Platform:  %s/%s", goos, goarch)
+	ui.Infof("Location:  %s", execPath)
+
+	if !updateYes {
+		if err := ui.MustConfirm("Proceed with update?", true); err != nil {
+			return err
+		}
+	}
+
 	assetName := fmt.Sprintf("utpr-%s-%s.tar.gz", goos, goarch)
 	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", utprRepo, latestTag, assetName)
 
