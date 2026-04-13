@@ -42,10 +42,13 @@ func init() {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	var latestTag string
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+
+	var latestTag, assetURL string
 	err := ui.Spin("Checking for updates...", func() error {
 		var spinErr error
-		latestTag, spinErr = getLatestReleaseTag()
+		latestTag, assetURL, spinErr = getLatestRelease(goos, goarch)
 		return spinErr
 	})
 	if err != nil {
@@ -66,9 +69,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return ui.Die("Could not resolve executable path.")
 	}
 
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-
 	if version == "dev" {
 		ui.Infof("Development build — will install latest release %s.", latestTag)
 	} else if updateForce {
@@ -85,11 +85,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	assetName := fmt.Sprintf("utpr-%s-%s.tar.gz", goos, goarch)
-	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", utprRepo, latestTag, assetName)
-
 	err = ui.Spin(fmt.Sprintf("Downloading %s...", latestTag), func() error {
-		return downloadAndReplace(downloadURL, goos, goarch, execPath)
+		return downloadAndReplace(assetURL, goos, goarch, execPath)
 	})
 	if err != nil {
 		return ui.Dief("Update failed: %s", err)
@@ -105,21 +102,34 @@ func isCurrentOrNewer(current, latestTag string) bool {
 	return current == latestTag || strings.HasPrefix(current, latestTag+"-")
 }
 
-func getLatestReleaseTag() (string, error) {
+// getLatestRelease returns the latest release tag and the GitHub API URL for
+// the release asset matching the given platform. The API URL (not browser_download_url)
+// is required for authenticated downloads from private repositories.
+func getLatestRelease(goos, goarch string) (tag, assetURL string, err error) {
 	client, err := gh.RESTClient()
 	if err != nil {
-		return "", fmt.Errorf("failed to create GitHub client: %w", err)
+		return "", "", fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 	var release struct {
 		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"assets"`
 	}
 	if err := client.Get(fmt.Sprintf("repos/%s/releases/latest", utprRepo), &release); err != nil {
-		return "", fmt.Errorf("failed to get latest release: %w", err)
+		return "", "", fmt.Errorf("failed to get latest release: %w", err)
 	}
 	if release.TagName == "" {
-		return "", fmt.Errorf("no release found for %s", utprRepo)
+		return "", "", fmt.Errorf("no release found for %s", utprRepo)
 	}
-	return release.TagName, nil
+	assetName := fmt.Sprintf("utpr-%s-%s.tar.gz", goos, goarch)
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			return release.TagName, asset.URL, nil
+		}
+	}
+	return release.TagName, "", fmt.Errorf("no release asset found for %s/%s in %s", goos, goarch, release.TagName)
 }
 
 // downloadAndReplace fetches the release archive for the current platform and
@@ -129,7 +139,12 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP client: %w", err)
 	}
-	resp, err := httpClient.Get(url) //nolint:gosec // URL constructed from known constants + release tag
+	req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:gosec // URL from GitHub API response
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
