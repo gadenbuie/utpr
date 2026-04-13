@@ -17,7 +17,7 @@ var pauseCmd = &cobra.Command{
 func runPause(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	if git.IsInWorktree() {
@@ -74,7 +74,7 @@ func runPause(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	if err := pullDefaultBranch(cfg); err != nil {
 		ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)

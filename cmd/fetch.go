@@ -28,7 +28,7 @@ func init() {
 func runFetch(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	var prNumber int
@@ -49,11 +49,11 @@ func runFetch(cmd *cobra.Command, args []string) error {
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	sourceRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	pr, err := gh.GetPR(sourceRepo, prNumber)
@@ -84,7 +84,7 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		},
 	)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	if flagFetchWorktree {
@@ -108,7 +108,7 @@ func runFetch(cmd *cobra.Command, args []string) error {
 	// Non-worktree mode
 	if git.BranchExists(localBranch) {
 		if err := git.SwitchBranch(localBranch); err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		if err := git.RunInteractive("merge", "FETCH_HEAD"); err != nil {
 			ui.Warn("Merge had conflicts. Resolve them before continuing.")

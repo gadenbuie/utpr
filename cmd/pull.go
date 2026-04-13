@@ -20,7 +20,7 @@ var pullCmd = &cobra.Command{
 func runPull(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	onDefault, err := git.IsOnBranch(cfg.DefaultBranch)
@@ -36,7 +36,7 @@ func runPull(cmd *cobra.Command, args []string) error {
 			},
 		)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		ui.Successf("Pulled latest %s.", cfg.DefaultBranch)
 		return nil
@@ -55,7 +55,7 @@ func runPull(cmd *cobra.Command, args []string) error {
 		return git.Fetch(remoteName)
 	})
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	ahead, err := git.RevListCount("@{u}..HEAD")
@@ -102,7 +102,7 @@ func runPull(cmd *cobra.Command, args []string) error {
 			return pullErr
 		})
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		ui.Success("Pulled latest changes.")
 	}

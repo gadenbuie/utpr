@@ -27,7 +27,7 @@ func init() {
 func runMergeMain(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	onDefault, err := git.IsOnBranch(cfg.DefaultBranch)

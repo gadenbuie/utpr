@@ -53,7 +53,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	// If no args, show issue picker (or ask for branch name if offline)
@@ -89,7 +89,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := git.ValidateBranchName(branch); err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	// If branch already exists, handle accordingly

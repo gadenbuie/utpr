@@ -37,7 +37,7 @@ func init() {
 func runView(cmd *cobra.Command, args []string) error {
 	_, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	cfg := remote.Require()

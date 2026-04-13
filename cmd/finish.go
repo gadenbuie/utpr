@@ -34,16 +34,16 @@ func runFinish(cmd *cobra.Command, args []string) error {
 
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	sourceRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	var prNumbers []int

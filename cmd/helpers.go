@@ -111,7 +111,7 @@ func pullDefaultBranch(cfg *remote.Config) error {
 		},
 	)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	after, _ := git.RevParse("HEAD")

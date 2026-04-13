@@ -23,14 +23,14 @@ func runForget(cmd *cobra.Command, args []string) error {
 
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	var target string
 	if len(args) > 0 {
 		target = args[0]
 		if err := git.ValidateBranchName(target); err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		if target == cfg.DefaultBranch {
 			return ui.Dief("Cannot forget the default branch '%s'.", cfg.DefaultBranch)
@@ -83,7 +83,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		if err := pullDefaultBranch(cfg); err != nil {
 			ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)
@@ -102,7 +102,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := git.DeleteBranch(target); err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	ui.Successf("Deleted local branch '%s'.", target)
 	remote.CleanupUtprRemotes()
@@ -130,7 +130,7 @@ func removeWorktree(branch string) error {
 			return ui.Die("Cannot proceed without removing the worktree.")
 		}
 		if err := git.WorktreeRemove(wtPath, true); err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 	}
 

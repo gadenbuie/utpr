@@ -20,14 +20,14 @@ var resumeCmd = &cobra.Command{
 func runResume(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	var branch string
 	if len(args) > 0 {
 		branch = args[0]
 		if err := git.ValidateBranchName(branch); err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 	} else {
 		branch, err = pickBranch(cfg.DefaultBranch, "Select a branch to resume:")
@@ -51,7 +51,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := git.SwitchBranch(branch); err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	tracking := git.GetTrackingBranch()

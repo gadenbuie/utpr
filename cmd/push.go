@@ -32,7 +32,7 @@ func init() {
 func runPush(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	onDefault, err := git.IsOnBranch(cfg.DefaultBranch)
@@ -66,7 +66,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			},
 		)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		ui.Successf("Pushed '%s' to %s.", current, cfg.PushRemote)
 
@@ -99,7 +99,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return pushErr
 	})
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	ui.Successf("Pushed to %s.", tracking)
 
@@ -132,11 +132,11 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 	// Get ownerRepo for PR creation
 	pushURL, err := git.Run("remote", "get-url", cfg.PushRemote)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	pushOwnerRepo, err := remote.ParseRepoSpec(pushURL)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	// Determine target repo for PR creation (source repo in fork layout)
@@ -144,11 +144,11 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 	if cfg.Layout == "fork" {
 		sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		sourceOwnerRepo, err := remote.ParseRepoSpec(sourceURL)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		targetRepo = determinePRTarget(cfg.Layout, pushOwnerRepo, sourceOwnerRepo)
 	}
@@ -212,22 +212,22 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 func openCompareURL(cfg *remote.Config, branch string) error {
 	pushURL, err := git.Run("remote", "get-url", cfg.PushRemote)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 	pushOwnerRepo, err := remote.ParseRepoSpec(pushURL)
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
 
 	sourceOwnerRepo := pushOwnerRepo
 	if cfg.Layout == "fork" {
 		sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 		sourceOwnerRepo, err = remote.ParseRepoSpec(sourceURL)
 		if err != nil {
-			return err
+			return ui.Die(err.Error())
 		}
 	}
 

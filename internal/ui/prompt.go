@@ -25,6 +25,9 @@ func defaultConfirm(title string, defaultVal bool) (bool, error) {
 		Value(&confirmed).
 		Run()
 	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return false, ErrCancelled
+		}
 		return false, err
 	}
 	return confirmed, nil
@@ -66,6 +69,9 @@ func defaultInput(header, value, placeholder string) (string, error) {
 		Placeholder(placeholder).
 		Run()
 	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return "", ErrCancelled
+		}
 		return "", err
 	}
 	return result, nil
@@ -103,6 +109,9 @@ func defaultChoose(header string, options []string) (string, error) {
 		Height(SelectHeight(len(options)))
 	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return "", ErrCancelled
+		}
 		return "", err
 	}
 	return selected, nil
@@ -138,6 +147,9 @@ func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T,
 		Height(SelectHeight(len(options)))
 	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return zero, ErrCancelled
+		}
 		return zero, err
 	}
 	return selected, nil
@@ -159,6 +171,9 @@ func ChooseMultiWithOptions[T comparable](header string, options []huh.Option[T]
 		Filterable(true)
 	err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run()
 	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, ErrCancelled
+		}
 		return nil, err
 	}
 	return selected, nil
