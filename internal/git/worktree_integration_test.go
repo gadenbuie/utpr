@@ -75,6 +75,26 @@ func TestIsInWorktreeIntegration(t *testing.T) {
 		t.Fatal("expected IsInWorktree to be false in main repo")
 	}
 
+	// Subdirectory of main repo must also return false.
+	subDir := filepath.Join(repoPath, "sub", "dir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("chdir to subdirectory failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	if IsInWorktree() {
+		t.Fatal("expected IsInWorktree to be false in a subdirectory of the main repo")
+	}
+	if err := os.Chdir(repoPath); err != nil {
+		t.Fatalf("chdir back to main repo failed: %v", err)
+	}
+
 	testutil.CreateBranch(t, repoPath, "wt-check-branch")
 	testutil.RunGit(t, repoPath, "checkout", "-")
 

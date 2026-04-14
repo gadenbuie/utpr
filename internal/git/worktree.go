@@ -101,7 +101,14 @@ func IsInWorktree() bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	return gitDir != commonDir
+	// Both paths can be relative to CWD; resolve to absolute before comparing
+	// so that subdirectory invocations don't produce false positives.
+	absGitDir, err1 := filepath.Abs(gitDir)
+	absCommonDir, err2 := filepath.Abs(commonDir)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return absGitDir != absCommonDir
 }
 
 // GetMainRepoRoot returns the root directory of the main repo when in a worktree.
@@ -110,8 +117,13 @@ func GetMainRepoRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// git-common-dir returns path to .git; parent is the repo root
-	return filepath.Clean(filepath.Join(commonDir, "..")), nil
+	// Resolve to absolute path before taking the parent so the result is
+	// always an absolute path regardless of CWD depth.
+	absCommonDir, err := filepath.Abs(commonDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(absCommonDir), nil
 }
 
 // WorktreeAdd creates a new worktree at the given path for the branch.
