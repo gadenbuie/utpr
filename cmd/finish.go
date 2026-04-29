@@ -63,11 +63,23 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			if branchErr != nil {
 				return ui.Die("Could not determine PR number for current branch.")
 			}
-			pr, prErr := gh.GetPRForBranch(sourceRepo, currentBranch, "all")
-			if prErr != nil || pr == nil {
-				return ui.Die("Could not determine PR number for current branch.")
+			// Fast path: PR URL stored by `utpr fetch` — works even when the local
+			// branch name differs from the remote branch name (e.g. fork PRs that
+			// are checked out as pr/<number>-<author>-<branch>).
+			if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
+				prNumbers = []int{n}
 			}
-			prNumbers = []int{pr.Number}
+			// Slow path: ask GitHub using the remote tracking branch name, which
+			// matches what GitHub knows — handles same-repo branches where the
+			// local name was changed. Falls back to the local name if no upstream
+			// is configured. (Fork PRs are covered by the fast path above.)
+			if len(prNumbers) == 0 {
+				pr, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "all")
+				if prErr != nil || pr == nil {
+					return ui.Die("Could not determine PR number for current branch.")
+				}
+				prNumbers = []int{pr.Number}
+			}
 		} else {
 			fromPicker = true
 			prNumbers, err = pickMergedPRs(cfg, sourceRepo)
@@ -273,6 +285,27 @@ func pickMergedPRsFallback(cfg *remote.Config, sourceRepo string) ([]int, error)
 	}
 
 	return selected, nil
+}
+
+// prNumberFromStoredURL extracts the PR number from a stored GitHub PR URL.
+// Returns 0 if the URL is empty or doesn't contain a numeric PR number.
+func prNumberFromStoredURL(storedURL string) int {
+	if storedURL == "" {
+		return 0
+	}
+	return extractPRNumberFromURL(storedURL)
+}
+
+// remoteBranchName returns the branch name portion of a git tracking ref
+// (e.g. "origin/feature" → "feature", "contributor/feat/thing" → "feat/thing").
+// Falls back to localBranch when trackingRef is empty or contains no slash.
+func remoteBranchName(trackingRef, localBranch string) string {
+	if trackingRef != "" {
+		if _, ref, ok := strings.Cut(trackingRef, "/"); ok {
+			return ref
+		}
+	}
+	return localBranch
 }
 
 func extractPRNumberFromURL(url string) int {
