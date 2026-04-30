@@ -94,7 +94,7 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		symlinkDirs = "_dev,.claude,.env,.env.local,.Renviron,.Rprofile,.agents,.secrets,secrets,.htpasswd,.vscode,.vscode/settings.json"
 	}
 
-	items := parseSymlinkItems(symlinkDirs)
+	items := mergeSymlinkItems(parseSymlinkItems(symlinkDirs), gitIgnoredRootItems(repoRoot))
 	existsInRepo := func(name string) bool {
 		_, err := os.Stat(filepath.Join(repoRoot, name))
 		return err == nil
@@ -209,6 +209,45 @@ func fileHasTarget(path, target string) bool {
 		}
 	}
 	return false
+}
+
+// gitIgnoredRootItems returns gitignored files and directories at the repo root.
+func gitIgnoredRootItems(repoRoot string) []string {
+	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var items []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Strip trailing slash from directory entries; skip nested paths.
+		name := strings.TrimSuffix(line, "/")
+		if strings.Contains(name, "/") {
+			continue
+		}
+		items = append(items, name)
+	}
+	return items
+}
+
+// mergeSymlinkItems appends extra items to base, skipping duplicates.
+func mergeSymlinkItems(base, extra []string) []string {
+	seen := make(map[string]bool, len(base))
+	for _, item := range base {
+		seen[item] = true
+	}
+	result := base
+	for _, item := range extra {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func parseSymlinkItems(symlinkDirs string) []string {

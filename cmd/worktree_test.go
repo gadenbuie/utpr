@@ -80,6 +80,55 @@ func TestComputeSymlinkCandidates(t *testing.T) {
 	}
 }
 
+func TestMergeSymlinkItems(t *testing.T) {
+	tests := []struct {
+		name  string
+		base  []string
+		extra []string
+		want  []string
+	}{
+		{
+			name:  "no duplicates",
+			base:  []string{".env", ".claude"},
+			extra: []string{"DESIGN.md", "PRODUCT.md"},
+			want:  []string{".env", ".claude", "DESIGN.md", "PRODUCT.md"},
+		},
+		{
+			name:  "deduplicates overlap",
+			base:  []string{".env", ".claude"},
+			extra: []string{".env", "DESIGN.md"},
+			want:  []string{".env", ".claude", "DESIGN.md"},
+		},
+		{
+			name:  "empty extra",
+			base:  []string{".env"},
+			extra: []string{},
+			want:  []string{".env"},
+		},
+		{
+			name:  "empty base",
+			base:  []string{},
+			extra: []string{"DESIGN.md"},
+			want:  []string{"DESIGN.md"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeSymlinkItems(tt.base, tt.extra)
+			if len(got) != len(tt.want) {
+				t.Errorf("mergeSymlinkItems() = %v, want %v", got, tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("mergeSymlinkItems()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestParseSymlinkItems(t *testing.T) {
 	tests := []struct {
 		name  string
