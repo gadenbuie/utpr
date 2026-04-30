@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -18,7 +21,11 @@ var forgetCmd = &cobra.Command{
 func runForget(cmd *cobra.Command, args []string) error {
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
-		return ui.Dief("Navigate to the main repo first. Run: cd \"%s\"", mainRoot)
+		branch, _ := git.GetCurrentBranch()
+		ui.Warn("Navigate to the main repo first:")
+		fmt.Fprintf(os.Stderr, "  cd \"%s\"\n", mainRoot)
+		fmt.Fprintf(os.Stderr, "  utpr forget %s\n", branch)
+		return fmt.Errorf("cannot run from a worktree")
 	}
 
 	cfg, err := remote.Detect()

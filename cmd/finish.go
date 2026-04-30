@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +25,11 @@ var finishCmd = &cobra.Command{
 func runFinish(cmd *cobra.Command, args []string) error {
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
-		return ui.Dief("Navigate to the main repo first. Run: cd \"%s\"", mainRoot)
+		branch, _ := git.GetCurrentBranch()
+		ui.Warn("Navigate to the main repo first:")
+		fmt.Fprintf(os.Stderr, "  cd \"%s\"\n", mainRoot)
+		fmt.Fprintf(os.Stderr, "  utpr finish %s\n", branch)
+		return fmt.Errorf("cannot run from a worktree")
 	}
 
 	if !gh.IsReachable() {
