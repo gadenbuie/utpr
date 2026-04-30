@@ -111,7 +111,7 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 
 	opts := make([]huh.Option[string], len(available))
 	for i, item := range available {
-		opts[i] = huh.NewOption(item, item).Selected(true)
+		opts[i] = huh.NewOption(item, item).Selected(!isManagedBySetupHook(item))
 	}
 
 	selected, err := ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
@@ -205,6 +205,19 @@ func fileHasTarget(path, target string) bool {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, target+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// managedBySetupHook lists dirs whose contents are managed by runWorktreeSetup,
+// so symlinking them is opt-in rather than the default.
+var managedBySetupHookDirs = []string{"node_modules", ".venv", "renv"}
+
+func isManagedBySetupHook(name string) bool {
+	for _, d := range managedBySetupHookDirs {
+		if name == d {
 			return true
 		}
 	}
