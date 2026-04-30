@@ -83,21 +83,23 @@ func challengeBranchBehindRemote() error {
 }
 
 // challengeLocalBranchDelete warns if the branch has unpushed work.
-func challengeLocalBranchDelete(branch string) error {
+// Returns (true, nil) if the user was prompted and confirmed, (false, nil) if
+// no prompt was needed, or (false, err) if the user declined or an error occurred.
+func challengeLocalBranchDelete(branch string) (bool, error) {
 	tracking, _ := git.Run("rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{u}")
 	if tracking == "" {
 		ui.Warnf("Local branch '%s' has no associated remote branch.", branch)
 		ui.Infof("If we delete '%s', any work that exists only on this branch may be hard for you to recover.", branch)
-		return ui.MustConfirm("Proceed anyway?", false)
+		return true, ui.MustConfirm("Proceed anyway?", false)
 	}
 
 	unpushed, _ := git.Run("log", tracking+".."+branch, "--oneline")
 	if unpushed != "" {
 		ui.Warnf("Local branch '%s' has 1 or more commits that have not been pushed to '%s'.", branch, tracking)
 		ui.Infof("If we delete '%s', this work may be hard for you to recover.", branch)
-		return ui.MustConfirm("Proceed anyway?", false)
+		return true, ui.MustConfirm("Proceed anyway?", false)
 	}
-	return nil
+	return false, nil
 }
 
 // pullDefaultBranch fetches and pulls the default branch.

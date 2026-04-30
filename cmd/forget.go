@@ -74,17 +74,20 @@ func runForget(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	if err := challengeLocalBranchDelete(target); err != nil {
+	alreadyConfirmed, err := challengeLocalBranchDelete(target)
+	if err != nil {
 		return err
 	}
 
 	if target == current {
-		if err := ui.MustConfirm("Abandon branch '"+target+"' and switch to "+cfg.DefaultBranch+"?", true); err != nil {
-			if err == ui.ErrCancelled {
-				ui.Info("Cancelled.")
-				return nil
+		if !alreadyConfirmed {
+			if err := ui.MustConfirm("Abandon branch '"+target+"' and switch to "+cfg.DefaultBranch+"?", true); err != nil {
+				if err == ui.ErrCancelled {
+					ui.Info("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 		if err := removeWorktree(target); err != nil {
 			return err
@@ -96,12 +99,14 @@ func runForget(cmd *cobra.Command, args []string) error {
 			ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)
 		}
 	} else {
-		if err := ui.MustConfirm("Delete branch '"+target+"'?", true); err != nil {
-			if err == ui.ErrCancelled {
-				ui.Info("Cancelled.")
-				return nil
+		if !alreadyConfirmed {
+			if err := ui.MustConfirm("Delete branch '"+target+"'?", true); err != nil {
+				if err == ui.ErrCancelled {
+					ui.Info("Cancelled.")
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 		if err := removeWorktree(target); err != nil {
 			return err

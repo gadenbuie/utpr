@@ -153,7 +153,7 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 		if err := removeWorktree(localBranch); err != nil {
 			return err
 		}
-		if err := challengeLocalBranchDelete(localBranch); err != nil {
+		if _, err := challengeLocalBranchDelete(localBranch); err != nil {
 			return err
 		}
 		if err := git.DeleteBranch(localBranch); err != nil {
