@@ -64,7 +64,8 @@ func challengeUnpushedCommits() error {
 	return ui.MustConfirm("You have unpushed commits. Continue?", false)
 }
 
-// challengeBranchBehindRemote warns if the local branch is behind its remote.
+// challengeBranchBehindRemote warns if the local branch is behind its remote
+// and offers to pull before switching away.
 func challengeBranchBehindRemote() error {
 	tracking := git.GetTrackingBranch()
 	if tracking == "" {
@@ -76,8 +77,20 @@ func challengeBranchBehindRemote() error {
 	}
 	if behind > 0 {
 		ui.Warnf("Local branch is %d commit(s) behind '%s'.", behind, tracking)
-		ui.Info("You may want to run 'utpr pull' to update before switching away.")
-		return ui.MustConfirm("Proceed anyway?", false)
+		pullNow, err := ui.Confirm("Pull now before switching away?", true)
+		if err != nil {
+			return err
+		}
+		if pullNow {
+			pullErr := ui.Spin(fmt.Sprintf("Pulling from %s...", tracking), func() error {
+				_, runErr := git.Run("pull")
+				return runErr
+			})
+			if pullErr != nil {
+				return ui.Die("Pull failed. Fix conflicts or run 'utpr pull' manually.")
+			}
+			ui.Success("Pulled latest changes.")
+		}
 	}
 	return nil
 }
