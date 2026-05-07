@@ -48,6 +48,17 @@ func RunInteractive(args ...string) error {
 	return cmd.Run()
 }
 
+// RunInteractiveInDir runs a git command in the given directory with
+// stdin/stdout/stderr connected to the terminal.
+func RunInteractiveInDir(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // IsInstalled checks if git is available on PATH.
 func IsInstalled() bool {
 	_, err := exec.LookPath("git")

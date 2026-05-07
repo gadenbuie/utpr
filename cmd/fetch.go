@@ -107,6 +107,17 @@ func runFetch(cmd *cobra.Command, args []string) error {
 
 	// Non-worktree mode
 	if git.BranchExists(localBranch) {
+		wtPath := git.GetBranchWorktreePath(localBranch)
+		if wtPath != "" {
+			ui.Infof("Branch '%s' is checked out in a worktree.", localBranch)
+			if err := git.RunInteractiveInDir(wtPath, "merge", "FETCH_HEAD"); err != nil {
+				ui.Warn("Merge had conflicts. Resolve them before continuing.")
+			}
+			configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
+			ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
+			offerWorktreeNavigation(wtPath)
+			return nil
+		}
 		if err := git.SwitchBranch(localBranch); err != nil {
 			return ui.Die(err.Error())
 		}
