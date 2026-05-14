@@ -742,7 +742,7 @@ func GetJobLogs(ownerRepo string, jobID int64) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch logs for job %d: %w", jobID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", fmt.Errorf("no logs found for job %d (logs may have expired)", jobID)
 	}
