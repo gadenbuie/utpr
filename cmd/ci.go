@@ -87,6 +87,22 @@ func resolveCISHA(cfg *remote.Config, args []string) (ownerRepo, sha, prURL stri
 	if err != nil {
 		return "", "", "", ui.Die("Could not determine HEAD commit.")
 	}
+
+	tracking := git.GetTrackingBranch()
+	if tracking == "" {
+		return "", "", "", ui.Die("Branch has no remote tracking branch. Push first with 'utpr push'.")
+	}
+
+	remoteSHA, revErr := git.RevParse("@{u}")
+	if revErr != nil {
+		return "", "", "", ui.Die("Could not determine remote branch HEAD.")
+	}
+
+	if sha != remoteSHA {
+		ui.Info("Showing CI for the last pushed commit (HEAD has unpushed changes).")
+		sha = remoteSHA
+	}
+
 	return ownerRepo, sha, "", nil
 }
 
