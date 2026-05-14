@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -488,6 +490,28 @@ func latestRunsPerWorkflow(runs []gh.WorkflowRun) []gh.WorkflowRun {
 	return result
 }
 
+// jobEntry pairs a workflow job with its parent run name.
+type jobEntry struct {
+	RunName string
+	Job     gh.WorkflowJob
+}
+
+func workflowJobIcon(job gh.WorkflowJob) string {
+	if job.Status != "completed" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("…")
+	}
+	switch job.Conclusion {
+	case "success":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("✓")
+	case "failure", "timed_out", "action_required":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗")
+	case "skipped", "cancelled", "neutral":
+		return ui.StyleMuted.Render("○")
+	default:
+		return ui.StyleMuted.Render("?")
+	}
+}
+
 func runCILogs(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
@@ -513,33 +537,21 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 
 	runs = latestRunsPerWorkflow(runs)
 
-	// Filter runs to only those with failed/all jobs to fetch
-	var targetRuns []gh.WorkflowRun
-	for _, r := range runs {
-		if flagCILogsAll {
-			targetRuns = append(targetRuns, r)
-		} else if r.Status == "completed" && isFailedConclusion(r.Conclusion) {
-			targetRuns = append(targetRuns, r)
+	// interactive = no explicit job filter; show picker instead of dumping all failed
+	interactive := !flagCILogsAll && flagCILogsJob == ""
+
+	// Collect completed jobs. In interactive mode (or --all) we want all jobs
+	// so the picker can offer them; otherwise only fetch from failed runs.
+	var allJobs []jobEntry
+	var failedJobs []jobEntry
+
+	for _, run := range runs {
+		if run.Status != "completed" {
+			continue
 		}
-	}
-
-	if len(targetRuns) == 0 {
-		if flagCILogsAll {
-			ui.Info("No completed CI runs found for this commit.")
-		} else {
-			ui.Success("No failed CI runs.")
+		if !interactive && !flagCILogsAll && !isFailedConclusion(run.Conclusion) {
+			continue
 		}
-		return nil
-	}
-
-	// Collect target jobs across all runs
-	type jobEntry struct {
-		RunName string
-		Job     gh.WorkflowJob
-	}
-	var targetJobs []jobEntry
-
-	for _, run := range targetRuns {
 		jobs, fetchErr := ui.SpinWithResult(
 			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
 			func() ([]gh.WorkflowJob, error) {
@@ -550,26 +562,51 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 			ui.Warnf("Could not fetch jobs for run '%s': %v", run.Name, fetchErr)
 			continue
 		}
-
 		for _, job := range jobs {
-			if flagCILogsJob != "" && !strings.Contains(job.Name, flagCILogsJob) {
+			if job.Status != "completed" {
 				continue
 			}
-			if flagCILogsAll {
-				if job.Status == "completed" {
-					targetJobs = append(targetJobs, jobEntry{RunName: run.Name, Job: job})
-				}
-			} else if job.Status == "completed" && isFailedConclusion(job.Conclusion) {
-				targetJobs = append(targetJobs, jobEntry{RunName: run.Name, Job: job})
+			entry := jobEntry{RunName: run.Name, Job: job}
+			allJobs = append(allJobs, entry)
+			if isFailedConclusion(job.Conclusion) {
+				failedJobs = append(failedJobs, entry)
 			}
+		}
+	}
+
+	if len(allJobs) == 0 {
+		ui.Info("No completed CI jobs found for this commit.")
+		return nil
+	}
+
+	// Resolve target jobs and line count.
+	lines := flagCILogsLines
+
+	var targetJobs []jobEntry
+
+	if interactive {
+		targetJobs, lines, err = pickCILogs(cmd, allJobs, failedJobs, lines)
+		if err != nil {
+			return err
+		}
+		if targetJobs == nil {
+			return nil // cancelled
+		}
+	} else {
+		for _, entry := range allJobs {
+			if flagCILogsJob != "" && !strings.Contains(entry.Job.Name, flagCILogsJob) {
+				continue
+			}
+			if !flagCILogsAll && !isFailedConclusion(entry.Job.Conclusion) {
+				continue
+			}
+			targetJobs = append(targetJobs, entry)
 		}
 	}
 
 	if len(targetJobs) == 0 {
 		if flagCILogsJob != "" {
 			ui.Infof("No jobs matching '%s'.", flagCILogsJob)
-		} else if flagCILogsAll {
-			ui.Info("No completed jobs found.")
 		} else {
 			ui.Success("No failed jobs.")
 		}
@@ -580,6 +617,86 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return openURL(targetJobs[0].Job.HTMLURL)
 	}
 
+	return renderCILogs(ownerRepo, targetJobs, lines)
+}
+
+// pickCILogs presents an interactive picker for which jobs to view and how
+// many lines to show. Returns (nil, _, nil) when the user cancels.
+func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines int) ([]jobEntry, int, error) {
+	const pickAllFailed = -1
+	const pickAllJobs = -2
+
+	// Build job picker options.
+	var opts []huh.Option[int]
+	if len(failedJobs) > 0 {
+		opts = append(opts, huh.NewOption(
+			fmt.Sprintf("All failed jobs (%d)", len(failedJobs)),
+			pickAllFailed,
+		))
+	}
+	opts = append(opts, huh.NewOption("All jobs", pickAllJobs))
+
+	maxRunLen := 0
+	for _, e := range allJobs {
+		if l := len([]rune(e.RunName)); l > maxRunLen {
+			maxRunLen = l
+		}
+	}
+	for i, entry := range allJobs {
+		runLabel := ui.StyleMuted.Render(ui.PadRight(entry.RunName, maxRunLen) + " /")
+		label := runLabel + " " + entry.Job.Name + "  " + workflowJobIcon(entry.Job)
+		opts = append(opts, huh.NewOption(label, i))
+	}
+
+	jobChoice := pickAllFailed
+	if len(failedJobs) == 0 {
+		jobChoice = pickAllJobs
+	}
+
+	jobSelect := huh.NewSelect[int]().
+		Title("Select logs to view:").
+		Options(opts...).
+		Value(&jobChoice).
+		Height(ui.SelectHeight(len(opts)))
+
+	linesChoice := defaultLines
+	linesSelect := huh.NewSelect[int]().
+		Title("How many lines to show per job?").
+		Options(
+			huh.NewOption("Last 50 lines", 50),
+			huh.NewOption("Last 100 lines", 100),
+			huh.NewOption("Last 200 lines", 200),
+			huh.NewOption("All lines", 0),
+		).
+		Value(&linesChoice).
+		Height(4)
+
+	formGroups := []*huh.Group{huh.NewGroup(jobSelect)}
+	if !cmd.Flags().Changed("lines") {
+		formGroups = append(formGroups, huh.NewGroup(linesSelect))
+	}
+
+	if err := huh.NewForm(formGroups...).WithShowHelp(true).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			ui.Info("Cancelled.")
+			return nil, 0, nil
+		}
+		return nil, 0, err
+	}
+
+	var target []jobEntry
+	switch jobChoice {
+	case pickAllFailed:
+		target = failedJobs
+	case pickAllJobs:
+		target = allJobs
+	default:
+		target = []jobEntry{allJobs[jobChoice]}
+	}
+	return target, linesChoice, nil
+}
+
+func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
 		fmt.Fprintln(os.Stderr, logSeparator(label))
@@ -595,18 +712,17 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		lines := processLogLines(logs, flagCILogsTimestamps, flagCILogsLines)
-		if flagCILogsLines > 0 && len(lines) == flagCILogsLines {
-			fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", flagCILogsLines)))
+		processed := processLogLines(logs, flagCILogsTimestamps, lines)
+		if lines > 0 && len(processed) == lines {
+			fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
 		}
-		fmt.Fprintln(os.Stderr, strings.Join(lines, "\n"))
+		fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
 
 		if i < len(targetJobs)-1 {
 			fmt.Fprintln(os.Stderr)
 		}
 	}
 
-	// Footer separator
 	noun := "job"
 	if len(targetJobs) > 1 {
 		noun = "jobs"
@@ -616,6 +732,5 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		label = fmt.Sprintf("%d %s", len(targetJobs), noun)
 	}
 	fmt.Fprintln(os.Stderr, logSeparator(label))
-
 	return nil
 }
