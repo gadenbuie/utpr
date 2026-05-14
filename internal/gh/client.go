@@ -570,7 +570,25 @@ func GetBranchSHA(ownerRepo, branch string) (string, error) {
 	return b.Commit.SHA, nil
 }
 
-// GetCheckRuns returns all check runs for a commit SHA.
+// parseNextLink extracts the URL of the next page from a GitHub Link header.
+// Returns "" when there is no next page.
+func parseNextLink(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		i := strings.Index(part, ";")
+		if i < 0 {
+			continue
+		}
+		u := strings.Trim(strings.TrimSpace(part[:i]), "<>")
+		rel := strings.TrimSpace(part[i+1:])
+		if rel == `rel="next"` {
+			return u
+		}
+	}
+	return ""
+}
+
+// GetCheckRuns returns all check runs for a commit SHA, following pagination.
 func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
@@ -580,15 +598,29 @@ func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var response struct {
-		CheckRuns []CheckRun `json:"check_runs"`
-	}
+	var all []CheckRun
 	path := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs?per_page=100",
 		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(sha))
-	if err := client.Get(path, &response); err != nil {
-		return nil, fmt.Errorf("failed to get check runs for %s: %w", sha, err)
+	for path != "" {
+		var response struct {
+			CheckRuns []CheckRun `json:"check_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get check runs for %s: %w", sha, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.CheckRuns...)
+		path = parseNextLink(resp.Header.Get("Link"))
 	}
-	return response.CheckRuns, nil
+	return all, nil
 }
 
 // WorkflowRun represents a GitHub Actions workflow run.
@@ -617,7 +649,7 @@ type WorkflowJob struct {
 	HTMLURL     string `json:"html_url"`
 }
 
-// ListWorkflowRunsForSHA returns the workflow runs associated with a commit SHA.
+// ListWorkflowRunsForSHA returns the workflow runs associated with a commit SHA, following pagination.
 func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
@@ -627,18 +659,32 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var response struct {
-		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
-	}
-	path := fmt.Sprintf("repos/%s/%s/actions/runs?head_sha=%s&per_page=30",
+	var all []WorkflowRun
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?head_sha=%s&per_page=100",
 		url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha))
-	if err := client.Get(path, &response); err != nil {
-		return nil, fmt.Errorf("failed to get workflow runs for %s: %w", sha, err)
+	for path != "" {
+		var response struct {
+			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get workflow runs for %s: %w", sha, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.WorkflowRuns...)
+		path = parseNextLink(resp.Header.Get("Link"))
 	}
-	return response.WorkflowRuns, nil
+	return all, nil
 }
 
-// ListWorkflowRunJobs returns the jobs for a workflow run.
+// ListWorkflowRunJobs returns the jobs for a workflow run, following pagination.
 func ListWorkflowRunJobs(ownerRepo string, runID int64) ([]WorkflowJob, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
@@ -648,15 +694,29 @@ func ListWorkflowRunJobs(ownerRepo string, runID int64) ([]WorkflowJob, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var response struct {
-		Jobs []WorkflowJob `json:"jobs"`
-	}
+	var all []WorkflowJob
 	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/jobs?per_page=100",
 		url.PathEscape(owner), url.PathEscape(repo), runID)
-	if err := client.Get(path, &response); err != nil {
-		return nil, fmt.Errorf("failed to get jobs for run %d: %w", runID, err)
+	for path != "" {
+		var response struct {
+			Jobs []WorkflowJob `json:"jobs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get jobs for run %d: %w", runID, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.Jobs...)
+		path = parseNextLink(resp.Header.Get("Link"))
 	}
-	return response.Jobs, nil
+	return all, nil
 }
 
 // GetJobLogs fetches the plain-text log for a GitHub Actions job.

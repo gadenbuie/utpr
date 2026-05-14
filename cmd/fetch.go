@@ -87,6 +87,11 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
+	fetchSHA, err := git.RevParse("FETCH_HEAD")
+	if err != nil {
+		return ui.Die("Could not resolve FETCH_HEAD after fetch.")
+	}
+
 	if flagFetchWorktree {
 		if git.BranchExists(localBranch) {
 			_, _ = git.Run("fetch", ".", "FETCH_HEAD:"+localBranch)
@@ -110,7 +115,7 @@ func runFetch(cmd *cobra.Command, args []string) error {
 		wtPath := git.GetBranchWorktreePath(localBranch)
 		if wtPath != "" {
 			ui.Infof("Branch '%s' is checked out in a worktree.", localBranch)
-			if err := git.RunInteractiveInDir(wtPath, "merge", "FETCH_HEAD"); err != nil {
+			if err := git.RunInteractiveInDir(wtPath, "merge", fetchSHA); err != nil {
 				ui.Warn("Merge had conflicts. Resolve them before continuing.")
 			}
 			configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)

@@ -90,6 +90,8 @@ func challengeBranchBehindRemote() error {
 				return ui.Die("Pull failed. Fix conflicts or run 'utpr pull' manually.")
 			}
 			ui.Success("Pulled latest changes.")
+		} else {
+			return ui.MustConfirm("Proceed anyway?", false)
 		}
 	}
 	return nil
