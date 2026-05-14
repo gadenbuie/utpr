@@ -73,6 +73,7 @@ func init() {
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(bisectCmd)
 	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(ciCmd)
 
 }
 

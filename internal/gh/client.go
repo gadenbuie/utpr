@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -86,7 +88,8 @@ type PRInfo struct {
 	Title   string `json:"title"`
 	HTMLURL string `json:"html_url"`
 	Head    struct {
-		Ref  string `json:"ref"`
+		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 		Repo struct {
 			FullName string `json:"full_name"`
 			CloneURL string `json:"clone_url"`
@@ -522,6 +525,147 @@ func ListIssueComments(ownerRepo string, number int) ([]Comment, error) {
 		return nil, fmt.Errorf("failed to list comments for issue #%d: %w", number, err)
 	}
 	return comments, nil
+}
+
+// CheckRun represents a GitHub Checks API check run.
+type CheckRun struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`      // queued, in_progress, completed
+	Conclusion  string `json:"conclusion"`  // success, failure, neutral, cancelled, skipped, timed_out, action_required
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	HTMLURL     string `json:"html_url"`
+	ExternalID  string `json:"external_id"`
+	App         struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	} `json:"app"`
+	CheckSuite struct {
+		ID int64 `json:"id"`
+	} `json:"check_suite"`
+}
+
+// GetCheckRuns returns all check runs for a commit SHA.
+func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var response struct {
+		CheckRuns []CheckRun `json:"check_runs"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs?per_page=100",
+		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(sha))
+	if err := client.Get(path, &response); err != nil {
+		return nil, fmt.Errorf("failed to get check runs for %s: %w", sha, err)
+	}
+	return response.CheckRuns, nil
+}
+
+// WorkflowRun represents a GitHub Actions workflow run.
+type WorkflowRun struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`     // queued, in_progress, completed
+	Conclusion string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, startup_failure
+	HTMLURL    string `json:"html_url"`
+	HeadSHA    string `json:"head_sha"`
+	Event      string `json:"event"`
+	RunNumber  int    `json:"run_number"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// WorkflowJob represents a job within a GitHub Actions workflow run.
+type WorkflowJob struct {
+	ID          int64  `json:"id"`
+	RunID       int64  `json:"run_id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	HTMLURL     string `json:"html_url"`
+}
+
+// ListWorkflowRunsForSHA returns the workflow runs associated with a commit SHA.
+func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var response struct {
+		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?head_sha=%s&per_page=30",
+		url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha))
+	if err := client.Get(path, &response); err != nil {
+		return nil, fmt.Errorf("failed to get workflow runs for %s: %w", sha, err)
+	}
+	return response.WorkflowRuns, nil
+}
+
+// ListWorkflowRunJobs returns the jobs for a workflow run.
+func ListWorkflowRunJobs(ownerRepo string, runID int64) ([]WorkflowJob, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var response struct {
+		Jobs []WorkflowJob `json:"jobs"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/jobs?per_page=100",
+		url.PathEscape(owner), url.PathEscape(repo), runID)
+	if err := client.Get(path, &response); err != nil {
+		return nil, fmt.Errorf("failed to get jobs for run %d: %w", runID, err)
+	}
+	return response.Jobs, nil
+}
+
+// GetJobLogs fetches the plain-text log for a GitHub Actions job.
+// The API returns a redirect to the actual log content.
+func GetJobLogs(ownerRepo string, jobID int64) (string, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return "", err
+	}
+	httpClient, err := api.DefaultHTTPClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+	logURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/actions/jobs/%d/logs",
+		url.PathEscape(owner), url.PathEscape(repo), jobID)
+	req, err := http.NewRequest("GET", logURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch logs for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("no logs found for job %d (logs may have expired)", jobID)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read logs for job %d: %w", jobID, err)
+	}
+	return string(body), nil
 }
 
 // splitOwnerRepo splits "owner/repo" into its two components.
