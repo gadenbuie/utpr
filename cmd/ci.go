@@ -51,6 +51,7 @@ var (
 	flagCILogsLines      int
 	flagCILogsTimestamps bool
 	flagCILogsAll        bool
+	flagCILogsFailed     bool
 	flagCILogsJob        string
 )
 
@@ -63,6 +64,7 @@ func init() {
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsTimestamps, "timestamps", false, "Show timestamps on log lines")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAll, "all", false, "Show logs for all jobs, not just failed")
+	ciLogsCmd.Flags().BoolVar(&flagCILogsFailed, "failed", false, "Show logs for all failed jobs without prompting")
 	ciLogsCmd.Flags().StringVar(&flagCILogsJob, "job", "", "Show logs for a specific job by name (substring match)")
 
 	ciCmd.AddCommand(ciLogsCmd)
@@ -540,7 +542,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	runs = latestRunsPerWorkflow(runs)
 
 	// interactive = no explicit job filter; show picker instead of dumping all failed
-	interactive := !flagCILogsAll && flagCILogsJob == ""
+	interactive := !flagCILogsAll && !flagCILogsFailed && flagCILogsJob == ""
 
 	// Collect completed jobs. In interactive mode (or --all) we want all jobs
 	// so the picker can offer them; otherwise only fetch from failed runs.
