@@ -569,15 +569,16 @@ func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 
 // WorkflowRun represents a GitHub Actions workflow run.
 type WorkflowRun struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`     // queued, in_progress, completed
-	Conclusion string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, startup_failure
-	HTMLURL    string `json:"html_url"`
-	HeadSHA    string `json:"head_sha"`
-	Event      string `json:"event"`
-	RunNumber  int    `json:"run_number"`
-	CreatedAt  string `json:"created_at"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`     // queued, in_progress, completed
+	Conclusion   string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, startup_failure
+	HTMLURL      string `json:"html_url"`
+	HeadSHA      string `json:"head_sha"`
+	Event        string `json:"event"`
+	RunNumber    int    `json:"run_number"`
+	CreatedAt    string `json:"created_at"`
+	CheckSuiteID int64  `json:"check_suite_id"`
 }
 
 // WorkflowJob represents a job within a GitHub Actions workflow run.

@@ -128,18 +128,28 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return watchCI(ownerRepo, sha)
 	}
 
-	runs, err := ui.SpinWithResult("Fetching CI status...", func() ([]gh.CheckRun, error) {
-		return gh.GetCheckRuns(ownerRepo, sha)
+	type ciStatus struct {
+		checkRuns    []gh.CheckRun
+		workflowRuns []gh.WorkflowRun
+	}
+	data, err := ui.SpinWithResult("Fetching CI status...", func() (ciStatus, error) {
+		checkRuns, crErr := gh.GetCheckRuns(ownerRepo, sha)
+		if crErr != nil {
+			return ciStatus{}, crErr
+		}
+		wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
+		return ciStatus{checkRuns: checkRuns, workflowRuns: wfRuns}, nil
 	})
 	if err != nil {
 		return ui.Dief("Could not fetch CI status: %v", err)
 	}
 
-	if len(runs) == 0 {
+	if len(data.checkRuns) == 0 {
 		ui.Info("No checks found for this commit.")
 		return nil
 	}
 
+	runs := data.checkRuns
 	if flagCIFailed {
 		var failed []gh.CheckRun
 		for _, r := range runs {
@@ -154,28 +164,29 @@ func runCI(cmd *cobra.Command, args []string) error {
 		runs = failed
 	}
 
-	renderCheckRuns(runs, false)
+	renderCheckRuns(runs, buildSuiteNameMap(data.workflowRuns), false)
 	return nil
 }
 
 func watchCI(ownerRepo, sha string) error {
 	for {
-		runs, err := gh.GetCheckRuns(ownerRepo, sha)
+		checkRuns, err := gh.GetCheckRuns(ownerRepo, sha)
 		if err != nil {
 			return ui.Dief("Could not fetch CI status: %v", err)
 		}
+		wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 
 		clearScreen()
-		renderCheckRuns(runs, true)
+		renderCheckRuns(checkRuns, buildSuiteNameMap(wfRuns), true)
 
 		allDone := true
-		for _, r := range runs {
+		for _, r := range checkRuns {
 			if r.Status != "completed" {
 				allDone = false
 				break
 			}
 		}
-		if allDone || len(runs) == 0 {
+		if allDone || len(checkRuns) == 0 {
 			break
 		}
 
@@ -194,7 +205,18 @@ type ciGroup struct {
 	Runs []gh.CheckRun
 }
 
-func groupCheckRuns(runs []gh.CheckRun) []ciGroup {
+// buildSuiteNameMap returns a map from check suite ID to workflow run name.
+func buildSuiteNameMap(wfRuns []gh.WorkflowRun) map[int64]string {
+	m := map[int64]string{}
+	for _, r := range wfRuns {
+		if r.CheckSuiteID != 0 && r.Name != "" {
+			m[r.CheckSuiteID] = r.Name
+		}
+	}
+	return m
+}
+
+func groupCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string) []ciGroup {
 	var order []int64
 	groups := map[int64]*ciGroup{}
 
@@ -210,7 +232,11 @@ func groupCheckRuns(runs []gh.CheckRun) []ciGroup {
 	result := make([]ciGroup, 0, len(order))
 	for _, sid := range order {
 		g := groups[sid]
-		g.Name = deriveGroupName(g.Runs)
+		if name, ok := suiteNames[sid]; ok {
+			g.Name = name
+		} else {
+			g.Name = deriveGroupName(g.Runs)
+		}
 		result = append(result, *g)
 	}
 	return result
@@ -336,13 +362,13 @@ func checkRunSummary(runs []gh.CheckRun) string {
 	return strings.Join(parts, " · ")
 }
 
-func renderCheckRuns(runs []gh.CheckRun, showTimestamp bool) {
+func renderCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
 		fmt.Fprintf(os.Stderr, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
 	}
 
-	groups := groupCheckRuns(runs)
+	groups := groupCheckRuns(runs, suiteNames)
 	groupHeaderStyle := lipgloss.NewStyle().Bold(true)
 	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 
