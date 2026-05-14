@@ -746,6 +746,10 @@ func GetJobLogs(ownerRepo string, jobID int64) (string, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return "", fmt.Errorf("no logs found for job %d (logs may have expired)", jobID)
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return "", fmt.Errorf("unexpected status %d fetching logs for job %d: %s", resp.StatusCode, jobID, strings.TrimSpace(string(snippet)))
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read logs for job %d: %w", jobID, err)

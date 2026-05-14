@@ -28,6 +28,7 @@ var ciCmd = &cobra.Command{
   utpr ci #123      PR #123 (explicit)
   utpr ci main      branch 'main'
   utpr ci @main     branch 'main' (explicit)`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runCI,
 }
 
@@ -35,6 +36,7 @@ var ciLogsCmd = &cobra.Command{
 	Use:   "logs [#pr | @branch | number | branch]",
 	Short: "Show logs for failed CI jobs",
 	Long:  "Show the last N lines of logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runCILogs,
 }
 
