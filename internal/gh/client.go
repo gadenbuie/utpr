@@ -546,6 +546,30 @@ type CheckRun struct {
 	} `json:"check_suite"`
 }
 
+// GetBranchSHA returns the HEAD commit SHA of a remote branch.
+// Branch names may contain slashes and must not be path-escaped.
+func GetBranchSHA(ownerRepo, branch string) (string, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return "", err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var b struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/branches/%s",
+		url.PathEscape(owner), url.PathEscape(repo), branch)
+	if err := client.Get(path, &b); err != nil {
+		return "", fmt.Errorf("failed to get branch %s: %w", branch, err)
+	}
+	return b.Commit.SHA, nil
+}
+
 // GetCheckRuns returns all check runs for a commit SHA.
 func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)

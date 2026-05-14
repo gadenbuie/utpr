@@ -17,16 +17,22 @@ import (
 )
 
 var ciCmd = &cobra.Command{
-	Use:   "ci [pr-number]",
+	Use:   "ci [#pr | @branch | number | branch]",
 	Short: "View CI check status",
-	Long:  "Show CI check run status for the current branch or a PR.",
-	RunE:  runCI,
+	Long: `Show CI check run status for the current branch or a specific PR or branch.
+
+  utpr ci           current branch
+  utpr ci 123       PR #123
+  utpr ci #123      PR #123 (explicit)
+  utpr ci main      branch 'main'
+  utpr ci @main     branch 'main' (explicit)`,
+	RunE: runCI,
 }
 
 var ciLogsCmd = &cobra.Command{
-	Use:   "logs [pr-number]",
+	Use:   "logs [#pr | @branch | number | branch]",
 	Short: "Show logs for failed CI jobs",
-	Long:  "Show the last N lines of logs for failed CI jobs on the current branch or a PR.",
+	Long:  "Show the last N lines of logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.",
 	RunE:  runCILogs,
 }
 
@@ -72,15 +78,46 @@ func resolveCISHA(cfg *remote.Config, args []string) (ownerRepo, sha, prURL stri
 	}
 
 	if len(args) > 0 {
-		n, convErr := strconv.Atoi(args[0])
-		if convErr != nil {
-			return "", "", "", ui.Dief("Invalid PR number: %s", args[0])
+		arg := args[0]
+
+		// #123 → explicit PR number
+		// @main → explicit branch name
+		// 123   → PR number (numeric)
+		// main  → branch name (non-numeric string)
+		switch {
+		case strings.HasPrefix(arg, "#"):
+			n, convErr := strconv.Atoi(arg[1:])
+			if convErr != nil {
+				return "", "", "", ui.Dief("Invalid PR number: %s", arg)
+			}
+			pr, prErr := gh.GetPR(ownerRepo, n)
+			if prErr != nil {
+				return "", "", "", ui.Dief("Could not fetch PR #%d.", n)
+			}
+			return ownerRepo, pr.Head.SHA, pr.HTMLURL, nil
+
+		case strings.HasPrefix(arg, "@"):
+			branch := arg[1:]
+			sha, shaErr := gh.GetBranchSHA(ownerRepo, branch)
+			if shaErr != nil {
+				return "", "", "", ui.Dief("Could not find branch '%s'.", branch)
+			}
+			return ownerRepo, sha, "", nil
+
+		default:
+			if n, convErr := strconv.Atoi(arg); convErr == nil {
+				pr, prErr := gh.GetPR(ownerRepo, n)
+				if prErr != nil {
+					return "", "", "", ui.Dief("Could not fetch PR #%d.", n)
+				}
+				return ownerRepo, pr.Head.SHA, pr.HTMLURL, nil
+			}
+			sha, shaErr := gh.GetBranchSHA(ownerRepo, arg)
+			if shaErr != nil {
+				return "", "", "", ui.Dief("Could not find branch '%s'.", arg)
+			}
+			return ownerRepo, sha, "", nil
 		}
-		pr, prErr := gh.GetPR(ownerRepo, n)
-		if prErr != nil {
-			return "", "", "", ui.Dief("Could not fetch PR #%d.", n)
-		}
-		return ownerRepo, pr.Head.SHA, pr.HTMLURL, nil
 	}
 
 	sha, err = git.RevParse("HEAD")
