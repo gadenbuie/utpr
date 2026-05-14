@@ -729,9 +729,16 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 	if len(targetJobs) > 1 {
 		noun = "jobs"
 	}
-	label := fmt.Sprintf("%d failed %s", len(targetJobs), noun)
-	if flagCILogsAll {
-		label = fmt.Sprintf("%d %s", len(targetJobs), noun)
+	allFailed := !flagCILogsAll
+	for _, e := range targetJobs {
+		if !isFailedConclusion(e.Job.Conclusion) {
+			allFailed = false
+			break
+		}
+	}
+	label := fmt.Sprintf("%d %s", len(targetJobs), noun)
+	if allFailed {
+		label = fmt.Sprintf("%d failed %s", len(targetJobs), noun)
 	}
 	fmt.Fprintln(os.Stderr, logSeparator(label))
 	return nil

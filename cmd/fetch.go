@@ -94,9 +94,26 @@ func runFetch(cmd *cobra.Command, args []string) error {
 
 	if flagFetchWorktree {
 		if git.BranchExists(localBranch) {
-			_, _ = git.Run("fetch", ".", "FETCH_HEAD:"+localBranch)
+			wtPath := git.GetBranchWorktreePath(localBranch)
+			if wtPath != "" {
+				// git refuses to update a ref that is checked out in another worktree;
+				// merge directly inside that worktree instead.
+				ui.Infof("Branch '%s' is checked out in a worktree.", localBranch)
+				if err := git.RunInteractiveInDir(wtPath, "merge", fetchSHA); err != nil {
+					ui.Warn("Merge had conflicts. Resolve them before continuing.")
+				}
+				configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
+				ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
+				offerWorktreeNavigation(wtPath)
+				return nil
+			}
+			if _, err := git.Run("fetch", ".", "FETCH_HEAD:"+localBranch); err != nil {
+				return ui.Dief("Failed to update branch '%s'.", localBranch)
+			}
 		} else {
-			_, _ = git.Run("branch", localBranch, "FETCH_HEAD")
+			if _, err := git.Run("branch", localBranch, "FETCH_HEAD"); err != nil {
+				return ui.Dief("Failed to create branch '%s'.", localBranch)
+			}
 		}
 		configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
 		ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
