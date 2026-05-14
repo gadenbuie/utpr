@@ -212,6 +212,25 @@ func runCI(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// countTerminalRows returns the number of terminal rows that output will
+// occupy at the given terminal width, accounting for line wrapping.
+func countTerminalRows(output string, termWidth int) int {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if termWidth <= 0 {
+		return len(lines)
+	}
+	rows := 0
+	for _, line := range lines {
+		dw := len([]rune(ui.StripANSI(line)))
+		if dw == 0 {
+			rows++
+		} else {
+			rows += (dw + termWidth - 1) / termWidth
+		}
+	}
+	return rows
+}
+
 func watchCI(ownerRepo, sha string) error {
 	var prevLines int
 	for {
@@ -229,7 +248,7 @@ func watchCI(ownerRepo, sha string) error {
 			fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
 		}
 		fmt.Fprint(os.Stderr, output)
-		prevLines = strings.Count(output, "\n")
+		prevLines = countTerminalRows(output, ui.GetTermWidth())
 
 		allDone := true
 		for _, r := range checkRuns {
