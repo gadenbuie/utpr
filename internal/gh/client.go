@@ -610,7 +610,7 @@ func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 			return nil, fmt.Errorf("failed to get check runs for %s: %w", sha, reqErr)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -671,7 +671,7 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 			return nil, fmt.Errorf("failed to get workflow runs for %s: %w", sha, reqErr)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -706,7 +706,7 @@ func ListWorkflowRunJobs(ownerRepo string, runID int64) ([]WorkflowJob, error) {
 			return nil, fmt.Errorf("failed to get jobs for run %d: %w", runID, reqErr)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, readErr
 		}
