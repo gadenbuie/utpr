@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -207,11 +208,12 @@ func runCI(cmd *cobra.Command, args []string) error {
 		runs = failed
 	}
 
-	renderCheckRuns(runs, buildSuiteNameMap(data.workflowRuns), false)
+	renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
 	return nil
 }
 
 func watchCI(ownerRepo, sha string) error {
+	var prevLines int
 	for {
 		checkRuns, err := gh.GetCheckRuns(ownerRepo, sha)
 		if err != nil {
@@ -219,8 +221,15 @@ func watchCI(ownerRepo, sha string) error {
 		}
 		wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 
-		clearScreen()
-		renderCheckRuns(checkRuns, buildSuiteNameMap(wfRuns), true)
+		var buf strings.Builder
+		renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
+		output := buf.String()
+
+		if prevLines > 0 {
+			fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+		}
+		fmt.Fprint(os.Stderr, output)
+		prevLines = strings.Count(output, "\n")
 
 		allDone := true
 		for _, r := range checkRuns {
@@ -236,10 +245,6 @@ func watchCI(ownerRepo, sha string) error {
 		time.Sleep(10 * time.Second)
 	}
 	return nil
-}
-
-func clearScreen() {
-	fmt.Fprint(os.Stderr, "\033[2J\033[H")
 }
 
 // ciGroup holds a named group of check runs sharing a check suite.
@@ -405,10 +410,10 @@ func checkRunSummary(runs []gh.CheckRun) string {
 	return strings.Join(parts, " · ")
 }
 
-func renderCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) {
+func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
-		fmt.Fprintf(os.Stderr, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
+		fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
 	}
 
 	groups := groupCheckRuns(runs, suiteNames)
@@ -416,7 +421,7 @@ func renderCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string, showTimest
 	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 
 	for _, g := range groups {
-		fmt.Fprintf(os.Stderr, "%s %s\n",
+		fmt.Fprintf(w, "%s %s\n",
 			bulletStyle.Render("●"),
 			groupHeaderStyle.Render(g.Name))
 
@@ -432,15 +437,15 @@ func renderCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string, showTimest
 			icon := checkRunIcon(r)
 			name := jobDisplayName(r.Name, g.Name)
 			dur := formatCheckDuration(r)
-			fmt.Fprintf(os.Stderr, "  %s  %s  %s\n",
+			fmt.Fprintf(w, "  %s  %s  %s\n",
 				icon,
 				ui.PadRight(name, maxLen),
 				dur)
 		}
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(w)
 	}
 
-	fmt.Fprintf(os.Stderr, "%s\n", checkRunSummary(runs))
+	fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
 // --- ci logs ---
