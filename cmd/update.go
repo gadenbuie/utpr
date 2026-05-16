@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -123,13 +124,21 @@ func getLatestRelease(goos, goarch string) (tag, assetURL string, err error) {
 	if release.TagName == "" {
 		return "", "", fmt.Errorf("no release found for %s", utprRepo)
 	}
-	assetName := fmt.Sprintf("utpr-%s-%s.tar.gz", goos, goarch)
+	assetName := releaseAssetName(goos, goarch)
 	for _, asset := range release.Assets {
 		if asset.Name == assetName {
 			return release.TagName, asset.URL, nil
 		}
 	}
 	return release.TagName, "", fmt.Errorf("no release asset found for %s/%s in %s", goos, goarch, release.TagName)
+}
+
+func releaseAssetName(goos, goarch string) string {
+	ext := ".tar.gz"
+	if goos == "darwin" {
+		ext = ".dmg"
+	}
+	return fmt.Sprintf("utpr-%s-%s%s", goos, goarch, ext)
 }
 
 // downloadAndReplace fetches the release archive for the current platform and
@@ -154,7 +163,15 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 		return fmt.Errorf("download failed: HTTP %d for %s", resp.StatusCode, url)
 	}
 
-	gzr, err := gzip.NewReader(resp.Body)
+	if goos == "darwin" {
+		return downloadAndReplaceFromDMG(resp.Body, execPath)
+	}
+
+	return downloadAndReplaceFromArchive(resp.Body, goos, goarch, execPath)
+}
+
+func downloadAndReplaceFromArchive(body io.Reader, goos, goarch, execPath string) error {
+	gzr, err := gzip.NewReader(body)
 	if err != nil {
 		return fmt.Errorf("failed to decompress archive: %w", err)
 	}
@@ -178,31 +195,101 @@ func downloadAndReplace(url, goos, goarch, execPath string) error {
 			continue
 		}
 
-		dir := filepath.Dir(execPath)
-		tmp, err := os.CreateTemp(dir, ".utpr-update-*")
-		if err != nil {
-			return fmt.Errorf("failed to create temp file in %s (check permissions): %w", dir, err)
-		}
-		tmpPath := tmp.Name()
-
-		_, copyErr := io.Copy(tmp, tr)
-		_ = tmp.Close()
-		if copyErr != nil {
-			_ = os.Remove(tmpPath)
-			return fmt.Errorf("failed to write update: %w", copyErr)
-		}
-
-		if err := os.Chmod(tmpPath, 0755); err != nil {
-			_ = os.Remove(tmpPath)
-			return fmt.Errorf("failed to set permissions: %w", err)
-		}
-
-		if err := os.Rename(tmpPath, execPath); err != nil {
-			_ = os.Remove(tmpPath)
-			return fmt.Errorf("failed to install update to %s: %w", execPath, err)
-		}
-		return nil
+		return installBinary(execPath, tr)
 	}
 
-	return fmt.Errorf("binary %q not found in release archive %s", binaryName, url)
+	return fmt.Errorf("binary %q not found in release archive", binaryName)
+}
+
+func downloadAndReplaceFromDMG(body io.Reader, execPath string) error {
+	tmpDir, err := os.MkdirTemp("", "utpr-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir) //nolint:errcheck
+
+	dmgPath := filepath.Join(tmpDir, "utpr.dmg")
+	dmgFile, err := os.Create(dmgPath)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary disk image: %w", err)
+	}
+
+	if _, err := io.Copy(dmgFile, body); err != nil {
+		_ = dmgFile.Close()
+		return fmt.Errorf("failed to write disk image: %w", err)
+	}
+	if err := dmgFile.Close(); err != nil {
+		return fmt.Errorf("failed to finalize disk image: %w", err)
+	}
+
+	mountPath := filepath.Join(tmpDir, "mnt")
+	if err := os.Mkdir(mountPath, 0755); err != nil {
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+
+	if output, err := exec.Command("hdiutil", "attach", "-quiet", "-nobrowse", "-readonly", "-mountpoint", mountPath, dmgPath).CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(output))
+		if msg == "" {
+			return fmt.Errorf("failed to mount disk image: %w", err)
+		}
+		return fmt.Errorf("failed to mount disk image: %s: %w", msg, err)
+	}
+
+	binPath := filepath.Join(mountPath, "utpr")
+	binFile, err := os.Open(binPath)
+	if err != nil {
+		_ = exec.Command("hdiutil", "detach", "-quiet", mountPath).Run()
+		return fmt.Errorf("failed to open utpr from disk image: %w", err)
+	}
+
+	installErr := installBinary(execPath, binFile)
+	closeErr := binFile.Close()
+	detachOutput, detachErr := exec.Command("hdiutil", "detach", "-quiet", mountPath).CombinedOutput()
+
+	if installErr != nil {
+		return installErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to close mounted binary: %w", closeErr)
+	}
+	if detachErr != nil {
+		msg := strings.TrimSpace(string(detachOutput))
+		if msg == "" {
+			return fmt.Errorf("failed to detach disk image: %w", detachErr)
+		}
+		return fmt.Errorf("failed to detach disk image: %s: %w", msg, detachErr)
+	}
+
+	return nil
+}
+
+func installBinary(execPath string, src io.Reader) error {
+	dir := filepath.Dir(execPath)
+	tmp, err := os.CreateTemp(dir, ".utpr-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file in %s (check permissions): %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+
+	_, copyErr := io.Copy(tmp, src)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to write update: %w", copyErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to finalize update: %w", closeErr)
+	}
+
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to set permissions: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, execPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to install update to %s: %w", execPath, err)
+	}
+	return nil
 }

@@ -42,7 +42,12 @@ find_install_dir() {
 install_from_release() {
   local os="$1" arch="$2" install_dir="$3" version="$4"
 
-  local archive="utpr-${os}-${arch}.tar.gz"
+  local archive_ext="tar.gz"
+  if [ "${os}" = "darwin" ]; then
+    archive_ext="dmg"
+  fi
+
+  local archive="utpr-${os}-${arch}.${archive_ext}"
   local url="https://github.com/${REPO}/releases/download/${version}/${archive}"
 
   echo "Downloading utpr ${version} for ${os}/${arch}..."
@@ -55,14 +60,24 @@ install_from_release() {
     return 1
   fi
 
-  tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}"
-
   local ext=""
   if [ "${os}" = "windows" ]; then
     ext=".exe"
   fi
 
-  install -m 755 "${tmpdir}/utpr-${os}-${arch}/utpr${ext}" "${install_dir}/utpr${ext}"
+  if [ "${os}" = "darwin" ]; then
+    local mount_dir="${tmpdir}/mnt"
+    mkdir -p "${mount_dir}"
+    hdiutil attach -quiet -nobrowse -readonly -mountpoint "${mount_dir}" "${tmpdir}/${archive}" >/dev/null
+    trap 'hdiutil detach -quiet "${mount_dir}" >/dev/null 2>&1 || true; rm -rf "${tmpdir}"' EXIT
+    install -m 755 "${mount_dir}/utpr" "${install_dir}/utpr"
+    hdiutil detach -quiet "${mount_dir}" >/dev/null
+    trap 'rm -rf "${tmpdir}"' EXIT
+  else
+    tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}"
+    install -m 755 "${tmpdir}/utpr-${os}-${arch}/utpr${ext}" "${install_dir}/utpr${ext}"
+  fi
+
   echo "Installed utpr to ${install_dir}/utpr${ext}"
 }
 

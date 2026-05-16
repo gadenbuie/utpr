@@ -11,22 +11,28 @@ permissions:
 jobs:
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs_on }}
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: amd64
+            runs_on: ubuntu-latest
           - goos: linux
             goarch: arm64
+            runs_on: ubuntu-latest
           - goos: darwin
             goarch: amd64
+            runs_on: macos-latest
           - goos: darwin
             goarch: arm64
+            runs_on: macos-latest
           - goos: windows
             goarch: amd64
+            runs_on: ubuntu-latest
           - goos: windows
             goarch: arm64
+            runs_on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -51,24 +57,33 @@ jobs:
 
           go build -ldflags "${LDFLAGS}" -o "utpr${EXT}" .
 
-      - name: Create archive
+      - name: Package artifact
         run: |
-          ARCHIVE="utpr-${{ matrix.goos }}-${{ matrix.goarch }}"
-          mkdir "${ARCHIVE}"
+          PACKAGE="utpr-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir dist
 
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            mv utpr.exe "${ARCHIVE}/"
+          if [ "${{ matrix.goos }}" = "darwin" ]; then
+            STAGE_DIR="${RUNNER_TEMP}/${PACKAGE}"
+            rm -rf "${STAGE_DIR}"
+            mkdir -p "${STAGE_DIR}"
+            mv utpr "${STAGE_DIR}/utpr"
+            cp LICENSE "${STAGE_DIR}/" 2>/dev/null || true
+            hdiutil create -quiet -volname "${PACKAGE}" -srcfolder "${STAGE_DIR}" -ov -format UDZO "dist/${PACKAGE}.dmg"
           else
-            mv utpr "${ARCHIVE}/"
+            mkdir "${PACKAGE}"
+            if [ "${{ matrix.goos }}" = "windows" ]; then
+              mv utpr.exe "${PACKAGE}/"
+            else
+              mv utpr "${PACKAGE}/"
+            fi
+            cp LICENSE "${PACKAGE}/" 2>/dev/null || true
+            tar -czf "dist/${PACKAGE}.tar.gz" "${PACKAGE}"
           fi
-
-          cp LICENSE "${ARCHIVE}/" 2>/dev/null || true
-          tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: utpr-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: "*.tar.gz"
+          path: dist/*
 
   release:
     name: Create Release
@@ -86,7 +101,10 @@ jobs:
 
       - name: Generate checksums
         working-directory: artifacts
-        run: sha256sum *.tar.gz > SHA256SUMS
+        run: |
+          shopt -s nullglob
+          files=( *.tar.gz *.dmg )
+          sha256sum "${files[@]}" > SHA256SUMS
 
       - name: Build release notes
         run: |
@@ -107,4 +125,5 @@ jobs:
           body_path: release_notes.txt
           files: |
             artifacts/*.tar.gz
+            artifacts/*.dmg
             artifacts/SHA256SUMS
