@@ -68,7 +68,8 @@ jobs:
             mkdir -p "${STAGE_DIR}"
             mv utpr "${STAGE_DIR}/utpr"
             cp LICENSE "${STAGE_DIR}/" 2>/dev/null || true
-            hdiutil create -quiet -volname "${PACKAGE}" -srcfolder "${STAGE_DIR}" -ov -format UDZO "dist/${PACKAGE}.dmg"
+            ln -s /usr/local/bin "${STAGE_DIR}/usr-local-bin"
+            hdiutil create -quiet -volname "utpr" -srcfolder "${STAGE_DIR}" -ov -format UDZO "dist/${PACKAGE}.dmg"
           else
             mkdir "${PACKAGE}"
             if [ "${{ matrix.goos }}" = "windows" ]; then
