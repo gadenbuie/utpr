@@ -464,7 +464,7 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 		_, _ = fmt.Fprintln(w)
 	}
 
-	fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
+	_, _ = fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
 // --- ci logs ---
