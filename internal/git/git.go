@@ -263,3 +263,107 @@ func GetTopLevel() (string, error) {
 func ForEachRef(format, sort, pattern string) (string, error) {
 	return Run("for-each-ref", fmt.Sprintf("--format=%s", format), fmt.Sprintf("--sort=%s", sort), pattern)
 }
+
+// ListRemotes returns the names of all configured git remotes.
+func ListRemotes() ([]string, error) {
+	out, err := Run("remote")
+	if err != nil {
+		return nil, err
+	}
+	var remotes []string
+	for _, line := range strings.Split(out, "\n") {
+		if r := strings.TrimSpace(line); r != "" {
+			remotes = append(remotes, r)
+		}
+	}
+	return remotes, nil
+}
+
+// FetchAllPrune fetches from each remote individually and prunes deleted
+// remote-tracking refs.  Fetching per-remote (rather than --all) lets us
+// attribute failures without parsing error message text.
+// It returns the names of any remotes whose repository was not found (deleted
+// fork), which the caller can treat as dead remotes eligible for cleanup.
+// Other fetch errors are collected and returned as err.
+func FetchAllPrune() (deadRemotes []string, err error) {
+	remotes, err := ListRemotes()
+	if err != nil {
+		return nil, err
+	}
+	var otherErrs []string
+	for _, r := range remotes {
+		_, stderr, runErr := RunSilent("fetch", "--prune", r)
+		if runErr == nil {
+			continue
+		}
+		if strings.Contains(stderr, "not found") || strings.Contains(stderr, "Repository not found") {
+			deadRemotes = append(deadRemotes, r)
+		} else {
+			otherErrs = append(otherErrs, fmt.Sprintf("%s: %s", r, strings.TrimSpace(stderr)))
+		}
+	}
+	if len(otherErrs) > 0 {
+		return deadRemotes, fmt.Errorf("git fetch: %s", strings.Join(otherErrs, "; "))
+	}
+	return deadRemotes, nil
+}
+
+// ListBranchesTrackingRemote returns local branches whose upstream points to the given remote.
+func ListBranchesTrackingRemote(remoteName string) []string {
+	out, err := ForEachRef("%(refname:short) %(upstream:short)", "-committerdate", "refs/heads/")
+	if err != nil {
+		return nil
+	}
+	prefix := remoteName + "/"
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 2)
+		if len(parts) == 2 && strings.HasPrefix(parts[1], prefix) {
+			branches = append(branches, parts[0])
+		}
+	}
+	return branches
+}
+
+// RemoveRemote removes a git remote by name.
+func RemoveRemote(name string) error {
+	_, stderr, err := RunSilent("remote", "remove", name)
+	if err != nil {
+		return fmt.Errorf("failed to remove remote '%s': %s", name, stderr)
+	}
+	return nil
+}
+
+// ListBranchesWithGoneUpstream returns local branches whose upstream tracking
+// ref no longer exists (shows as "[gone]" after a fetch --prune).
+func ListBranchesWithGoneUpstream() ([]string, error) {
+	out, err := ForEachRef("%(refname:short)\t%(upstream:track)", "-committerdate", "refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(parts) == 2 && parts[1] == "[gone]" {
+			branches = append(branches, parts[0])
+		}
+	}
+	return branches, nil
+}
+
+// ListMergedBranches returns local branch names fully merged into `into`.
+// The `into` branch itself is excluded.
+func ListMergedBranches(into string) ([]string, error) {
+	out, err := Run("branch", "--merged", into)
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		branch := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+		if branch != "" && branch != into {
+			branches = append(branches, branch)
+		}
+	}
+	return branches, nil
+}

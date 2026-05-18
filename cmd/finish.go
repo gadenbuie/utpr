@@ -198,98 +198,12 @@ func shouldDeleteRemoteBranch(prMerged bool, prHeadRepoFullName, pushRepoFullNam
 }
 
 func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
-	mergedPRs, err := ui.SpinWithResult("Checking for merged PRs...", func() ([]gh.MergedPRInfo, error) {
-		return gh.SearchMergedPRs(sourceRepo, 50)
+	return runMergedPRPicker(cfg, sourceRepo, mergedPRPickerOpts{
+		preselectAll:   false,
+		requireConfirm: true,
+		prompt:         "Select PR(s) to finish:",
+		cancelMsg:      "Cancelled.",
 	})
-	if err != nil || len(mergedPRs) == 0 {
-		// Fallback: check branches individually
-		return pickMergedPRsFallback(cfg, sourceRepo)
-	}
-
-	currentUser, _ := gh.GetLogin()
-
-	// Filter to only PRs that have a local branch
-	var items []ui.PRPickerItem
-	for _, pr := range mergedPRs {
-		hasLocal := findLocalBranchForPR(pr.Number, pr.HeadRefName, pr.Author, cfg.DefaultBranch) != ""
-		if hasLocal {
-			items = append(items, ui.PRPickerItem{
-				Number:      pr.Number,
-				Title:       pr.Title,
-				Author:      pr.Author,
-				IsHighlight: currentUser != "" && pr.Author == currentUser,
-			})
-		}
-	}
-
-	if len(items) == 0 {
-		ui.Info("No merged PRs with a local branch to clean up.")
-		return nil, nil
-	}
-
-	opts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
-	selected, err := ui.ChooseMultiWithOptions("Select PR(s) to finish:", opts)
-	if err != nil || len(selected) == 0 {
-		ui.Info("Cancelled.")
-		return nil, nil
-	}
-
-	if len(selected) == 1 {
-		if err := ui.MustConfirm(fmt.Sprintf("Finish PR #%d?", selected[0]), true); err != nil {
-			if err == ui.ErrCancelled {
-				ui.Info("Cancelled.")
-			}
-			return nil, nil
-		}
-	} else {
-		if err := ui.MustConfirm(fmt.Sprintf("Finish %d selected PRs?", len(selected)), true); err != nil {
-			if err == ui.ErrCancelled {
-				ui.Info("Cancelled.")
-			}
-			return nil, nil
-		}
-	}
-
-	return selected, nil
-}
-
-func pickMergedPRsFallback(cfg *remote.Config, sourceRepo string) ([]int, error) {
-	branchOutput, _ := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
-	branches := strings.Split(branchOutput, "\n")
-
-	currentUser, _ := gh.GetLogin()
-	var items []ui.PRPickerItem
-
-	for _, branch := range branches {
-		branch = strings.TrimSpace(branch)
-		if branch == "" || branch == cfg.DefaultBranch {
-			continue
-		}
-		pr, err := gh.GetMergedPRForBranch(sourceRepo, branch)
-		if err != nil || pr == nil {
-			continue
-		}
-		items = append(items, ui.PRPickerItem{
-			Number:      pr.Number,
-			Title:       pr.Title,
-			Author:      pr.User.Login,
-			IsHighlight: currentUser != "" && pr.User.Login == currentUser,
-		})
-	}
-
-	if len(items) == 0 {
-		ui.Info("No merged PRs with a local branch to clean up.")
-		return nil, nil
-	}
-
-	opts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
-	selected, err := ui.ChooseMultiWithOptions("Select PR(s) to finish:", opts)
-	if err != nil || len(selected) == 0 {
-		ui.Info("Cancelled.")
-		return nil, nil
-	}
-
-	return selected, nil
 }
 
 // prNumberFromStoredURL extracts the PR number from a stored GitHub PR URL.

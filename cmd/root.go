@@ -74,6 +74,7 @@ func init() {
 	rootCmd.AddCommand(bisectCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(ciCmd)
+	rootCmd.AddCommand(cleanCmd)
 
 }
 

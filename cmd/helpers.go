@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -139,6 +140,120 @@ func pullDefaultBranch(cfg *remote.Config) error {
 		}
 	}
 	return nil
+}
+
+type mergedPRPickerOpts struct {
+	preselectAll   bool
+	requireConfirm bool
+	prompt         string
+	cancelMsg      string
+}
+
+// runMergedPRPicker is the shared implementation for both `finish` and `clean`.
+// It searches for recently merged PRs, filters to those with a local branch,
+// shows a multi-select picker, and optionally pre-selects all items and/or
+// requires a final confirmation.  Falls back to per-branch GitHub queries when
+// the search API returns nothing.
+func runMergedPRPicker(cfg *remote.Config, sourceRepo string, opts mergedPRPickerOpts) ([]int, error) {
+	mergedPRs, err := ui.SpinWithResult("Checking for merged PRs...", func() ([]gh.MergedPRInfo, error) {
+		return gh.SearchMergedPRs(sourceRepo, 50)
+	})
+	if err != nil || len(mergedPRs) == 0 {
+		return runMergedPRPickerFallback(cfg, sourceRepo, opts)
+	}
+
+	currentUser, _ := gh.GetLogin()
+	var items []ui.PRPickerItem
+	for _, pr := range mergedPRs {
+		if findLocalBranchForPR(pr.Number, pr.HeadRefName, pr.Author, cfg.DefaultBranch) != "" {
+			items = append(items, ui.PRPickerItem{
+				Number:      pr.Number,
+				Title:       pr.Title,
+				Author:      pr.Author,
+				IsHighlight: currentUser != "" && pr.Author == currentUser,
+			})
+		}
+	}
+
+	if len(items) == 0 {
+		ui.Info("No merged PRs with a local branch to clean up.")
+		return nil, nil
+	}
+
+	pickerOpts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
+	if opts.preselectAll {
+		for i := range pickerOpts {
+			pickerOpts[i] = pickerOpts[i].Selected(true)
+		}
+	}
+
+	selected, err := ui.ChooseMultiWithOptions(opts.prompt, pickerOpts)
+	if err != nil || len(selected) == 0 {
+		ui.Info(opts.cancelMsg)
+		return nil, nil
+	}
+
+	if opts.requireConfirm {
+		var msg string
+		if len(selected) == 1 {
+			msg = fmt.Sprintf("Finish PR #%d?", selected[0])
+		} else {
+			msg = fmt.Sprintf("Finish %d selected PRs?", len(selected))
+		}
+		if err := ui.MustConfirm(msg, true); err != nil {
+			if err == ui.ErrCancelled {
+				ui.Info(opts.cancelMsg)
+			}
+			return nil, nil
+		}
+	}
+
+	return selected, nil
+}
+
+// runMergedPRPickerFallback queries GitHub per branch when the search API
+// returns no results.  It does not run a confirmation step regardless of opts.
+func runMergedPRPickerFallback(cfg *remote.Config, sourceRepo string, opts mergedPRPickerOpts) ([]int, error) {
+	branchOutput, _ := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
+	currentUser, _ := gh.GetLogin()
+	var items []ui.PRPickerItem
+
+	for _, branch := range strings.Split(branchOutput, "\n") {
+		branch = strings.TrimSpace(branch)
+		if branch == "" || branch == cfg.DefaultBranch {
+			continue
+		}
+		pr, err := gh.GetMergedPRForBranch(sourceRepo, branch)
+		if err != nil || pr == nil {
+			continue
+		}
+		items = append(items, ui.PRPickerItem{
+			Number:      pr.Number,
+			Title:       pr.Title,
+			Author:      pr.User.Login,
+			IsHighlight: currentUser != "" && pr.User.Login == currentUser,
+		})
+	}
+
+	if len(items) == 0 {
+		ui.Info("No merged PRs with a local branch to clean up.")
+		return nil, nil
+	}
+
+	pickerOpts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
+	if opts.preselectAll {
+		for i := range pickerOpts {
+			pickerOpts[i] = pickerOpts[i].Selected(true)
+		}
+	}
+
+	selected, err := ui.ChooseMultiWithOptions(opts.prompt, pickerOpts)
+	if err != nil || len(selected) == 0 {
+		ui.Info(opts.cancelMsg)
+		return nil, nil
+	}
+
+	return selected, nil
 }
 
 // ghGetPRForCurrentBranch finds the PR (any state) for the current branch.
