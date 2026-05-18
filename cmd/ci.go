@@ -432,7 +432,7 @@ func checkRunSummary(runs []gh.CheckRun) string {
 func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
-		fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
+		_, _ = fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
 	}
 
 	groups := groupCheckRuns(runs, suiteNames)
@@ -440,7 +440,7 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 
 	for _, g := range groups {
-		fmt.Fprintf(w, "%s %s\n",
+		_, _ = fmt.Fprintf(w, "%s %s\n",
 			bulletStyle.Render("●"),
 			groupHeaderStyle.Render(g.Name))
 
@@ -456,12 +456,12 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 			icon := checkRunIcon(r)
 			name := jobDisplayName(r.Name, g.Name)
 			dur := formatCheckDuration(r)
-			fmt.Fprintf(w, "  %s  %s  %s\n",
+			_, _ = fmt.Fprintf(w, "  %s  %s  %s\n",
 				icon,
 				ui.PadRight(name, maxLen),
 				dur)
 		}
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 	}
 
 	fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
