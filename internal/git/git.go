@@ -360,7 +360,7 @@ func ListMergedBranches(into string) ([]string, error) {
 	}
 	var branches []string
 	for _, line := range strings.Split(out, "\n") {
-		branch := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+		branch := strings.TrimSpace(strings.TrimLeft(line, "* +"))
 		if branch != "" && branch != into {
 			branches = append(branches, branch)
 		}
