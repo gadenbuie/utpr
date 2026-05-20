@@ -26,8 +26,12 @@ experience for the full pull request round-trip:
 - **Review others' PRs** with `utpr fetch`, which configures remotes
   and tracking branches automatically — even for fork-based PRs.
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
+- **Monitor CI** with `utpr ci`, which shows GitHub Actions check status
+  and streams failed-job logs right in your terminal.
 - **Clean up** with `utpr finish` after a merge, or `utpr forget`
-  to abandon work.
+  to abandon work. Use `utpr clean` to sweep the entire repo in one
+  pass: finish merged PRs, prune stale remote-tracking refs, and remove
+  dead remotes.
 - **Track down bugs** with `utpr bisect`, an interactive wrapper
   around `git bisect`.
 - **Isolate AI coding agents** with `--worktree` on `utpr init` and
@@ -67,8 +71,10 @@ go install github.com/gadenbuie/utpr@latest
 
 Pre-built binaries for macOS, Linux, and Windows are available on the
 [releases page](https://github.com/gadenbuie/utpr/releases).
-Download the archive for your platform, extract it, and place the `utpr`
-binary somewhere on your `PATH`.
+macOS releases are packaged as `.dmg` installers — open the file and
+drag `utpr` to the `/usr/local/bin` shortcut inside. Linux and Windows
+releases are `.tar.gz` archives; extract and place `utpr` somewhere on
+your `PATH`.
 
 ### Shell completions
 
@@ -104,8 +110,10 @@ utpr <command> [options]
 | `utpr push [--edit=...]` | Push branch and create/update PR |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
+| `utpr ci [<ref>]` | Show GitHub Actions status; `utpr ci logs` streams failed-job output |
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
+| `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
 | `utpr view [<pr>]` | View PR in browser |
 | `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
@@ -121,6 +129,9 @@ utpr init my-feature
 
 # Push and create a PR (interactive terminal prompts)
 utpr push
+
+# Check that CI passed
+utpr ci
 
 # ... address review feedback ...
 utpr push
@@ -153,6 +164,61 @@ utpr view
 # Done reviewing
 utpr finish
 ```
+
+### Monitoring CI
+
+`utpr ci` shows the GitHub Actions check status for the current branch
+without leaving the terminal — no need to open the browser just to see
+whether your checks passed.
+
+```bash
+# Show check status for the current branch
+utpr ci
+
+# Show checks for a specific PR or branch
+utpr ci 42
+utpr ci @some-branch
+
+# Poll until all checks finish
+utpr ci --watch
+
+# Open checks in the browser
+utpr ci --web
+```
+
+When checks fail, `utpr ci logs` streams the output of failed jobs so
+you can debug without leaving the terminal:
+
+```bash
+# Interactive picker — choose which failed job to inspect
+utpr ci logs
+
+# Show logs for all failed jobs at once
+utpr ci logs --failed
+
+# Filter to a specific job by name
+utpr ci logs --job "test"
+```
+
+### Keeping a clean repo
+
+`utpr clean` is an interactive housekeeping command that sweeps the
+entire repo in one pass:
+
+```bash
+utpr clean
+```
+
+It walks through the following steps, prompting for confirmation at each:
+
+1. **Finish merged PRs** — detects any local branches whose PRs have
+   been merged and runs the full `utpr finish` cleanup for each.
+2. **Prune remote-tracking refs** — removes stale refs for branches
+   deleted on the remote (`git fetch --prune`).
+3. **Delete stale local branches** — offers to delete local branches
+   with no corresponding remote tracking ref.
+4. **Remove dead remotes** — cleans up utpr-managed remotes that no
+   longer have any local branches pointing to them.
 
 ### Working with worktrees
 
