@@ -110,7 +110,7 @@ utpr <command> [options]
 | `utpr push [--edit=...]` | Push branch and create/update PR |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status; `utpr ci logs` streams failed-job output |
+| `utpr ci [<ref>]` | Show GitHub Actions status; `--wait` blocks until done; `utpr ci logs` streams failed-job output |
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -179,8 +179,14 @@ utpr ci
 utpr ci 42
 utpr ci @some-branch
 
-# Poll until all checks finish
+# Poll until all checks finish (live status display)
 utpr ci --watch
+
+# Wait for all checks, then exit 0 (pass) or 1 (fail) — useful in scripts
+utpr ci --wait
+
+# Exit 1 as soon as any check fails, without waiting for the rest
+utpr ci --wait failed
 
 # Open checks in the browser
 utpr ci --web

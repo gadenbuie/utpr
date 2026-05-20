@@ -45,6 +45,7 @@ var (
 	flagCIWeb    bool
 	flagCIWatch  bool
 	flagCIFailed bool
+	flagCIWait   string
 )
 
 var (
@@ -58,8 +59,10 @@ var (
 
 func init() {
 	ciCmd.Flags().BoolVarP(&flagCIWeb, "web", "w", false, "Open checks in the browser")
-	ciCmd.Flags().BoolVar(&flagCIWatch, "watch", false, "Poll until all checks complete")
+	ciCmd.Flags().BoolVar(&flagCIWatch, "watch", false, "Poll until all checks complete, with live status display")
 	ciCmd.Flags().BoolVar(&flagCIFailed, "failed", false, "Show only failed checks")
+	ciCmd.Flags().StringVar(&flagCIWait, "wait", "", `Wait for checks: "all" (all complete) or "failed" (stop on first failure); exits 0 on success, 1 on failure`)
+	ciCmd.Flags().Lookup("wait").NoOptDefVal = "all"
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
@@ -168,8 +171,15 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return openURL(fmt.Sprintf("https://github.com/%s/commit/%s/checks", ownerRepo, sha))
 	}
 
-	if flagCIWatch {
-		return watchCI(ownerRepo, sha)
+	if flagCIWatch || flagCIWait != "" {
+		if flagCIWait != "" && flagCIWait != "all" && flagCIWait != "failed" {
+			return ui.Dief(`--wait must be "all" or "failed"`)
+		}
+		mode := flagCIWait
+		if mode == "" {
+			mode = "all"
+		}
+		return waitCI(ownerRepo, sha, mode, flagCIWatch)
 	}
 
 	type ciStatus struct {
@@ -231,39 +241,92 @@ func countTerminalRows(output string, termWidth int) int {
 	return rows
 }
 
-func watchCI(ownerRepo, sha string) error {
-	var prevLines int
+func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
+	var prevLines int  // for fullDisplay mode
+	var lastMsg string // for compact mode
+
+	clearCompact := func() {
+		if lastMsg != "" {
+			fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len([]rune(ui.StripANSI(lastMsg)))))
+			lastMsg = ""
+		}
+	}
+
 	for {
 		checkRuns, err := gh.GetCheckRuns(ownerRepo, sha)
 		if err != nil {
+			clearCompact()
 			return ui.Dief("Could not fetch CI status: %v", err)
 		}
-		wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 
-		var buf strings.Builder
-		renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
-		output := buf.String()
-
-		if prevLines > 0 {
-			fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+		if len(checkRuns) == 0 {
+			time.Sleep(10 * time.Second)
+			continue
 		}
-		fmt.Fprint(os.Stderr, output)
-		prevLines = countTerminalRows(output, ui.GetTermWidth())
 
-		allDone := true
+		var running, passing, failing, skipped int
 		for _, r := range checkRuns {
-			if r.Status != "completed" {
-				allDone = false
-				break
+			switch {
+			case r.Status != "completed":
+				running++
+			case r.Conclusion == "success":
+				passing++
+			case isFailedConclusion(r.Conclusion):
+				failing++
+			default:
+				skipped++
 			}
 		}
-		if allDone || len(checkRuns) == 0 {
-			break
+
+		anyFailed := failing > 0
+		allDone := running == 0
+
+		if fullDisplay {
+			wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
+			var buf strings.Builder
+			renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
+			output := buf.String()
+			if prevLines > 0 {
+				fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+			}
+			fmt.Fprint(os.Stderr, output)
+			prevLines = countTerminalRows(output, ui.GetTermWidth())
+		} else {
+			var parts []string
+			if running > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(fmt.Sprintf("%d running", running)))
+			}
+			if passing > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(fmt.Sprintf("%d passing", passing)))
+			}
+			if failing > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("%d failing", failing)))
+			}
+			if skipped > 0 {
+				parts = append(parts, ui.StyleMuted.Render(fmt.Sprintf("%d skipped", skipped)))
+			}
+			msg := "Waiting for CI: " + strings.Join(parts, " · ")
+			clearCompact()
+			fmt.Fprint(os.Stderr, msg)
+			lastMsg = msg
 		}
 
-		time.Sleep(10 * time.Second)
+		shouldStop := allDone || (mode == "failed" && anyFailed)
+		if !shouldStop {
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		if !fullDisplay {
+			clearCompact()
+		}
+		if anyFailed {
+			ui.Error(checkRunSummary(checkRuns))
+			return fmt.Errorf("CI checks failed")
+		}
+		ui.Success(checkRunSummary(checkRuns))
+		return nil
 	}
-	return nil
 }
 
 // ciGroup holds a named group of check runs sharing a check suite.
