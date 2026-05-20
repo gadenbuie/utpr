@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -80,7 +81,12 @@ func init() {
 
 // Execute runs the root command.
 func Execute() error {
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil && strings.HasPrefix(err.Error(), "unknown command") {
+		ui.Error(err.Error())
+		fmt.Fprintf(os.Stderr, "Run 'utpr --help' for usage.\n")
+	}
+	return err
 }
 
 func checkPrerequisites() error {
