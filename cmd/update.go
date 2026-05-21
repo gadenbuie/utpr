@@ -94,7 +94,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Successf("Updated to %s.", latestTag)
-	ui.Info("Run 'utpr completion --help' to refresh your shell completions.")
+	if isMajorOrMinorBump(version, latestTag) {
+		ui.Info("Run 'utpr completion --help' to refresh your shell completions.")
+	}
 	return nil
 }
 
@@ -102,6 +104,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 // or a development build made after it (git-describe: "v0.2.2-2-gabcdef").
 func isCurrentOrNewer(current, latestTag string) bool {
 	return current == latestTag || strings.HasPrefix(current, latestTag+"-")
+}
+
+// isMajorOrMinorBump reports whether latestTag differs from current in the
+// major or minor version component. Returns true when versions can't be parsed
+// (e.g. "dev" builds) so the hint is shown in ambiguous cases.
+func isMajorOrMinorBump(current, latestTag string) bool {
+	parseMinor := func(v string) (major, minor string, ok bool) {
+		v = strings.TrimPrefix(v, "v")
+		parts := strings.SplitN(v, ".", 3)
+		if len(parts) < 2 {
+			return "", "", false
+		}
+		return parts[0], parts[1], true
+	}
+	curMaj, curMin, ok1 := parseMinor(current)
+	latMaj, latMin, ok2 := parseMinor(latestTag)
+	if !ok1 || !ok2 {
+		return true
+	}
+	return curMaj != latMaj || curMin != latMin
 }
 
 // getLatestRelease returns the latest release tag and the GitHub API URL for

@@ -1,6 +1,30 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestIsMajorOrMinorBump(t *testing.T) {
+	tests := []struct {
+		current, latest string
+		want            bool
+	}{
+		{"v0.2.2", "v0.2.3", false},
+		{"v0.2.2", "v0.3.0", true},
+		{"v0.2.2", "v1.0.0", true},
+		{"v1.0.0", "v1.0.1", false},
+		{"v1.0.0", "v1.1.0", true},
+		{"dev", "v0.3.0", true},
+		{"v0.2.2-2-gabcdef", "v0.2.3", false},
+		{"v0.2.2-2-gabcdef", "v0.3.0", true},
+	}
+	for _, tt := range tests {
+		got := isMajorOrMinorBump(tt.current, tt.latest)
+		if got != tt.want {
+			t.Errorf("isMajorOrMinorBump(%q, %q) = %v, want %v", tt.current, tt.latest, got, tt.want)
+		}
+	}
+}
 
 func TestReleaseAssetName(t *testing.T) {
 	tests := []struct {
