@@ -32,7 +32,7 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "utpr",
 		Short: "GitHub PR workflow CLI",
-		Long:  "A CLI for GitHub PR workflows, inspired by the usethis R package.",
+		Long:  "A CLI for GitHub PR workflows, inspired by the usethis R package.\n\nRun 'utpr completion --help' to set up shell completions.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},

@@ -94,6 +94,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Successf("Updated to %s.", latestTag)
+	ui.Info("Run 'utpr completion --help' to refresh your shell completions.")
 	return nil
 }
 
