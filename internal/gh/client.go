@@ -527,6 +527,141 @@ func ListIssueComments(ownerRepo string, number int) ([]Comment, error) {
 	return comments, nil
 }
 
+// ReviewComment holds information about a PR inline review comment.
+type ReviewComment struct {
+	ID     int    `json:"id"`
+	Path   string `json:"path"`
+	Body   string `json:"body"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	CreatedAt    string `json:"created_at"`
+	InReplyToID  int    `json:"in_reply_to_id"`
+	Line         *int   `json:"line"`          // null when the comment is outdated
+	OriginalLine int    `json:"original_line"` // always set
+	CommitID     string `json:"commit_id"`
+}
+
+// ListPRReviewComments returns all inline review comments on a PR (including resolved threads).
+func ListPRReviewComments(ownerRepo string, number int) ([]ReviewComment, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var comments []ReviewComment
+	err = client.Get(fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=100",
+		url.PathEscape(owner), url.PathEscape(repo), number), &comments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list review comments for PR #%d: %w", number, err)
+	}
+	return comments, nil
+}
+
+// ListUnresolvedPRReviewComments returns inline review comments from unresolved threads only.
+func ListUnresolvedPRReviewComments(ownerRepo string, number int) ([]ReviewComment, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := GraphQLClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GraphQL client: %w", err)
+	}
+
+	query := `query($owner: String!, $repo: String!, $number: Int!) {
+		repository(owner: $owner, name: $repo) {
+			pullRequest(number: $number) {
+				reviewThreads(first: 100) {
+					nodes {
+						isResolved
+						comments(first: 100) {
+							nodes {
+								databaseId
+								author { login }
+								body
+								createdAt
+								path
+								line
+								originalLine
+								commit { oid }
+								replyTo { databaseId }
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+	variables := map[string]interface{}{
+		"owner":  owner,
+		"repo":   repo,
+		"number": number,
+	}
+
+	var result struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewThreads struct {
+					Nodes []struct {
+						IsResolved bool `json:"isResolved"`
+						Comments   struct {
+							Nodes []struct {
+								DatabaseID   int    `json:"databaseId"`
+								Author       struct {
+									Login string `json:"login"`
+								} `json:"author"`
+								Body         string `json:"body"`
+								CreatedAt    string `json:"createdAt"`
+								Path         string `json:"path"`
+								Line         *int   `json:"line"`
+								OriginalLine int    `json:"originalLine"`
+								Commit       struct {
+									OID string `json:"oid"`
+								} `json:"commit"`
+								ReplyTo *struct {
+									DatabaseID int `json:"databaseId"`
+								} `json:"replyTo"`
+							} `json:"nodes"`
+						} `json:"comments"`
+					} `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+
+	if err := client.Do(query, variables, &result); err != nil {
+		return nil, fmt.Errorf("failed to fetch review threads for PR #%d: %w", number, err)
+	}
+
+	var comments []ReviewComment
+	for _, thread := range result.Repository.PullRequest.ReviewThreads.Nodes {
+		if thread.IsResolved {
+			continue
+		}
+		for _, c := range thread.Comments.Nodes {
+			rc := ReviewComment{
+				ID:           c.DatabaseID,
+				Path:         c.Path,
+				Body:         c.Body,
+				CreatedAt:    c.CreatedAt,
+				Line:         c.Line,
+				OriginalLine: c.OriginalLine,
+				CommitID:     c.Commit.OID,
+			}
+			rc.Author.Login = c.Author.Login
+			if c.ReplyTo != nil {
+				rc.InReplyToID = c.ReplyTo.DatabaseID
+			}
+			comments = append(comments, rc)
+		}
+	}
+	return comments, nil
+}
+
 // CheckRun represents a GitHub Checks API check run.
 type CheckRun struct {
 	ID          int64  `json:"id"`

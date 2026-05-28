@@ -20,10 +20,11 @@ var viewCmd = &cobra.Command{
 }
 
 var (
-	flagViewWeb     bool
-	flagViewSummary bool
-	flagViewIssue   string
-	flagViewState   string
+	flagViewWeb      bool
+	flagViewSummary  bool
+	flagViewIssue    string
+	flagViewState    string
+	flagViewComments string
 )
 
 func init() {
@@ -32,6 +33,8 @@ func init() {
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
 	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
+	viewCmd.Flags().StringVar(&flagViewComments, "comments", "regular", "Comment display mode: regular (default), reviews (unresolved review comments), all (all comments including resolved)")
+	viewCmd.Flags().Lookup("comments").NoOptDefVal = "reviews"
 }
 
 func runView(cmd *cobra.Command, args []string) error {
@@ -197,6 +200,12 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return openURL(fmt.Sprintf("https://github.com/%s/pull/%d", ownerRepo, prNumber))
 	}
 
+	switch flagViewComments {
+	case "regular", "reviews", "all":
+	default:
+		return ui.Dief("Invalid --comments value: '%s' (expected: regular, reviews, all)", flagViewComments)
+	}
+
 	pr, err := gh.GetPR(ownerRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch PR #%d.", prNumber)
@@ -210,7 +219,22 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	if err != nil {
 		return ui.Dief("Failed to fetch comments for PR #%d.", prNumber)
 	}
-	return renderPRWithComments(pr, comments)
+
+	var reviewComments []gh.ReviewComment
+	switch flagViewComments {
+	case "reviews":
+		reviewComments, err = gh.ListUnresolvedPRReviewComments(ownerRepo, prNumber)
+		if err != nil {
+			return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
+		}
+	case "all":
+		reviewComments, err = gh.ListPRReviewComments(ownerRepo, prNumber)
+		if err != nil {
+			return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
+		}
+	}
+
+	return renderPRWithComments(pr, comments, reviewComments)
 }
 
 // pickForView lists issues or PRs and lets the user pick one.
@@ -378,11 +402,14 @@ func renderPRSummary(pr *gh.PRInfo) error {
 	return nil
 }
 
-func renderPRWithComments(pr *gh.PRInfo, comments []gh.Comment) error {
+func renderPRWithComments(pr *gh.PRInfo, comments []gh.Comment, reviewComments []gh.ReviewComment) error {
 	if err := renderPRSummary(pr); err != nil {
 		return err
 	}
-	return renderComments(comments)
+	if err := renderComments(comments); err != nil {
+		return err
+	}
+	return renderReviewComments(reviewComments)
 }
 
 func renderComments(comments []gh.Comment) error {
@@ -398,6 +425,86 @@ func renderComments(comments []gh.Comment) error {
 			return err
 		}
 		fmt.Print(rendered)
+	}
+	return nil
+}
+
+func reviewCommentLocation(c gh.ReviewComment) string {
+	line := c.OriginalLine
+	if c.Line != nil {
+		line = *c.Line
+	}
+	return fmt.Sprintf("`%s:%d`", c.Path, line)
+}
+
+func reviewCommentAtDate(c gh.ReviewComment, date string) string {
+	if c.Line == nil && len(c.CommitID) >= 7 {
+		return fmt.Sprintf("at %s on %s", c.CommitID[:7], date)
+	}
+	return "on " + date
+}
+
+func renderReviewComments(comments []gh.ReviewComment) error {
+	if len(comments) == 0 {
+		return nil
+	}
+
+	type thread struct {
+		root    gh.ReviewComment
+		replies []gh.ReviewComment
+	}
+
+	var rootOrder []int
+	threads := map[int]*thread{}
+	for _, c := range comments {
+		if c.InReplyToID == 0 {
+			rootOrder = append(rootOrder, c.ID)
+			threads[c.ID] = &thread{root: c}
+		}
+	}
+	for _, c := range comments {
+		if c.InReplyToID != 0 {
+			if t, ok := threads[c.InReplyToID]; ok {
+				t.replies = append(t.replies, c)
+			}
+		}
+	}
+
+	for _, rootID := range rootOrder {
+		t := threads[rootID]
+
+		root := t.root
+		date := root.CreatedAt
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		md := fmt.Sprintf("---\n**@%s** reviewed %s %s:\n\n%s",
+			root.Author.Login, reviewCommentLocation(root), reviewCommentAtDate(root, date), root.Body)
+		rendered, err := ui.RenderMarkdown(md)
+		if err != nil {
+			return err
+		}
+		fmt.Print(rendered)
+
+		for _, reply := range t.replies {
+			date := reply.CreatedAt
+			if len(date) >= 10 {
+				date = date[:10]
+			}
+			md := fmt.Sprintf("↳ **@%s** replied on %s:\n\n%s",
+				reply.Author.Login, date, reply.Body)
+			rendered, err := ui.RenderMarkdown(md)
+			if err != nil {
+				return err
+			}
+			lines := strings.Split(rendered, "\n")
+			for i, line := range lines {
+				if line != "" {
+					lines[i] = "  " + line
+				}
+			}
+			fmt.Print(strings.Join(lines, "\n"))
+		}
 	}
 	return nil
 }
