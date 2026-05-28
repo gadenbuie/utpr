@@ -211,8 +211,13 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return ui.Dief("Failed to fetch PR #%d.", prNumber)
 	}
 
+	reviews, err := gh.ListPRReviews(ownerRepo, prNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch reviews for PR #%d.", prNumber)
+	}
+
 	if flagViewSummary {
-		return renderPRSummary(pr)
+		return renderPRSummary(pr, reviews)
 	}
 
 	comments, err := gh.ListIssueComments(ownerRepo, prNumber)
@@ -234,7 +239,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		}
 	}
 
-	return renderPRWithComments(pr, comments, reviewComments)
+	return renderPRWithComments(pr, reviews, comments, reviewComments)
 }
 
 // pickForView lists issues or PRs and lets the user pick one.
@@ -378,7 +383,7 @@ func renderIssueWithComments(issue *gh.IssueInfo, comments []gh.Comment) error {
 	return renderComments(comments)
 }
 
-func renderPRSummary(pr *gh.PRInfo) error {
+func renderPRSummary(pr *gh.PRInfo, reviews []gh.PRReview) error {
 	body := pr.Body
 	if body == "" {
 		body = "*No description provided.*"
@@ -391,9 +396,10 @@ func renderPRSummary(pr *gh.PRInfo) error {
 	if pr.Merged {
 		state = "merged"
 	}
-	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s\n\n%s",
+	reviewSection := formatReviewSection(reviews)
+	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s%s\n\n%s",
 		pr.Number, pr.Title, pr.User.Login, state,
-		formatLabelNames(labelNames), body)
+		formatLabelNames(labelNames), reviewSection, body)
 	rendered, err := ui.RenderMarkdown(md)
 	if err != nil {
 		return err
@@ -402,14 +408,87 @@ func renderPRSummary(pr *gh.PRInfo) error {
 	return nil
 }
 
-func renderPRWithComments(pr *gh.PRInfo, comments []gh.Comment, reviewComments []gh.ReviewComment) error {
-	if err := renderPRSummary(pr); err != nil {
+func renderPRWithComments(pr *gh.PRInfo, reviews []gh.PRReview, comments []gh.Comment, reviewComments []gh.ReviewComment) error {
+	if err := renderPRSummary(pr, reviews); err != nil {
 		return err
 	}
 	if err := renderComments(comments); err != nil {
 		return err
 	}
 	return renderReviewComments(reviewComments)
+}
+
+// formatReviewSection returns a markdown snippet for the PR's latest reviews per reviewer.
+// Returns "" if there are no actionable reviews.
+func formatReviewSection(reviews []gh.PRReview) string {
+	if len(reviews) == 0 {
+		return ""
+	}
+	type reviewEntry struct {
+		login       string
+		state       string
+		association string
+		date        string
+	}
+	order := []string{}
+	latest := map[string]reviewEntry{}
+	for _, r := range reviews {
+		if r.State != "APPROVED" && r.State != "CHANGES_REQUESTED" {
+			continue
+		}
+		login := r.User.Login
+		if _, seen := latest[login]; !seen {
+			order = append(order, login)
+		}
+		date := r.SubmittedAt
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		latest[login] = reviewEntry{
+			login:       login,
+			state:       r.State,
+			association: formatAssociation(r.AuthorAssociation),
+			date:        date,
+		}
+	}
+	if len(order) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, login := range order {
+		e := latest[login]
+		icon := "✓"
+		stateLabel := "approved"
+		if e.state == "CHANGES_REQUESTED" {
+			icon = "✗"
+			stateLabel = "changes requested"
+		}
+		assoc := ""
+		if e.association != "" {
+			assoc = " (" + e.association + ")"
+		}
+		lines = append(lines, fmt.Sprintf("- %s %s %s%s · %s", icon, login, stateLabel, assoc, e.date))
+	}
+	return "\n\n**Reviews**\n" + strings.Join(lines, "\n")
+}
+
+func formatAssociation(a string) string {
+	switch a {
+	case "OWNER":
+		return "Owner"
+	case "MEMBER":
+		return "Member"
+	case "COLLABORATOR":
+		return "Collaborator"
+	case "CONTRIBUTOR":
+		return "Contributor"
+	case "FIRST_TIME_CONTRIBUTOR":
+		return "First-time contributor"
+	case "FIRST_TIMER":
+		return "First-timer"
+	default:
+		return ""
+	}
 }
 
 func renderComments(comments []gh.Comment) error {

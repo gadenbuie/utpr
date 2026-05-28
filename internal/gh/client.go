@@ -497,6 +497,37 @@ func CreatePR(ownerRepo string, params CreatePRParams) (*PRInfo, error) {
 	return &pr, nil
 }
 
+// PRReview holds information about a PR review.
+type PRReview struct {
+	ID   int `json:"id"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Body              string `json:"body"`
+	State             string `json:"state"`              // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+	SubmittedAt       string `json:"submitted_at"`
+	AuthorAssociation string `json:"author_association"` // OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE
+}
+
+// ListPRReviews returns all reviews for a pull request.
+func ListPRReviews(ownerRepo string, number int) ([]PRReview, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var reviews []PRReview
+	err = client.Get(fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=100",
+		url.PathEscape(owner), url.PathEscape(repo), number), &reviews)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list reviews for PR #%d: %w", number, err)
+	}
+	return reviews, nil
+}
+
 // Comment holds information about an issue or PR comment.
 type Comment struct {
 	Author struct {
