@@ -166,9 +166,14 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		if !onDefault && flagViewState == "open" {
 			branch, err := git.GetCurrentBranch()
 			if err == nil {
-				pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
-				if err == nil && pr != nil {
-					prNumber = pr.Number
+				if prURL := git.GetBranchPRURL(branch); prURL != "" {
+					prNumber = prNumberFromURL(prURL)
+				}
+				if prNumber == 0 {
+					pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
+					if err == nil && pr != nil {
+						prNumber = pr.Number
+					}
 				}
 			}
 		}
@@ -289,6 +294,19 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		return 0, nil
 	}
 	return selected, nil
+}
+
+func prNumberFromURL(url string) int {
+	url = strings.TrimRight(url, "/")
+	idx := strings.LastIndex(url, "/")
+	if idx < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(url[idx+1:])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func addArticle(entity string) string {
