@@ -58,3 +58,10 @@ func SetBranchUpstream(branch, upstream string) error {
 	_, _, err := RunSilent("branch", "--set-upstream-to="+upstream, branch)
 	return err
 }
+
+// GetBranchMergeRef returns the upstream branch name (without refs/heads/) for a branch,
+// as stored in branch.<name>.merge. Returns empty string if not set.
+func GetBranchMergeRef(branch string) string {
+	ref := ConfigGet(fmt.Sprintf("branch.%s.merge", branch))
+	return strings.TrimPrefix(ref, "refs/heads/")
+}

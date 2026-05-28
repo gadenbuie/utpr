@@ -170,7 +170,11 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 					prNumber = prNumberFromURL(prURL)
 				}
 				if prNumber == 0 {
-					pr, err := gh.GetPRForBranch(ownerRepo, branch, "open")
+					lookup := branch
+					if ref := git.GetBranchMergeRef(branch); ref != "" && ref != branch {
+						lookup = ref
+					}
+					pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open")
 					if err == nil && pr != nil {
 						prNumber = pr.Number
 					}
