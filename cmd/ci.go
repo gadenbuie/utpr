@@ -17,6 +17,7 @@ import (
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var ciCmd = &cobra.Command{
@@ -242,20 +243,23 @@ func countTerminalRows(output string, termWidth int) int {
 }
 
 func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
-	var prevLines int  // for fullDisplay mode
-	var lastMsg string // for compact mode
+	isInteractive := term.IsTerminal(int(os.Stderr.Fd()))
+	var prevLines int      // for fullDisplay mode
+	var lastRendered string // for compact interactive: last full rendered msg (with ANSI)
+	var lastStatus string   // for compact non-interactive: last stripped status (without timestamp)
 
-	clearCompact := func() {
-		if lastMsg != "" {
-			fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len([]rune(ui.StripANSI(lastMsg)))))
-			lastMsg = ""
+	clearLine := func() {
+		if isInteractive && lastRendered != "" {
+			width := len([]rune(ui.StripANSI(lastRendered)))
+			fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", width))
+			lastRendered = ""
 		}
 	}
 
 	for {
 		checkRuns, err := gh.GetCheckRuns(ownerRepo, sha)
 		if err != nil {
-			clearCompact()
+			clearLine()
 			return ui.Dief("Could not fetch CI status: %v", err)
 		}
 
@@ -305,10 +309,21 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			if skipped > 0 {
 				parts = append(parts, ui.StyleMuted.Render(fmt.Sprintf("%d skipped", skipped)))
 			}
-			msg := "Waiting for CI: " + strings.Join(parts, " · ")
-			clearCompact()
-			fmt.Fprint(os.Stderr, msg)
-			lastMsg = msg
+			statusMsg := "Waiting for CI: " + strings.Join(parts, " · ")
+			ts := time.Now().Format("15:04:05")
+
+			if isInteractive {
+				msg := fmt.Sprintf("[%s] %s", ts, statusMsg)
+				clearLine()
+				fmt.Fprint(os.Stderr, msg)
+				lastRendered = msg
+			} else {
+				stripped := ui.StripANSI(statusMsg)
+				if stripped != lastStatus {
+					fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
+					lastStatus = stripped
+				}
+			}
 		}
 
 		shouldStop := allDone || (mode == "failed" && anyFailed)
@@ -317,9 +332,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			continue
 		}
 
-		if !fullDisplay {
-			clearCompact()
-		}
+		clearLine()
 		if anyFailed {
 			ui.Error(checkRunSummary(checkRuns))
 			return fmt.Errorf("CI checks failed")
