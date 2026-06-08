@@ -59,6 +59,9 @@ func init() {
 		if cmd == rootCmd {
 			return nil
 		}
+		if cmd.Name() == "completion" || (cmd.Parent() != nil && cmd.Parent().Name() == "completion") {
+			return nil
+		}
 		return checkPrerequisites()
 	}
 
