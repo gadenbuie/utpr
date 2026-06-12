@@ -561,10 +561,11 @@ func ListIssueComments(ownerRepo string, number int) ([]Comment, error) {
 
 // ReviewComment holds information about a PR inline review comment.
 type ReviewComment struct {
-	ID     int    `json:"id"`
-	Path   string `json:"path"`
-	Body   string `json:"body"`
-	Author struct {
+	ID       int    `json:"id"`
+	ThreadID int    `json:"thread_id"`
+	Path     string `json:"path"`
+	Body     string `json:"body"`
+	Author   struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	CreatedAt    string `json:"created_at"`

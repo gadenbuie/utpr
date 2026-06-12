@@ -572,7 +572,11 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		}
 		fmt.Print(header)
 		if showIDs {
-			fmt.Printf("%s<!-- comment_id:%d -->\n", renderedIndent(header), root.ID)
+			threadID := root.ThreadID
+			if threadID == 0 {
+				threadID = root.ID
+			}
+			fmt.Printf("%s<!-- thread_id:%d comment_id:%d -->\n", renderedIndent(header), threadID, root.ID)
 		}
 		body, err := ui.RenderMarkdown(root.Body)
 		if err != nil {
