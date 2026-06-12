@@ -4,6 +4,27 @@ import (
 	"testing"
 )
 
+func TestIsCurrentOrNewer(t *testing.T) {
+	tests := []struct {
+		current, latest string
+		want            bool
+	}{
+		{"v0.5.3", "v0.5.3", true},
+		{"v0.5.3", "v0.5.2", true},  // current is newer patch
+		{"v0.5.3", "v0.4.9", true},  // current is newer minor
+		{"v1.0.0", "v0.9.9", true},  // current is newer major
+		{"v0.5.3-2-gabcdef", "v0.5.3", true}, // dev build after latest
+		{"v0.5.2", "v0.5.3", false}, // current is older
+		{"dev", "v0.5.3", false},
+	}
+	for _, tt := range tests {
+		got := isCurrentOrNewer(tt.current, tt.latest)
+		if got != tt.want {
+			t.Errorf("isCurrentOrNewer(%q, %q) = %v, want %v", tt.current, tt.latest, got, tt.want)
+		}
+	}
+}
+
 func TestIsMajorOrMinorBump(t *testing.T) {
 	tests := []struct {
 		current, latest string

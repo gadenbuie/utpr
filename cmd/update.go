@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	goghapi "github.com/cli/go-gh/v2/pkg/api"
@@ -100,26 +101,56 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// isCurrentOrNewer reports whether the running version is the latest release
-// or a development build made after it (git-describe: "v0.2.2-2-gabcdef").
+// isCurrentOrNewer reports whether the running version is the latest release,
+// a development build made after it (git-describe: "v0.2.2-2-gabcdef"), or
+// a locally-built version that is already newer than the latest release.
 func isCurrentOrNewer(current, latestTag string) bool {
-	return current == latestTag || strings.HasPrefix(current, latestTag+"-")
+	if current == latestTag || strings.HasPrefix(current, latestTag+"-") {
+		return true
+	}
+	curMaj, curMin, curPat, ok1 := parseSemver(current)
+	latMaj, latMin, latPat, ok2 := parseSemver(latestTag)
+	if !ok1 || !ok2 {
+		return false
+	}
+	if curMaj != latMaj {
+		return curMaj > latMaj
+	}
+	if curMin != latMin {
+		return curMin > latMin
+	}
+	return curPat >= latPat
+}
+
+func parseSemver(v string) (major, minor, patch int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	// Strip git-describe suffix like "0.5.3-2-gabcdef".
+	if idx := strings.Index(v, "-"); idx != -1 {
+		v = v[:idx]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) != 3 {
+		return 0, 0, 0, false
+	}
+	var err error
+	if major, err = strconv.Atoi(parts[0]); err != nil {
+		return 0, 0, 0, false
+	}
+	if minor, err = strconv.Atoi(parts[1]); err != nil {
+		return 0, 0, 0, false
+	}
+	if patch, err = strconv.Atoi(parts[2]); err != nil {
+		return 0, 0, 0, false
+	}
+	return major, minor, patch, true
 }
 
 // isMajorOrMinorBump reports whether latestTag differs from current in the
 // major or minor version component. Returns true when versions can't be parsed
 // (e.g. "dev" builds) so the hint is shown in ambiguous cases.
 func isMajorOrMinorBump(current, latestTag string) bool {
-	parseMinor := func(v string) (major, minor string, ok bool) {
-		v = strings.TrimPrefix(v, "v")
-		parts := strings.SplitN(v, ".", 3)
-		if len(parts) < 2 {
-			return "", "", false
-		}
-		return parts[0], parts[1], true
-	}
-	curMaj, curMin, ok1 := parseMinor(current)
-	latMaj, latMin, ok2 := parseMinor(latestTag)
+	curMaj, curMin, _, ok1 := parseSemver(current)
+	latMaj, latMin, _, ok2 := parseSemver(latestTag)
 	if !ok1 || !ok2 {
 		return true
 	}
