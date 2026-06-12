@@ -33,7 +33,7 @@ func init() {
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
 	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
-	viewCmd.Flags().StringVar(&flagViewComments, "comments", "regular", "Comment display mode: regular (default), reviews (unresolved review comments), all (all comments including resolved)")
+	viewCmd.Flags().StringVar(&flagViewComments, "comments", "reviews", "Comment display mode: reviews (default, unresolved review comments), regular (issue comments only), all (all comments including resolved)")
 	viewCmd.Flags().Lookup("comments").NoOptDefVal = "reviews"
 }
 
