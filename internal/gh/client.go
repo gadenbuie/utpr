@@ -530,6 +530,7 @@ func ListPRReviews(ownerRepo string, number int) ([]PRReview, error) {
 
 // Comment holds information about an issue or PR comment.
 type Comment struct {
+	ID    int `json:"id"`
 	Author struct {
 		Login string `json:"login"`
 	} `json:"user"`

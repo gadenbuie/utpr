@@ -492,18 +492,25 @@ func formatAssociation(a string) string {
 }
 
 func renderComments(comments []gh.Comment) error {
+	showIDs := !ui.IsStdoutTTY()
 	for _, c := range comments {
 		date := c.CreatedAt
 		if len(date) >= 10 {
 			date = date[:10]
 		}
-		commentMD := fmt.Sprintf("---\n**@%s** commented on %s:\n\n%s",
-			c.Author.Login, date, c.Body)
-		rendered, err := ui.RenderMarkdown(commentMD)
+		header, err := ui.RenderMarkdown(fmt.Sprintf("---\n**@%s** commented on %s:", c.Author.Login, date))
 		if err != nil {
 			return err
 		}
-		fmt.Print(rendered)
+		fmt.Print(header)
+		if showIDs {
+			fmt.Printf("%s<!-- comment_id:%d -->\n", renderedIndent(header), c.ID)
+		}
+		body, err := ui.RenderMarkdown(c.Body)
+		if err != nil {
+			return err
+		}
+		fmt.Print(body)
 	}
 	return nil
 }
@@ -549,6 +556,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		}
 	}
 
+	showIDs := !ui.IsStdoutTTY()
 	for _, rootID := range rootOrder {
 		t := threads[rootID]
 
@@ -557,26 +565,45 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		if len(date) >= 10 {
 			date = date[:10]
 		}
-		md := fmt.Sprintf("---\n**@%s** reviewed %s %s:\n\n%s",
-			root.Author.Login, reviewCommentLocation(root), reviewCommentAtDate(root, date), root.Body)
-		rendered, err := ui.RenderMarkdown(md)
+		header, err := ui.RenderMarkdown(fmt.Sprintf("---\n**@%s** reviewed %s %s:",
+			root.Author.Login, reviewCommentLocation(root), reviewCommentAtDate(root, date)))
 		if err != nil {
 			return err
 		}
-		fmt.Print(rendered)
+		fmt.Print(header)
+		if showIDs {
+			fmt.Printf("%s<!-- comment_id:%d -->\n", renderedIndent(header), root.ID)
+		}
+		body, err := ui.RenderMarkdown(root.Body)
+		if err != nil {
+			return err
+		}
+		fmt.Print(body)
 
 		for _, reply := range t.replies {
 			date := reply.CreatedAt
 			if len(date) >= 10 {
 				date = date[:10]
 			}
-			md := fmt.Sprintf("↳ **@%s** replied on %s:\n\n%s",
-				reply.Author.Login, date, reply.Body)
-			rendered, err := ui.RenderMarkdown(md)
+			replyHeader, err := ui.RenderMarkdown(fmt.Sprintf("↳ **@%s** replied on %s:", reply.Author.Login, date))
 			if err != nil {
 				return err
 			}
-			lines := strings.Split(rendered, "\n")
+			lines := strings.Split(replyHeader, "\n")
+			for i, line := range lines {
+				if line != "" {
+					lines[i] = "  " + line
+				}
+			}
+			fmt.Print(strings.Join(lines, "\n"))
+			if showIDs {
+				fmt.Printf("%s<!-- comment_id:%d -->\n", "  "+renderedIndent(replyHeader), reply.ID)
+			}
+			replyBody, err := ui.RenderMarkdown(reply.Body)
+			if err != nil {
+				return err
+			}
+			lines = strings.Split(replyBody, "\n")
 			for i, line := range lines {
 				if line != "" {
 					lines[i] = "  " + line
@@ -586,4 +613,17 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		}
 	}
 	return nil
+}
+
+// renderedIndent returns the leading whitespace of the last non-empty line in
+// a glamour-rendered string, so HTML comment annotations can match the indent.
+func renderedIndent(rendered string) string {
+	lines := strings.Split(rendered, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if strings.TrimSpace(line) != "" {
+			return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		}
+	}
+	return ""
 }

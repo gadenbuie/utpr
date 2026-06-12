@@ -33,6 +33,11 @@ func getMarkdownRenderer() (*glamour.TermRenderer, error) {
 	return mdRenderer, mdRendererErr
 }
 
+// IsStdoutTTY reports whether stdout is an interactive terminal.
+func IsStdoutTTY() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
 // RenderMarkdown renders markdown text for terminal display using glamour.
 // It auto-detects dark/light terminal background and adapts to terminal width.
 func RenderMarkdown(content string) (string, error) {
