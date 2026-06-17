@@ -284,7 +284,10 @@ func bisectInteractiveLoop() (string, error) {
 		if err != nil || mark == "" {
 			ui.Warn("No selection made.")
 			confirmed, err := ui.Confirm("Abort the bisect?", false)
-			if confirmed || err != nil {
+			if err != nil {
+				return "", err
+			}
+			if confirmed {
 				_, _ = git.Run("bisect", "reset")
 				ui.Info("Bisect aborted.")
 				return "", fmt.Errorf("bisect aborted")
