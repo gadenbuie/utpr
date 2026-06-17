@@ -223,7 +223,10 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 	if existingBranch == "" {
 		suggested := issueToSlug(issueNumber, issue.Title)
 		existingBranch, err = ui.Input("Branch name:", suggested, "branch name")
-		if err != nil || existingBranch == "" {
+		if err != nil {
+			return "", err
+		}
+		if existingBranch == "" {
 			return "", ui.Die("Branch name required.")
 		}
 	}

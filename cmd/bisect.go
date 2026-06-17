@@ -90,7 +90,10 @@ func runBisect(cmd *cobra.Command, args []string) error {
 					return err
 				}
 			} else if !flagBisectNoVerify {
-				confirmed, _ := ui.Confirm("Run a quick check that the test fails on current commit first?", true)
+				confirmed, err := ui.Confirm("Run a quick check that the test fails on current commit first?", true)
+				if err != nil {
+					return err
+				}
 				if confirmed {
 					if err := bisectVerifyScript(flagBisectRun); err != nil {
 						return err
@@ -164,7 +167,10 @@ func bisectOfferResume() (string, error) {
 		ui.Info("Resuming bisect...")
 		return "resume", nil
 	case strings.HasPrefix(choice, "Abort"):
-		confirmed, _ := ui.Confirm("This will reset the bisect state. Continue?", true)
+		confirmed, err := ui.Confirm("This will reset the bisect state. Continue?", true)
+		if err != nil {
+			return "", err
+		}
 		if confirmed {
 			_, _ = git.Run("bisect", "reset")
 			ui.Success("Bisect aborted.")
@@ -424,7 +430,10 @@ func bisectCleanupPrompt(badSHA, prURL string) error {
 	case strings.HasPrefix(choice, "Open"):
 		_ = openURL(prURL)
 		ui.Success("Opened PR in browser.")
-		confirmed, _ := ui.Confirm("Reset the bisect now?", true)
+		confirmed, err := ui.Confirm("Reset the bisect now?", true)
+		if err != nil {
+			return err
+		}
 		if confirmed {
 			_, _ = git.Run("bisect", "reset")
 			ui.Success("Bisect reset.")
