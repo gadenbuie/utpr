@@ -281,7 +281,10 @@ func bisectInteractiveLoop() (string, error) {
 		bisectShowCurrentCommit()
 
 		mark, err := ui.Choose("Is this commit good or bad?", []string{"bad", "good", "skip"})
-		if err != nil || mark == "" {
+		if err != nil {
+			return "", err
+		}
+		if mark == "" {
 			ui.Warn("No selection made.")
 			confirmed, err := ui.Confirm("Abort the bisect?", false)
 			if err != nil {

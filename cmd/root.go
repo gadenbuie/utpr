@@ -88,7 +88,7 @@ func Execute() error {
 	err := rootCmd.Execute()
 	if errors.Is(err, ui.ErrCancelled) {
 		ui.Info("Cancelled.")
-		return nil
+		return ui.ErrCancelled
 	}
 	if err != nil && strings.HasPrefix(err.Error(), "unknown command") {
 		ui.Error(err.Error())
