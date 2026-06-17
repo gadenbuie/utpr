@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -85,6 +86,10 @@ func init() {
 // Execute runs the root command.
 func Execute() error {
 	err := rootCmd.Execute()
+	if errors.Is(err, ui.ErrCancelled) {
+		ui.Info("Cancelled.")
+		return nil
+	}
 	if err != nil && strings.HasPrefix(err.Error(), "unknown command") {
 		ui.Error(err.Error())
 		fmt.Fprintf(os.Stderr, "Run 'utpr --help' for usage.\n")

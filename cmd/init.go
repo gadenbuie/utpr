@@ -216,7 +216,9 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 
 	ui.Infof("Issue #%d: %s", issueNumber, issue.Title)
 
-	previewIssue(issue)
+	if err := previewIssue(issue); err != nil {
+		return "", err
+	}
 
 	if existingBranch == "" {
 		suggested := issueToSlug(issueNumber, issue.Title)
@@ -238,7 +240,10 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 		if isAssigned {
 			ui.Infof("You are already assigned to issue #%d.", issueNumber)
 		} else {
-			confirmed, _ := ui.Confirm(fmt.Sprintf("Assign yourself to issue #%d?", issueNumber), true)
+			confirmed, err := ui.Confirm(fmt.Sprintf("Assign yourself to issue #%d?", issueNumber), true)
+			if err != nil {
+				return "", err
+			}
 			if confirmed {
 				if err := gh.AddIssueAssignee(ownerRepo, issueNumber, login); err != nil {
 					ui.Warnf("Could not assign you to issue #%d.", issueNumber)
@@ -252,10 +257,13 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 	return existingBranch, nil
 }
 
-func previewIssue(issue *gh.IssueInfo) {
-	confirmed, _ := ui.Confirm(fmt.Sprintf("Preview issue #%d?", issue.Number), false)
+func previewIssue(issue *gh.IssueInfo) error {
+	confirmed, err := ui.Confirm(fmt.Sprintf("Preview issue #%d?", issue.Number), false)
+	if err != nil {
+		return err
+	}
 	if !confirmed {
-		return
+		return nil
 	}
 
 	createdDate := issue.CreatedAt
@@ -273,10 +281,11 @@ func previewIssue(issue *gh.IssueInfo) {
 	rendered, err := ui.RenderMarkdown(md)
 	if err != nil {
 		fmt.Fprint(os.Stderr, md)
-		return
+		return nil
 	}
 
 	_ = ui.Pager(rendered)
+	return nil
 }
 
 func issueToSlug(number int, title string) string {

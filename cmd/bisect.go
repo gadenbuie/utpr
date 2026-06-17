@@ -277,8 +277,8 @@ func bisectInteractiveLoop() (string, error) {
 		mark, err := ui.Choose("Is this commit good or bad?", []string{"bad", "good", "skip"})
 		if err != nil || mark == "" {
 			ui.Warn("No selection made.")
-			confirmed, _ := ui.Confirm("Abort the bisect?", false)
-			if confirmed {
+			confirmed, err := ui.Confirm("Abort the bisect?", false)
+			if confirmed || err != nil {
 				_, _ = git.Run("bisect", "reset")
 				ui.Info("Bisect aborted.")
 				return "", fmt.Errorf("bisect aborted")
