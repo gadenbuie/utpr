@@ -61,7 +61,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if !gh.IsReachable() {
 			ui.Warn("No network connection. Enter a branch name to create.")
 			branch, err = ui.Input("Branch name:", "", "branch name")
-			if err != nil || branch == "" {
+			if err != nil {
+				return err
+			}
+			if branch == "" {
 				return ui.Die("Branch name required.")
 			}
 		} else {

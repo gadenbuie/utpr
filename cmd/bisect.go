@@ -232,15 +232,21 @@ func bisectPickGoodCommit() (string, error) {
 	opts = append(opts, huh.NewOption(dateDisplay, bisectRefDate))
 
 	selected, err := ui.ChooseWithOptions("Select the last known good commit:", opts)
-	if err != nil || selected == "" {
-		return "", fmt.Errorf("cancelled")
+	if err != nil {
+		return "", err
+	}
+	if selected == "" {
+		return "", ui.ErrCancelled
 	}
 
 	if selected == bisectRefDate {
 		for {
 			dateInput, err := ui.Input("Enter a date (e.g. '2 weeks ago', '2024-01-15'):", "", "2 weeks ago")
-			if err != nil || dateInput == "" {
-				return "", fmt.Errorf("cancelled")
+			if err != nil {
+				return "", err
+			}
+			if dateInput == "" {
+				return "", ui.ErrCancelled
 			}
 			ref, err := git.Run("rev-list", "-1", "--before="+dateInput, "HEAD")
 			if err == nil && ref != "" {

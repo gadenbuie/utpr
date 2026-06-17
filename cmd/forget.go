@@ -130,7 +130,10 @@ func removeWorktree(branch string) error {
 
 	ui.Infof("Branch '%s' has a worktree at: %s", branch, wtPath)
 	confirmed, err := ui.Confirm("Remove worktree?", true)
-	if err != nil || !confirmed {
+	if err != nil {
+		return err
+	}
+	if !confirmed {
 		return nil
 	}
 
