@@ -182,10 +182,13 @@ func detect() (*Config, error) {
 	// Side effect: offer to add upstream remote for forks without one
 	if ghRepo != nil && ghRepo.Fork && !hasUpstream {
 		if ghRepo.Parent.FullName != "" {
-			confirmed, _ := ui.Confirm(
+			confirmed, err := ui.Confirm(
 				fmt.Sprintf("Add 'upstream' remote for '%s'?", ghRepo.Parent.FullName),
 				true,
 			)
+			if err != nil {
+				return nil, err
+			}
 			if confirmed {
 				_, addErr := git.Run("remote", "add", "upstream",
 					fmt.Sprintf("https://github.com/%s.git", ghRepo.Parent.FullName))
