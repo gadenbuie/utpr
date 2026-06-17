@@ -159,7 +159,7 @@ func bisectOfferResume() (string, error) {
 		"Cancel",
 	})
 	if err != nil {
-		return "cancel", nil
+		return "", err
 	}
 
 	switch {
@@ -420,7 +420,7 @@ func bisectCleanupPrompt(badSHA, prURL string) error {
 	fmt.Fprintln(os.Stderr)
 	choice, err := ui.Choose("What would you like to do?", options)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	switch {
