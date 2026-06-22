@@ -80,6 +80,7 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(ciCmd)
 	rootCmd.AddCommand(cleanCmd)
+	rootCmd.AddCommand(prMergeCmd)
 
 }
 
