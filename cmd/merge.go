@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
@@ -50,6 +51,15 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die("Already on the default branch. Switch to a PR branch first.")
 	}
 
+	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
+	if err != nil {
+		return ui.Die(err.Error())
+	}
+	sourceRepo, err := remote.ParseRepoSpec(sourceURL)
+	if err != nil {
+		return ui.Die(err.Error())
+	}
+
 	if err := challengeUncommittedChanges(); err != nil {
 		return err
 	}
@@ -57,10 +67,27 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pr := ghGetPRForCurrentBranch()
-	if pr == nil {
-		branch, _ := git.GetCurrentBranch()
-		return ui.Dief("No PR found for branch '%s'.", branch)
+	currentBranch, err := git.GetCurrentBranch()
+	if err != nil {
+		return ui.Die("Could not determine current branch.")
+	}
+
+	// Resolve PR number: stored URL first (handles fork PRs with renamed local
+	// branches), then tracking-branch name fallback (handles same-repo renames).
+	var prNumber int
+	if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
+		prNumber = n
+	} else {
+		found, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "open")
+		if prErr != nil || found == nil {
+			return ui.Dief("No open PR found for branch '%s'.", currentBranch)
+		}
+		prNumber = found.Number
+	}
+
+	pr, err := gh.GetPR(sourceRepo, prNumber)
+	if err != nil {
+		return ui.Dief("Failed to fetch PR #%d details.", prNumber)
 	}
 	if pr.State != "open" {
 		return ui.Dief("PR #%d is not open (state: %s). Use 'utpr finish' to clean up.", pr.Number, pr.State)
@@ -87,16 +114,7 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
-	if err != nil {
-		return ui.Die(err.Error())
-	}
-	sourceRepo, err := remote.ParseRepoSpec(sourceURL)
-	if err != nil {
-		return ui.Die(err.Error())
-	}
-
-	ghCmd := exec.Command("gh", "pr", "merge", fmt.Sprintf("%d", pr.Number), strategyFlag)
+	ghCmd := exec.Command("gh", "pr", "merge", "-R", sourceRepo, fmt.Sprintf("%d", pr.Number), strategyFlag)
 	ghCmd.Stdin = os.Stdin
 	ghCmd.Stdout = os.Stdout
 	ghCmd.Stderr = os.Stderr
