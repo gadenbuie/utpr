@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
@@ -13,10 +14,10 @@ import (
 )
 
 var prMergeCmd = &cobra.Command{
-	Use:   "merge",
-	Short: "Merge the current PR and clean up",
-	Long:  "Merge the current branch's pull request on GitHub, then switch to the default branch, pull, and clean up the local branch.\n\nDefaults to squash merge if no strategy flag is given.",
-	Args:  cobra.NoArgs,
+	Use:   "merge [pr-number-or-branch]",
+	Short: "Merge a PR and clean up",
+	Long:  "Merge a pull request on GitHub, then switch to the default branch, pull, and clean up the local branch.\n\nAccepts a PR number or branch name. When called from the default branch with no argument, offers a picker of open PRs. When called from a PR branch, merges that branch's PR.\n\nDefaults to squash merge if no strategy flag is given.",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runPRMerge,
 }
 
@@ -46,11 +47,6 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
-	if onDefault {
-		return ui.Die("Already on the default branch. Switch to a PR branch first.")
-	}
-
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
 		return ui.Die(err.Error())
@@ -60,29 +56,46 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	if err := challengeUncommittedChanges(); err != nil {
-		return err
-	}
-	if err := challengeUnpushedCommits(); err != nil {
-		return err
-	}
+	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 
-	currentBranch, err := git.GetCurrentBranch()
-	if err != nil {
-		return ui.Die("Could not determine current branch.")
-	}
-
-	// Resolve PR number: stored URL first (handles fork PRs with renamed local
-	// branches), then tracking-branch name fallback (handles same-repo renames).
 	var prNumber int
-	if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
+
+	if len(args) > 0 {
+		prNumber, err = resolveMergeArg(args[0], sourceRepo)
+		if err != nil {
+			return err
+		}
+	} else if onDefault {
+		n, err := pickOpenPRForMerge(sourceRepo)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
 		prNumber = n
 	} else {
-		found, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "open")
-		if prErr != nil || found == nil {
-			return ui.Dief("No open PR found for branch '%s'.", currentBranch)
+		if err := challengeUncommittedChanges(); err != nil {
+			return err
 		}
-		prNumber = found.Number
+		if err := challengeUnpushedCommits(); err != nil {
+			return err
+		}
+
+		currentBranch, branchErr := git.GetCurrentBranch()
+		if branchErr != nil {
+			return ui.Die("Could not determine current branch.")
+		}
+
+		if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
+			prNumber = n
+		} else {
+			found, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "open")
+			if prErr != nil || found == nil {
+				return ui.Dief("No open PR found for branch '%s'.", currentBranch)
+			}
+			prNumber = found.Number
+		}
 	}
 
 	pr, err := gh.GetPR(sourceRepo, prNumber)
@@ -122,12 +135,60 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die("Failed to merge PR. See output above for details.")
 	}
 
-	if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
-		return err
+	if !onDefault {
+		if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
+			return err
+		}
 	}
 	if err := pullDefaultBranch(cfg); err != nil {
 		return err
 	}
 
 	return finishOnePR(cfg, sourceRepo, pr.Number)
+}
+
+// resolveMergeArg interprets the argument as a PR number or branch name and
+// returns the corresponding PR number.
+func resolveMergeArg(arg, sourceRepo string) (int, error) {
+	if n, err := strconv.Atoi(arg); err == nil {
+		return n, nil
+	}
+	pr, err := gh.GetPRForBranch(sourceRepo, arg, "open")
+	if err != nil || pr == nil {
+		return 0, ui.Dief("No open PR found for branch '%s'.", arg)
+	}
+	return pr.Number, nil
+}
+
+// pickOpenPRForMerge shows a picker of open PRs and returns the selected number.
+// Returns 0 if the user cancels.
+func pickOpenPRForMerge(sourceRepo string) (int, error) {
+	prs, err := ui.SpinWithResult("Getting open PRs...", func() ([]gh.PRInfo, error) {
+		return gh.ListPRs(sourceRepo, "open")
+	})
+	if err != nil {
+		return 0, ui.Die("Failed to list open PRs.")
+	}
+	if len(prs) == 0 {
+		return 0, ui.Die("No open PRs found.")
+	}
+
+	currentUser, _ := gh.GetLogin()
+	var items []ui.PRPickerItem
+	for _, pr := range prs {
+		items = append(items, ui.PRPickerItem{
+			Number:      pr.Number,
+			Title:       pr.Title,
+			Author:      pr.User.Login,
+			IsHighlight: currentUser != "" && pr.User.Login == currentUser,
+		})
+	}
+
+	opts := ui.FormatPRPickerOptions(items, ui.PickerDefault)
+	selected, err := ui.ChooseWithOptions("Select a PR to merge:", opts)
+	if err != nil {
+		ui.Info("Cancelled.")
+		return 0, nil
+	}
+	return selected, nil
 }
