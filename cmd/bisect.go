@@ -387,7 +387,11 @@ func bisectShowResult(sha string) string {
 }
 
 func bisectFindPR(sha string) string {
-	cfg := remote.Require()
+	cfg, err := remote.Detect()
+	if err != nil {
+		ui.Info("No associated PR found for this commit.")
+		return ""
+	}
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {
 		ui.Info("No associated PR found for this commit.")
