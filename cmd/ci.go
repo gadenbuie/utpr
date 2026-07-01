@@ -119,7 +119,7 @@ func looksLikeGitRef(arg string) bool {
 // local git ref (e.g. HEAD~2 or a commit SHA), resolves it locally, falling
 // back to a remote branch lookup if that fails. Otherwise uses the local
 // HEAD SHA.
-func resolveCITarget(cfg *remote.Config, args []string) (ciTarget, error) {
+func resolveCITarget(cfg *remote.Config, args []string, pick bool) (ciTarget, error) {
 	sourceURL, runErr := git.Run("remote", "get-url", cfg.SourceRemote)
 	if runErr != nil {
 		return ciTarget{}, ui.Dief("Could not determine remote URL for '%s'.", cfg.SourceRemote)
@@ -199,7 +199,9 @@ func resolveCITarget(cfg *remote.Config, args []string) (ciTarget, error) {
 	}
 
 	if sha != remoteSHA {
-		ui.Info("Showing CI for the last pushed commit (HEAD has unpushed changes).")
+		if !pick {
+			ui.Info("Showing CI for the last pushed commit (HEAD has unpushed changes).")
+		}
 		sha = remoteSHA
 	}
 
@@ -216,7 +218,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	target, err := resolveCITarget(cfg, args)
+	target, err := resolveCITarget(cfg, args, flagCIPick)
 	if err != nil {
 		return err
 	}
@@ -339,17 +341,22 @@ func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, err
 // first. Returns (nil, nil) if the user cancels.
 func pickWorkflowRun(runs []gh.WorkflowRun) (*gh.WorkflowRun, error) {
 	var opts []huh.Option[int]
-	maxNameLen := 0
-	for _, r := range runs {
+	maxNameLen, maxAgoLen := 0, 0
+	agos := make([]string, len(runs))
+	for i, r := range runs {
 		if l := len([]rune(r.Name)); l > maxNameLen {
 			maxNameLen = l
+		}
+		agos[i] = formatRelativeTime(r.CreatedAt)
+		if l := len([]rune(agos[i])); l > maxAgoLen {
+			maxAgoLen = l
 		}
 	}
 	for i, r := range runs {
 		label := fmt.Sprintf("%s  %s  %s  #%d",
 			statusIcon(r.Status, r.Conclusion),
 			ui.PadRight(r.Name, maxNameLen),
-			ui.StyleMuted.Render(formatRelativeTime(r.CreatedAt)),
+			ui.StyleMuted.Render(ui.PadRight(agos[i], maxAgoLen)),
 			r.RunNumber)
 		opts = append(opts, huh.NewOption(label, i))
 	}
@@ -799,7 +806,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	target, err := resolveCITarget(cfg, args)
+	target, err := resolveCITarget(cfg, args, flagCILogsPick)
 	if err != nil {
 		return err
 	}
