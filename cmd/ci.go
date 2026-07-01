@@ -372,13 +372,39 @@ func pickWorkflowRun(runs []gh.WorkflowRun) (*gh.WorkflowRun, error) {
 	return &runs[choice], nil
 }
 
-// formatRelativeTime formats an RFC3339 timestamp as a short "time ago" string.
+// formatRelativeTime formats an RFC3339 timestamp as a short "time ago" string,
+// rounded to the two largest applicable units (e.g. "2d 3h ago", "5m 12s ago").
+// Once the timestamp is 7 or more days old, it shows an absolute timestamp instead.
 func formatRelativeTime(iso string) string {
 	t, err := time.Parse(time.RFC3339, iso)
 	if err != nil {
 		return ""
 	}
-	return ciFormatDuration(time.Since(t)) + " ago"
+	return formatRelativeTimeAt(t, time.Now())
+}
+
+// formatRelativeTimeAt formats t relative to now, per formatRelativeTime's rules.
+func formatRelativeTimeAt(t, now time.Time) string {
+	d := now.Sub(t).Round(time.Second)
+	if d >= 7*24*time.Hour {
+		return t.Local().Format("2006-01-02 15:04")
+	}
+
+	days := int(d / (24 * time.Hour))
+	hours := int(d/time.Hour) % 24
+	minutes := int(d/time.Minute) % 60
+	seconds := int(d/time.Second) % 60
+
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh ago", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm ago", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm %ds ago", minutes, seconds)
+	default:
+		return fmt.Sprintf("%ds ago", seconds)
+	}
 }
 
 // countTerminalRows returns the number of terminal rows that output will

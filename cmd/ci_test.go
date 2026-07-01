@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLooksLikeGitRef(t *testing.T) {
 	tests := []struct {
@@ -21,5 +24,43 @@ func TestLooksLikeGitRef(t *testing.T) {
 		if got := looksLikeGitRef(tt.arg); got != tt.want {
 			t.Errorf("looksLikeGitRef(%q) = %v, want %v", tt.arg, got, tt.want)
 		}
+	}
+}
+
+func TestFormatRelativeTimeAt(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		ago  time.Duration
+		want string
+	}{
+		{"seconds only", 5 * time.Second, "5s ago"},
+		{"minutes and seconds", 2*time.Minute + 12*time.Second, "2m 12s ago"},
+		{"exact minute", 3 * time.Minute, "3m 0s ago"},
+		{"hours and minutes", 4*time.Hour + 30*time.Minute, "4h 30m ago"},
+		{"exact hour", 1 * time.Hour, "1h 0m ago"},
+		{"days and hours", 2*24*time.Hour + 3*time.Hour, "2d 3h ago"},
+		{"just under 7 days", 6*24*time.Hour + 23*time.Hour, "6d 23h ago"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatRelativeTimeAt(now.Add(-tt.ago), now)
+			if got != tt.want {
+				t.Errorf("formatRelativeTimeAt(now-%v) = %q, want %q", tt.ago, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatRelativeTimeAt_AbsoluteTimestampAfter7Days(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	then := now.Add(-7 * 24 * time.Hour)
+
+	got := formatRelativeTimeAt(then, now)
+	want := then.Local().Format("2006-01-02 15:04")
+	if got != want {
+		t.Errorf("formatRelativeTimeAt(now-7d) = %q, want %q", got, want)
 	}
 }
