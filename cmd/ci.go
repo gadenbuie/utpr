@@ -37,7 +37,7 @@ var ciCmd = &cobra.Command{
 }
 
 var ciLogsCmd = &cobra.Command{
-	Use:   "logs [#pr | @branch | number | branch]",
+	Use:   "logs [#pr | @branch | number | branch | ref]",
 	Short: "Show logs for failed CI jobs",
 	Long:  "Show the last N lines of logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.",
 	Args:  cobra.MaximumNArgs(1),
@@ -66,6 +66,7 @@ var (
 	flagCILogsAll        bool
 	flagCILogsFailed     bool
 	flagCILogsJob        string
+	flagCILogsPick       bool
 )
 
 func init() {
@@ -82,6 +83,7 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAll, "all", false, "Show logs for all jobs, not just failed")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsFailed, "failed", false, "Show logs for all failed jobs without prompting")
 	ciLogsCmd.Flags().StringVar(&flagCILogsJob, "job", "", "Show logs for a specific job by name (substring match)")
+	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 
 	ciCmd.AddCommand(ciLogsCmd)
 }
@@ -776,6 +778,17 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	ownerRepo, sha := target.ownerRepo, target.sha
+
+	if flagCILogsPick {
+		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
+		if pickErr != nil {
+			return pickErr
+		}
+		if picked == nil {
+			return nil // cancelled, or no runs found (message already printed)
+		}
+		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
+	}
 
 	runs, err := ui.SpinWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
 		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
