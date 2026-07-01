@@ -852,6 +852,28 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 	return all, nil
 }
 
+// ListWorkflowRunsForBranch returns the most recent workflow runs for a branch,
+// newest first, up to limit. Fetches a single page (no pagination).
+func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var response struct {
+		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?branch=%s&per_page=%d",
+		url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(branch), limit)
+	if err := client.Get(path, &response); err != nil {
+		return nil, fmt.Errorf("failed to get workflow runs for branch %s: %w", branch, err)
+	}
+	return response.WorkflowRuns, nil
+}
+
 // ListWorkflowRunJobs returns the jobs for a workflow run, following pagination.
 func ListWorkflowRunJobs(ownerRepo string, runID int64) ([]WorkflowJob, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)

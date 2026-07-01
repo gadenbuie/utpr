@@ -21,15 +21,17 @@ import (
 )
 
 var ciCmd = &cobra.Command{
-	Use:   "ci [#pr | @branch | number | branch]",
+	Use:   "ci [#pr | @branch | number | branch | ref]",
 	Short: "View CI check status",
-	Long: `Show CI check run status for the current branch or a specific PR or branch.
+	Long: `Show CI check run status for the current branch or a specific PR, branch, or ref.
 
   utpr ci           current branch
   utpr ci 123       PR #123
   utpr ci #123      PR #123 (explicit)
   utpr ci main      branch 'main'
-  utpr ci @main     branch 'main' (explicit)`,
+  utpr ci @main     branch 'main' (explicit)
+  utpr ci HEAD~2    2 commits back from HEAD
+  utpr ci abc123    commit ref (local SHA)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCI,
 }
@@ -47,7 +49,15 @@ var (
 	flagCIWatch  bool
 	flagCIFailed bool
 	flagCIWait   string
+	flagCIPick   bool
 )
+
+// pickRunsLimit is the number of runs fetched for --pick.
+const pickRunsLimit = 20
+
+// autoPickRunsLimit is the number of runs fetched for the automatic
+// "no checks found" fallback picker.
+const autoPickRunsLimit = 10
 
 var (
 	flagCILogsWeb        bool
@@ -64,6 +74,7 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIFailed, "failed", false, "Show only failed checks")
 	ciCmd.Flags().StringVar(&flagCIWait, "wait", "", `Wait for checks: "all" (all complete) or "failed" (stop on first failure); exits 0 on success, 1 on failure`)
 	ciCmd.Flags().Lookup("wait").NoOptDefVal = "all"
+	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
@@ -75,75 +86,114 @@ func init() {
 	ciCmd.AddCommand(ciLogsCmd)
 }
 
-// resolveCISHA returns ownerRepo, the HEAD commit SHA, and the PR URL (empty
-// if not from a PR number). If args[0] is a PR number, uses that PR's head SHA.
-// Otherwise uses the local HEAD SHA.
-func resolveCISHA(cfg *remote.Config, args []string) (ownerRepo, sha, prURL string, err error) {
+// ciTarget describes a resolved CI target: the commit to show checks for,
+// and the owner/repo + branch to use when listing runs to pick from.
+type ciTarget struct {
+	ownerRepo     string
+	sha           string
+	prURL         string
+	pickOwnerRepo string
+	pickBranch    string
+}
+
+// gitRefRe matches bare SHA-like refs (short or full commit hashes). 4 is
+// git's minimum unambiguous abbreviation length.
+var gitRefRe = regexp.MustCompile(`^[0-9a-fA-F]{4,40}$`)
+
+// looksLikeGitRef reports whether arg looks like a local git ref (a commit
+// SHA, or a relative ref like HEAD~2 or HEAD^) rather than a branch name.
+func looksLikeGitRef(arg string) bool {
+	if gitRefRe.MatchString(arg) {
+		return true
+	}
+	if arg == "HEAD" || strings.HasPrefix(arg, "HEAD~") || strings.HasPrefix(arg, "HEAD^") {
+		return true
+	}
+	return strings.ContainsAny(arg, "~^")
+}
+
+// resolveCITarget returns the CI target for the current branch or args[0].
+// If args[0] is a PR number, uses that PR's head SHA. If it looks like a
+// local git ref (e.g. HEAD~2 or a commit SHA), resolves it locally, falling
+// back to a remote branch lookup if that fails. Otherwise uses the local
+// HEAD SHA.
+func resolveCITarget(cfg *remote.Config, args []string) (ciTarget, error) {
 	sourceURL, runErr := git.Run("remote", "get-url", cfg.SourceRemote)
 	if runErr != nil {
-		return "", "", "", ui.Dief("Could not determine remote URL for '%s'.", cfg.SourceRemote)
+		return ciTarget{}, ui.Dief("Could not determine remote URL for '%s'.", cfg.SourceRemote)
 	}
-	ownerRepo, err = remote.ParseRepoSpec(sourceURL)
+	ownerRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {
-		return "", "", "", ui.Dief("Could not parse repository from remote URL: %s", sourceURL)
+		return ciTarget{}, ui.Dief("Could not parse repository from remote URL: %s", sourceURL)
 	}
 
 	if len(args) > 0 {
 		arg := args[0]
 
-		// #123 → explicit PR number
-		// @main → explicit branch name
-		// 123   → PR number (numeric)
-		// main  → branch name (non-numeric string)
+		// #123    → explicit PR number
+		// @main   → explicit branch name
+		// 123     → PR number (numeric)
+		// HEAD~2  → local git ref
+		// abc123  → local git ref (SHA), falling back to branch name
+		// main    → branch name
 		switch {
 		case strings.HasPrefix(arg, "#"):
 			n, convErr := strconv.Atoi(arg[1:])
 			if convErr != nil {
-				return "", "", "", ui.Dief("Invalid PR number: %s", arg)
+				return ciTarget{}, ui.Dief("Invalid PR number: %s", arg)
 			}
 			pr, prErr := gh.GetPR(ownerRepo, n)
 			if prErr != nil {
-				return "", "", "", ui.Dief("Could not fetch PR #%d.", n)
+				return ciTarget{}, ui.Dief("Could not fetch PR #%d.", n)
 			}
-			return ownerRepo, pr.Head.SHA, pr.HTMLURL, nil
+			return ciTarget{ownerRepo, pr.Head.SHA, pr.HTMLURL, pr.Head.Repo.FullName, pr.Head.Ref}, nil
 
 		case strings.HasPrefix(arg, "@"):
 			branch := arg[1:]
 			sha, shaErr := gh.GetBranchSHA(ownerRepo, branch)
 			if shaErr != nil {
-				return "", "", "", ui.Dief("Could not find branch '%s'.", branch)
+				return ciTarget{}, ui.Dief("Could not find branch '%s'.", branch)
 			}
-			return ownerRepo, sha, "", nil
+			return ciTarget{ownerRepo, sha, "", ownerRepo, branch}, nil
 
 		default:
 			if n, convErr := strconv.Atoi(arg); convErr == nil {
 				pr, prErr := gh.GetPR(ownerRepo, n)
 				if prErr != nil {
-					return "", "", "", ui.Dief("Could not fetch PR #%d.", n)
+					return ciTarget{}, ui.Dief("Could not fetch PR #%d.", n)
 				}
-				return ownerRepo, pr.Head.SHA, pr.HTMLURL, nil
+				return ciTarget{ownerRepo, pr.Head.SHA, pr.HTMLURL, pr.Head.Repo.FullName, pr.Head.Ref}, nil
 			}
+
+			currentBranch, _ := git.GetCurrentBranch()
+
+			if looksLikeGitRef(arg) {
+				if sha, revErr := git.RevParse(arg); revErr == nil {
+					return ciTarget{ownerRepo, sha, "", ownerRepo, currentBranch}, nil
+				}
+			}
+
 			sha, shaErr := gh.GetBranchSHA(ownerRepo, arg)
 			if shaErr != nil {
-				return "", "", "", ui.Dief("Could not find branch '%s'.", arg)
+				return ciTarget{}, ui.Dief("Could not resolve '%s' as a commit, ref, or branch.", arg)
 			}
-			return ownerRepo, sha, "", nil
+			return ciTarget{ownerRepo, sha, "", ownerRepo, arg}, nil
 		}
 	}
 
-	sha, err = git.RevParse("HEAD")
+	sha, err := git.RevParse("HEAD")
 	if err != nil {
-		return "", "", "", ui.Die("Could not determine HEAD commit.")
+		return ciTarget{}, ui.Die("Could not determine HEAD commit.")
 	}
 
 	tracking := git.GetTrackingBranch()
 	if tracking == "" {
-		return "", "", "", ui.Die("Branch has no remote tracking branch. Push first with 'utpr push'.")
+		return ciTarget{}, ui.Die("Branch has no remote tracking branch. Push first with 'utpr push'.")
 	}
 
 	remoteSHA, revErr := git.RevParse("@{u}")
 	if revErr != nil {
-		return "", "", "", ui.Die("Could not determine remote branch HEAD.")
+		return ciTarget{}, ui.Die("Could not determine remote branch HEAD.")
 	}
 
 	if sha != remoteSHA {
@@ -151,8 +201,12 @@ func resolveCISHA(cfg *remote.Config, args []string) (ownerRepo, sha, prURL stri
 		sha = remoteSHA
 	}
 
-	return ownerRepo, sha, "", nil
+	currentBranch, _ := git.GetCurrentBranch()
+	return ciTarget{ownerRepo, sha, "", ownerRepo, currentBranch}, nil
 }
+
+// errNoChecksFound is returned by showCIChecks when no check runs exist for the SHA.
+var errNoChecksFound = errors.New("no checks found")
 
 func runCI(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
@@ -160,9 +214,21 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	ownerRepo, sha, prURL, err := resolveCISHA(cfg, args)
+	target, err := resolveCITarget(cfg, args)
 	if err != nil {
 		return err
+	}
+	ownerRepo, sha, prURL := target.ownerRepo, target.sha, target.prURL
+
+	if flagCIPick {
+		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
+		if pickErr != nil {
+			return pickErr
+		}
+		if picked == nil {
+			return nil // cancelled, or no runs found (message already printed)
+		}
+		ownerRepo, sha, prURL = target.pickOwnerRepo, picked.HeadSHA, ""
 	}
 
 	if flagCIWeb {
@@ -183,6 +249,28 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return waitCI(ownerRepo, sha, mode, flagCIWatch)
 	}
 
+	err = showCIChecks(ownerRepo, sha)
+	if errors.Is(err, errNoChecksFound) {
+		// Only offer the automatic picker fallback when the user didn't
+		// already pick a specific target (no args, no explicit --pick).
+		if len(args) == 0 && !flagCIPick {
+			picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, autoPickRunsLimit)
+			if pickErr != nil {
+				return pickErr
+			}
+			if picked != nil {
+				return showCIChecks(target.pickOwnerRepo, picked.HeadSHA)
+			}
+		}
+		ui.Info("No checks found for this commit.")
+		return nil
+	}
+	return err
+}
+
+// showCIChecks fetches and renders check runs for a commit SHA. Returns
+// errNoChecksFound (wrapped) if no check runs exist for the commit.
+func showCIChecks(ownerRepo, sha string) error {
 	type ciStatus struct {
 		checkRuns    []gh.CheckRun
 		workflowRuns []gh.WorkflowRun
@@ -200,8 +288,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(data.checkRuns) == 0 {
-		ui.Info("No checks found for this commit.")
-		return nil
+		return errNoChecksFound
 	}
 
 	runs := data.checkRuns
@@ -221,6 +308,75 @@ func runCI(cmd *cobra.Command, args []string) error {
 
 	renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
 	return nil
+}
+
+// pickRunForBranch fetches the most recent workflow runs for a branch and
+// prompts the user to pick one. Returns (nil, nil) if the user cancels or
+// no runs are found (an informational message is printed in that case).
+func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, error) {
+	if branch == "" {
+		ui.Info("Could not determine a branch to list CI runs for.")
+		return nil, nil
+	}
+
+	runs, err := ui.SpinWithResult(fmt.Sprintf("Fetching CI runs for '%s'...", branch), func() ([]gh.WorkflowRun, error) {
+		return gh.ListWorkflowRunsForBranch(ownerRepo, branch, limit)
+	})
+	if err != nil {
+		return nil, ui.Dief("Could not fetch CI runs: %v", err)
+	}
+	if len(runs) == 0 {
+		ui.Infof("No CI runs found for branch '%s'.", branch)
+		return nil, nil
+	}
+
+	return pickWorkflowRun(runs)
+}
+
+// pickWorkflowRun presents an interactive picker over workflow runs, newest
+// first. Returns (nil, nil) if the user cancels.
+func pickWorkflowRun(runs []gh.WorkflowRun) (*gh.WorkflowRun, error) {
+	var opts []huh.Option[int]
+	maxNameLen := 0
+	for _, r := range runs {
+		if l := len([]rune(r.Name)); l > maxNameLen {
+			maxNameLen = l
+		}
+	}
+	for i, r := range runs {
+		label := fmt.Sprintf("%s  %s  %s  #%d",
+			statusIcon(r.Status, r.Conclusion),
+			ui.PadRight(r.Name, maxNameLen),
+			ui.StyleMuted.Render(formatRelativeTime(r.CreatedAt)),
+			r.RunNumber)
+		opts = append(opts, huh.NewOption(label, i))
+	}
+
+	choice := 0
+	sel := huh.NewSelect[int]().
+		Title("Select a CI run:").
+		Options(opts...).
+		Value(&choice).
+		Height(ui.SelectHeight(len(opts)))
+
+	if err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			ui.Info("Cancelled.")
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &runs[choice], nil
+}
+
+// formatRelativeTime formats an RFC3339 timestamp as a short "time ago" string.
+func formatRelativeTime(iso string) string {
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return ""
+	}
+	return ciFormatDuration(time.Since(t)) + " ago"
 }
 
 // countTerminalRows returns the number of terminal rows that output will
@@ -416,11 +572,12 @@ func jobDisplayName(runName, groupName string) string {
 	return strings.TrimPrefix(runName, prefix)
 }
 
-func checkRunIcon(r gh.CheckRun) string {
-	if r.Status != "completed" {
+// statusIcon returns a colored icon for a check/job/run status+conclusion pair.
+func statusIcon(status, conclusion string) string {
+	if status != "completed" {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("…")
 	}
-	switch r.Conclusion {
+	switch conclusion {
 	case "success":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("✓")
 	case "failure", "timed_out", "action_required":
@@ -430,6 +587,10 @@ func checkRunIcon(r gh.CheckRun) string {
 	default:
 		return ui.StyleMuted.Render("?")
 	}
+}
+
+func checkRunIcon(r gh.CheckRun) string {
+	return statusIcon(r.Status, r.Conclusion)
 }
 
 func isFailedCheckRun(r gh.CheckRun) bool {
@@ -601,19 +762,7 @@ type jobEntry struct {
 }
 
 func workflowJobIcon(job gh.WorkflowJob) string {
-	if job.Status != "completed" {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("…")
-	}
-	switch job.Conclusion {
-	case "success":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("✓")
-	case "failure", "timed_out", "action_required":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗")
-	case "skipped", "cancelled", "neutral":
-		return ui.StyleMuted.Render("○")
-	default:
-		return ui.StyleMuted.Render("?")
-	}
+	return statusIcon(job.Status, job.Conclusion)
 }
 
 func runCILogs(cmd *cobra.Command, args []string) error {
@@ -622,10 +771,11 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return ui.Die(err.Error())
 	}
 
-	ownerRepo, sha, _, err := resolveCISHA(cfg, args)
+	target, err := resolveCITarget(cfg, args)
 	if err != nil {
 		return err
 	}
+	ownerRepo, sha := target.ownerRepo, target.sha
 
 	runs, err := ui.SpinWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
 		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
