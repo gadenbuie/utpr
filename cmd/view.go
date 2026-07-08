@@ -33,7 +33,7 @@ func init() {
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
 	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
-	viewCmd.Flags().StringVar(&flagViewComments, "comments", "reviews", "Comment display mode: reviews (default, unresolved review comments), regular (issue comments only), all (all comments including resolved)")
+	viewCmd.Flags().StringVar(&flagViewComments, "comments", "reviews", "Comment display mode: reviews (default, unresolved review comments), regular (issue comments only), all (all comments including resolved), none (no comments)")
 	viewCmd.Flags().Lookup("comments").NoOptDefVal = "reviews"
 }
 
@@ -139,7 +139,7 @@ func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
 		}
 	}
 
-	if flagViewSummary {
+	if flagViewSummary || flagViewComments == "none" {
 		return renderIssueSummary(issue)
 	}
 
@@ -201,9 +201,9 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	}
 
 	switch flagViewComments {
-	case "regular", "reviews", "all":
+	case "regular", "reviews", "all", "none":
 	default:
-		return ui.Dief("Invalid --comments value: '%s' (expected: regular, reviews, all)", flagViewComments)
+		return ui.Dief("Invalid --comments value: '%s' (expected: regular, reviews, all, none)", flagViewComments)
 	}
 
 	pr, err := gh.GetPR(ownerRepo, prNumber)
@@ -216,7 +216,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return ui.Dief("Failed to fetch reviews for PR #%d.", prNumber)
 	}
 
-	if flagViewSummary {
+	if flagViewSummary || flagViewComments == "none" {
 		return renderPRSummary(pr, reviews)
 	}
 
