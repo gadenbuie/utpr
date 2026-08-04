@@ -37,6 +37,25 @@ func RunSilent(args ...string) (stdout, stderr string, err error) {
 	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), err
 }
 
+// RunInDir executes a git command in the given directory and returns stdout.
+// If the command fails, the error includes stderr output.
+func RunInDir(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		stderrStr := strings.TrimSpace(stderr.String())
+		if stderrStr != "" {
+			return "", fmt.Errorf("git %s: %w\n%s", args[0], err, stderrStr)
+		}
+		return "", fmt.Errorf("git %s: %w", args[0], err)
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // RunInteractive runs a git command with stdin/stdout/stderr connected
 // to the terminal. Used for commands where the user needs to see output
 // live (e.g., git merge with conflicts).
@@ -132,6 +151,16 @@ func BranchExists(branch string) bool {
 // GetTrackingBranch returns the upstream tracking branch for HEAD, or empty string.
 func GetTrackingBranch() string {
 	out, err := Run("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// GetTrackingBranchInDir returns the upstream tracking branch for HEAD in the
+// given directory, or empty string.
+func GetTrackingBranchInDir(dir string) string {
+	out, err := RunInDir(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	if err != nil {
 		return ""
 	}

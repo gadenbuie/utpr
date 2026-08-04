@@ -17,6 +17,12 @@ var resumeCmd = &cobra.Command{
 	RunE:  runResume,
 }
 
+var flagResumeWorktree bool
+
+func init() {
+	resumeCmd.Flags().BoolVar(&flagResumeWorktree, "worktree", false, "Move the branch into a new git worktree")
+}
+
 func runResume(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
@@ -43,6 +49,27 @@ func runResume(cmd *cobra.Command, args []string) error {
 	wtPath := git.GetBranchWorktreePath(branch)
 	if wtPath != "" {
 		offerWorktreeNavigation(wtPath)
+		return nil
+	}
+
+	if flagResumeWorktree {
+		if err := promoteBranchToWorktree(cfg, branch); err != nil {
+			return err
+		}
+		wtDir, err := git.GetWorktreeDir(branch)
+		if err != nil {
+			return ui.Die(err.Error())
+		}
+		tracking := git.GetTrackingBranchInDir(wtDir)
+		if tracking != "" {
+			err := ui.Spin("Pulling from "+tracking+"...", func() error {
+				_, pullErr := git.RunInDir(wtDir, "pull")
+				return pullErr
+			})
+			if err != nil {
+				ui.Warn("Could not pull latest changes. Run 'git pull' to update.")
+			}
+		}
 		return nil
 	}
 

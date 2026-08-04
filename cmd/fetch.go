@@ -107,6 +107,11 @@ func runFetch(cmd *cobra.Command, args []string) error {
 				offerWorktreeNavigation(wtPath)
 				return nil
 			}
+			if git.IsBranchInMainWorktree(localBranch) {
+				if err := freeUpCurrentBranch(cfg); err != nil {
+					return err
+				}
+			}
 			if _, err := git.Run("fetch", ".", "FETCH_HEAD:"+localBranch); err != nil {
 				return ui.Dief("Failed to update branch '%s'.", localBranch)
 			}

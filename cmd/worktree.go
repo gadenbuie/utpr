@@ -9,8 +9,42 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/gadenbuie/utpr/internal/editor"
 	"github.com/gadenbuie/utpr/internal/git"
+	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
 )
+
+// promoteBranchToWorktree moves an existing local branch into a new worktree.
+// If the branch already has a worktree, it offers navigation to it instead.
+func promoteBranchToWorktree(cfg *remote.Config, branch string) error {
+	if wtPath := git.GetBranchWorktreePath(branch); wtPath != "" {
+		offerWorktreeNavigation(wtPath)
+		return nil
+	}
+
+	if git.IsBranchInMainWorktree(branch) {
+		if err := freeUpCurrentBranch(cfg); err != nil {
+			return err
+		}
+	}
+
+	return initWorktree(branch)
+}
+
+// freeUpCurrentBranch switches the main repo off its current branch (onto
+// the default branch) so that branch can be checked out in a worktree
+// instead. It must be run from the main repo, not another worktree.
+func freeUpCurrentBranch(cfg *remote.Config) error {
+	if git.IsInWorktree() {
+		return ui.Die("The branch is checked out in the main repo. Run this command from the main repo to move it into a worktree.")
+	}
+	if err := challengeUncommittedChanges(); err != nil {
+		return err
+	}
+	if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
+		return ui.Die(err.Error())
+	}
+	return nil
+}
 
 // initWorktree creates a worktree for the given branch, symlinks dirs,
 // runs setup, and opens in editor.
