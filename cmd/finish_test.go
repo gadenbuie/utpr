@@ -129,6 +129,29 @@ func TestShouldDeleteRemoteBranch(t *testing.T) {
 	}
 }
 
+func TestResolveFinishArgNumeric(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  string
+		want int
+	}{
+		{"plain PR number", "42", 42},
+		{"PR number 1", "1", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveFinishArg(tt.arg, "owner/repo")
+			if err != nil {
+				t.Fatalf("resolveFinishArg(%q) returned error: %v", tt.arg, err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveFinishArg(%q) = %d, want %d", tt.arg, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractPRNumberFromURL(t *testing.T) {
 	tests := []struct {
 		name string

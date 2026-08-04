@@ -15,9 +15,9 @@ import (
 )
 
 var finishCmd = &cobra.Command{
-	Use:   "finish [pr-number]",
+	Use:   "finish [pr-number-or-branch]",
 	Short: "Clean up after a merged PR",
-	Long:  "Clean up a local branch after its PR has been merged. Automatically removes any associated worktree.",
+	Long:  "Clean up a local branch after its PR has been merged. Automatically removes any associated worktree.\n\nAccepts a PR number or branch name.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runFinish,
 }
@@ -55,9 +55,9 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	fromPicker := false
 
 	if len(args) > 0 {
-		n, err := strconv.Atoi(args[0])
+		n, err := resolveFinishArg(args[0], sourceRepo)
 		if err != nil {
-			return ui.Dief("Invalid PR number: %s", args[0])
+			return err
 		}
 		prNumbers = []int{n}
 	} else {
@@ -204,6 +204,22 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 		prompt:         "Select PR(s) to finish:",
 		cancelMsg:      "Cancelled.",
 	})
+}
+
+// resolveFinishArg resolves a finish argument to a PR number, accepting
+// either a PR number or a branch name.
+func resolveFinishArg(arg, sourceRepo string) (int, error) {
+	if n, err := strconv.Atoi(arg); err == nil {
+		return n, nil
+	}
+	if n := prNumberFromStoredURL(git.GetBranchPRURL(arg)); n != 0 {
+		return n, nil
+	}
+	pr, err := gh.GetPRForBranch(sourceRepo, arg, "all")
+	if err != nil || pr == nil {
+		return 0, ui.Dief("Could not determine PR number for branch '%s'.", arg)
+	}
+	return pr.Number, nil
 }
 
 // prNumberFromStoredURL extracts the PR number from a stored GitHub PR URL.
