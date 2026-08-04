@@ -209,3 +209,51 @@ func TestFindWorktreeForBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestBranchInMainWorktree(t *testing.T) {
+	worktrees := []Worktree{
+		{Path: "/repo", HEAD: "aaa", Branch: "refs/heads/main"},
+		{Path: "/repo.worktrees/feat-a", HEAD: "bbb", Branch: "refs/heads/feat-a"},
+	}
+
+	tests := []struct {
+		name      string
+		worktrees []Worktree
+		branch    string
+		want      bool
+	}{
+		{
+			name:      "branch checked out in main worktree",
+			worktrees: worktrees,
+			branch:    "main",
+			want:      true,
+		},
+		{
+			name:      "branch checked out in other worktree",
+			worktrees: worktrees,
+			branch:    "feat-a",
+			want:      false,
+		},
+		{
+			name:      "branch not checked out anywhere",
+			worktrees: worktrees,
+			branch:    "nonexistent",
+			want:      false,
+		},
+		{
+			name:      "nil worktrees",
+			worktrees: nil,
+			branch:    "main",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BranchInMainWorktree(tt.worktrees, tt.branch)
+			if got != tt.want {
+				t.Errorf("BranchInMainWorktree(worktrees, %q) = %v, want %v", tt.branch, got, tt.want)
+			}
+		})
+	}
+}

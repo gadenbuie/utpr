@@ -76,6 +76,25 @@ func FindWorktreeForBranch(worktrees []Worktree, branch string) string {
 	return ""
 }
 
+// IsBranchInMainWorktree returns true if the given branch is currently
+// checked out in the main worktree.
+func IsBranchInMainWorktree(branch string) bool {
+	worktrees, err := WorktreeList()
+	if err != nil {
+		return false
+	}
+	return BranchInMainWorktree(worktrees, branch)
+}
+
+// BranchInMainWorktree returns true if the given branch is checked out in
+// the main worktree (index 0 of `git worktree list`).
+func BranchInMainWorktree(worktrees []Worktree, branch string) bool {
+	if len(worktrees) == 0 {
+		return false
+	}
+	return worktrees[0].Branch == fmt.Sprintf("refs/heads/%s", branch)
+}
+
 // GetWorktreeDir computes the conventional worktree directory path for a branch.
 func GetWorktreeDir(branch string) (string, error) {
 	topLevel, err := GetTopLevel()

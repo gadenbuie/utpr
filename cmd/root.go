@@ -81,6 +81,7 @@ func init() {
 	rootCmd.AddCommand(ciCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(prMergeCmd)
+	rootCmd.AddCommand(worktreeCmd)
 
 }
 

@@ -1,296 +1,231 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-	"github.com/gadenbuie/utpr/internal/editor"
 	"github.com/gadenbuie/utpr/internal/git"
+	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
+	"github.com/spf13/cobra"
 )
 
-// initWorktree creates a worktree for the given branch, symlinks dirs,
-// runs setup, and opens in editor.
-func initWorktree(branch string) error {
-	repoRoot, err := git.GetTopLevel()
+var worktreeCmd = &cobra.Command{
+	Use:   "worktree",
+	Short: "Manage git worktrees",
+}
+
+var worktreeListCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List git worktrees",
+	RunE:    runWorktreeList,
+}
+
+var worktreeRemoveCmd = &cobra.Command{
+	Use:     "remove [branch]",
+	Aliases: []string{"rm"},
+	Short:   "Remove a branch's worktree",
+	Long:    "Remove a branch's worktree, optionally deleting the branch afterward.",
+	Args:    cobra.MaximumNArgs(1),
+	RunE:    runWorktreeRemove,
+}
+
+var worktreeOpenCmd = &cobra.Command{
+	Use:   "open [branch]",
+	Short: "Navigate to a branch's existing worktree",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runWorktreeOpen,
+}
+
+func init() {
+	worktreeCmd.AddCommand(worktreeListCmd)
+	worktreeCmd.AddCommand(worktreeRemoveCmd)
+	worktreeCmd.AddCommand(worktreeOpenCmd)
+}
+
+func runWorktreeList(cmd *cobra.Command, args []string) error {
+	worktrees, err := git.WorktreeList()
 	if err != nil {
-		return err
+		return ui.Die(err.Error())
 	}
-	wtDir, err := git.GetWorktreeDir(branch)
-	if err != nil {
-		return err
+	if len(worktrees) == 0 {
+		ui.Info("No worktrees found.")
+		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(wtDir), 0o755); err != nil {
-		return err
+	mainBranch := "(detached HEAD)"
+	if worktrees[0].Branch != "" {
+		mainBranch = ui.StyleBranchName(strings.TrimPrefix(worktrees[0].Branch, "refs/heads/"))
 	}
-	if err := git.WorktreeAdd(wtDir, branch); err != nil {
-		return err
-	}
-	ui.Successf("Created worktree at %s", wtDir)
+	fmt.Println(ui.StyleBold.Render("Main repo"))
+	fmt.Println("  " + ui.StyleLabel.Render("Path:") + " " + shortenHomeDir(worktrees[0].Path))
+	fmt.Println("  " + ui.StyleLabel.Render("Branch:") + " " + mainBranch)
 
-	symlinkWorktreeDirs(repoRoot, wtDir)
-	runWorktreeSetup(wtDir)
-
-	ed := editor.AutoDetect()
-	if ed != "" {
-		_ = editor.Open(ed, wtDir)
+	if len(worktrees) == 1 {
+		return nil
 	}
-	ui.Infof("cd \"%s\"", wtDir)
+
+	type row struct {
+		branch string
+		path   string
+		prURL  string
+	}
+
+	rows := make([]row, len(worktrees)-1)
+	branchWidth := 0
+	for i, wt := range worktrees[1:] {
+		branch := strings.TrimPrefix(wt.Branch, "refs/heads/")
+		rows[i] = row{
+			branch: branch,
+			path:   shortenHomeDir(wt.Path),
+			prURL:  git.GetBranchPRURL(branch),
+		}
+		if w := len([]rune(branch)); w > branchWidth {
+			branchWidth = w
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(ui.StyleBold.Render("Worktrees:"))
+	for _, r := range rows {
+		line := "  " + ui.PadRight(ui.StyleBranchName(r.branch), branchWidth) + "  " + r.path
+		if r.prURL != "" {
+			line += "  " + ui.StyleMuted.Render(r.prURL)
+		}
+		fmt.Println(line)
+	}
 	return nil
 }
 
-// offerWorktreeNavigation presents options for navigating to an existing worktree.
-func offerWorktreeNavigation(targetPath string) {
-	ed := editor.AutoDetect()
+// shortenHomeDir replaces the user's home directory prefix with "~".
+func shortenHomeDir(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
 
-	var options []string
-	if ed != "" {
-		options = []string{"Open in " + ed, "Show path", "Do nothing"}
+func runWorktreeRemove(cmd *cobra.Command, args []string) error {
+	if git.IsInWorktree() {
+		mainRoot, _ := git.GetMainRepoRoot()
+		ui.Warn("Navigate to the main repo first:")
+		fmt.Fprintf(os.Stderr, "  cd \"%s\"\n", mainRoot)
+		fmt.Fprintf(os.Stderr, "  utpr worktree remove\n")
+		return fmt.Errorf("cannot run from a worktree")
+	}
+
+	cfg, err := remote.Detect()
+	if err != nil {
+		return ui.Die(err.Error())
+	}
+
+	var branch string
+	if len(args) > 0 {
+		branch = args[0]
+		if err := git.ValidateBranchName(branch); err != nil {
+			return ui.Die(err.Error())
+		}
 	} else {
-		options = []string{"Show path", "Open in editor...", "Do nothing"}
+		branch, err = pickWorktreeBranch("Select a worktree to remove:")
+		if err != nil {
+			return err
+		}
 	}
 
-	choice, err := ui.Choose("Worktree: "+targetPath, options)
+	if git.GetBranchWorktreePath(branch) == "" {
+		return ui.Dief("Branch '%s' does not have a worktree.", branch)
+	}
+
+	if err := removeWorktree(branch); err != nil {
+		return err
+	}
+
+	deleteBranch, err := ui.Confirm("Also delete local branch '"+branch+"'?", false)
 	if err != nil {
-		return
+		return err
 	}
-
-	switch {
-	case choice == "Open in editor...":
-		pickAndOpenEditor(targetPath)
-	case strings.HasPrefix(choice, "Open in "):
-		_ = editor.Open(ed, targetPath)
-	case choice == "Show path":
-		ui.Infof("cd \"%s\"", targetPath)
-	}
-}
-
-func pickAndOpenEditor(targetPath string) {
-	editors := editor.AvailableEditors()
-	editors = append(editors, "Custom...")
-
-	choice, err := ui.Choose("Select editor:", editors)
-	if err != nil {
-		return
-	}
-
-	if choice == "Custom..." {
-		choice, err = ui.Input("Editor command:", "", "editor command (optional args)")
-		if err != nil || choice == "" {
-			return
-		}
-	}
-	_ = editor.Open(choice, targetPath)
-}
-
-// symlinkWorktreeDirs symlinks configured dirs from main repo into worktree.
-func symlinkWorktreeDirs(repoRoot, wtDir string) {
-	symlinkDirs := os.Getenv("UTPR_SYMLINK_DIRS")
-	if symlinkDirs == "" {
-		symlinkDirs = "_dev,.claude,.env,.env.local,.Renviron,.Rprofile,.agents,.secrets,secrets,.htpasswd,.vscode,.vscode/settings.json"
-	}
-
-	items := mergeSymlinkItems(parseSymlinkItems(symlinkDirs), gitIgnoredRootItems(repoRoot))
-	existsInRepo := func(name string) bool {
-		_, err := os.Stat(filepath.Join(repoRoot, name))
-		return err == nil
-	}
-	existsInWorktree := func(name string) bool {
-		_, err := os.Stat(filepath.Join(wtDir, name))
-		return err == nil
-	}
-	available := computeSymlinkCandidates(items, existsInRepo, existsInWorktree)
-
-	if len(available) == 0 {
-		return
-	}
-
-	opts := make([]huh.Option[string], len(available))
-	for i, item := range available {
-		opts[i] = huh.NewOption(item, item).Selected(!isManagedBySetupHook(item))
-	}
-
-	selected, err := ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
-	if err != nil || len(selected) == 0 {
-		return
-	}
-
-	for _, item := range selected {
-		src := filepath.Join(repoRoot, item)
-		dst := filepath.Join(wtDir, item)
-
-		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
-
-		if err := os.Symlink(src, dst); err != nil {
-			ui.Warnf("Failed to symlink %s.", item)
-		} else {
-			ui.Successf("Symlinked %s", item)
-		}
-	}
-}
-
-// setupHook defines a project-specific setup command to run in a worktree.
-type setupHook struct {
-	trigger string   // file that must exist in wtDir to trigger this hook
-	tool    string   // binary name that must be on PATH
-	spinMsg string   // spinner message
-	warnMsg string   // warning on failure
-	args    []string // command + args
-}
-
-var defaultSetupHooks = []setupHook{
-	{
-		trigger: "package.json",
-		tool:    "npm",
-		spinMsg: "Running npm install...",
-		warnMsg: "npm install failed (non-fatal).",
-		args:    []string{"npm", "install"},
-	},
-	{
-		trigger: "pyproject.toml",
-		tool:    "uv",
-		spinMsg: "Running uv sync...",
-		warnMsg: "uv sync failed (non-fatal).",
-		args:    []string{"uv", "sync", "--all-groups"},
-	},
-	{
-		trigger: "renv.lock",
-		tool:    "Rscript",
-		spinMsg: "Running renv::restore()...",
-		warnMsg: "renv::restore() failed (non-fatal).",
-		args:    []string{"Rscript", "-e", "renv::restore(prompt = FALSE)"},
-	},
-}
-
-// runWorktreeSetup runs project-specific setup commands in the worktree.
-func runWorktreeSetup(wtDir string) {
-	for _, hook := range defaultSetupHooks {
-		if _, err := os.Stat(filepath.Join(wtDir, hook.trigger)); err != nil {
-			continue
-		}
-		if _, err := exec.LookPath(hook.tool); err != nil {
-			continue
-		}
-		if err := ui.Spin(hook.spinMsg, func() error {
-			cmd := exec.Command(hook.args[0], hook.args[1:]...)
-			cmd.Dir = wtDir
-			return cmd.Run()
-		}); err != nil {
-			ui.Warn(hook.warnMsg)
-		}
-	}
-
-	if makefile := filepath.Join(wtDir, "Makefile"); fileHasTarget(makefile, "setup") {
-		if _, err := exec.LookPath("make"); err == nil {
-			if err := ui.Spin("Running make setup...", func() error {
-				cmd := exec.Command("make", "setup")
-				cmd.Dir = wtDir
-				return cmd.Run()
-			}); err != nil {
-				ui.Warn("make setup failed (non-fatal).")
-			}
-		}
-	}
-}
-
-// fileHasTarget checks if a Makefile exists and contains a given target.
-func fileHasTarget(path, target string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, target+":") {
-			return true
-		}
-	}
-	return false
-}
-
-// managedBySetupHook lists dirs whose contents are managed by runWorktreeSetup,
-// so symlinking them is opt-in rather than the default.
-var managedBySetupHookDirs = []string{"node_modules", ".venv", "renv"}
-
-func isManagedBySetupHook(name string) bool {
-	for _, d := range managedBySetupHookDirs {
-		if name == d {
-			return true
-		}
-	}
-	return false
-}
-
-// gitIgnoredRootItems returns gitignored files and directories at the repo root.
-func gitIgnoredRootItems(repoRoot string) []string {
-	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
-	if err != nil {
+	if !deleteBranch {
 		return nil
 	}
-	var items []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		// Strip trailing slash from directory entries; skip nested paths.
-		name := strings.TrimSuffix(line, "/")
-		if strings.Contains(name, "/") {
-			continue
-		}
-		items = append(items, name)
+
+	if branch == cfg.DefaultBranch {
+		return ui.Dief("Cannot delete the default branch '%s'.", cfg.DefaultBranch)
 	}
-	return items
+	if _, err := challengeLocalBranchDelete(branch); err != nil {
+		return err
+	}
+	if err := git.DeleteBranch(branch); err != nil {
+		return ui.Die(err.Error())
+	}
+	ui.Successf("Deleted local branch '%s'.", branch)
+	remote.CleanupUtprRemotes()
+	return nil
 }
 
-// mergeSymlinkItems appends extra items to base, skipping duplicates.
-func mergeSymlinkItems(base, extra []string) []string {
-	seen := make(map[string]bool, len(base))
-	for _, item := range base {
-		seen[item] = true
-	}
-	result := base
-	for _, item := range extra {
-		if !seen[item] {
-			seen[item] = true
-			result = append(result, item)
+func runWorktreeOpen(cmd *cobra.Command, args []string) error {
+	var branch string
+	var err error
+	if len(args) > 0 {
+		branch = args[0]
+		if err := git.ValidateBranchName(branch); err != nil {
+			return ui.Die(err.Error())
+		}
+	} else {
+		branch, err = pickWorktreeBranch("Select a worktree to open:")
+		if err != nil {
+			return err
 		}
 	}
-	return result
+
+	wtPath := git.GetBranchWorktreePath(branch)
+	if wtPath == "" {
+		return ui.Dief(
+			"Branch '%s' does not have a worktree. Use 'utpr resume %s --worktree' or 'utpr fetch --worktree' to create one.",
+			branch, branch,
+		)
+	}
+
+	offerWorktreeNavigation(wtPath)
+	return nil
 }
 
-func parseSymlinkItems(symlinkDirs string) []string {
-	var items []string
-	for _, item := range strings.Split(symlinkDirs, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			items = append(items, item)
-		}
+// pickWorktreeBranch shows an interactive picker of branches that have a worktree.
+func pickWorktreeBranch(header string) (string, error) {
+	worktrees, err := git.WorktreeList()
+	if err != nil {
+		return "", ui.Die(err.Error())
 	}
-	return items
-}
 
-func computeSymlinkCandidates(
-	items []string,
-	existsInRepo func(string) bool,
-	existsInWorktree func(string) bool,
-) []string {
-	var candidates []string
-	for _, item := range items {
-		if !existsInRepo(item) {
+	var items []ui.BranchPickerItem
+	for i, wt := range worktrees {
+		if i == 0 {
 			continue
 		}
-		if existsInWorktree(item) {
-			if item == ".claude" && existsInRepo(".claude/settings.json") && !existsInWorktree(".claude/settings.json") {
-				candidates = append(candidates, ".claude/settings.json")
-			}
-			continue
-		}
-		candidates = append(candidates, item)
+		items = append(items, ui.BranchPickerItem{
+			Name:        strings.TrimPrefix(wt.Branch, "refs/heads/"),
+			HasWorktree: true,
+		})
 	}
-	return candidates
+	if len(items) == 0 {
+		return "", ui.Die("No worktrees found.")
+	}
+
+	opts := ui.FormatBranchPickerOptions(items)
+	selected, err := ui.ChooseWithOptions(header, opts)
+	if err != nil {
+		return "", err
+	}
+	if selected == "" {
+		return "", ui.Die("No branch selected.")
+	}
+	return selected, nil
 }
