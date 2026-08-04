@@ -55,7 +55,12 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	mainBranch := "(detached HEAD)"
+	if worktrees[0].Branch != "" {
+		mainBranch = ui.StyleBranchName(strings.TrimPrefix(worktrees[0].Branch, "refs/heads/"))
+	}
 	fmt.Println(ui.StyleLabel.Render("Main repo:") + " " + shortenHomeDir(worktrees[0].Path))
+	fmt.Println(ui.StyleLabel.Render("Main branch:") + " " + mainBranch)
 
 	if len(worktrees) == 1 {
 		return nil
