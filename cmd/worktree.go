@@ -55,40 +55,57 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	fmt.Println(ui.StyleLabel.Render("Main repo:") + " " + shortenHomeDir(worktrees[0].Path))
+
+	if len(worktrees) == 1 {
+		return nil
+	}
+
 	type row struct {
 		branch string
 		path   string
-		tag    string
 		prURL  string
 	}
 
-	rows := make([]row, len(worktrees))
+	rows := make([]row, len(worktrees)-1)
 	branchWidth := 0
-	for i, wt := range worktrees {
+	for i, wt := range worktrees[1:] {
 		branch := strings.TrimPrefix(wt.Branch, "refs/heads/")
-		r := row{branch: branch, path: wt.Path}
-		if i == 0 {
-			r.tag = "main"
-		} else {
-			r.prURL = git.GetBranchPRURL(branch)
+		rows[i] = row{
+			branch: branch,
+			path:   shortenHomeDir(wt.Path),
+			prURL:  git.GetBranchPRURL(branch),
 		}
-		rows[i] = r
 		if w := len([]rune(branch)); w > branchWidth {
 			branchWidth = w
 		}
 	}
 
+	fmt.Println()
+	fmt.Println(ui.StyleBold.Render("Worktrees:"))
 	for _, r := range rows {
-		line := ui.PadRight(ui.StyleBranchName(r.branch), branchWidth) + "  " + r.path
-		if r.tag != "" {
-			line += "  " + ui.StyleMuted.Render("["+r.tag+"]")
-		}
+		line := "  " + ui.PadRight(ui.StyleBranchName(r.branch), branchWidth) + "  " + r.path
 		if r.prURL != "" {
 			line += "  " + ui.StyleMuted.Render(r.prURL)
 		}
 		fmt.Println(line)
 	}
 	return nil
+}
+
+// shortenHomeDir replaces the user's home directory prefix with "~".
+func shortenHomeDir(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 func runWorktreeRemove(cmd *cobra.Command, args []string) error {
