@@ -56,3 +56,61 @@ func TestParsePRNumber(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitRemoteRef(t *testing.T) {
+	tests := []struct {
+		name       string
+		ref        string
+		remotes    []string
+		wantRemote string
+		wantBranch string
+		wantOK     bool
+	}{
+		{
+			name:       "remote branch",
+			ref:        "origin/main",
+			remotes:    []string{"origin"},
+			wantRemote: "origin",
+			wantBranch: "main",
+			wantOK:     true,
+		},
+		{
+			name:       "remote branch with slash",
+			ref:        "origin/docs/fix-typo",
+			remotes:    []string{"origin"},
+			wantRemote: "origin",
+			wantBranch: "docs/fix-typo",
+			wantOK:     true,
+		},
+		{
+			name:    "local branch with slash",
+			ref:     "docs/fix-typo",
+			remotes: []string{"origin"},
+			wantOK:  false,
+		},
+		{
+			name:       "longest matching remote",
+			ref:        "upstream/fork/main",
+			remotes:    []string{"upstream", "upstream/fork"},
+			wantRemote: "upstream/fork",
+			wantBranch: "main",
+			wantOK:     true,
+		},
+		{
+			name:    "remote without branch",
+			ref:     "origin/",
+			remotes: []string{"origin"},
+			wantOK:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remote, branch, ok := splitRemoteRef(tt.ref, tt.remotes)
+			if remote != tt.wantRemote || branch != tt.wantBranch || ok != tt.wantOK {
+				t.Errorf("splitRemoteRef(%q, %q) = (%q, %q, %v), want (%q, %q, %v)",
+					tt.ref, tt.remotes, remote, branch, ok, tt.wantRemote, tt.wantBranch, tt.wantOK)
+			}
+		})
+	}
+}

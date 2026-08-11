@@ -51,7 +51,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		branch = arg
 	}
 
-	cfg, err := remote.Detect()
+	_, err := remote.Detect()
 	if err != nil {
 		return ui.Die(err.Error())
 	}
@@ -121,7 +121,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch and update the base ref
-	if err := fetchAndUpdateBase(baseRef, cfg); err != nil {
+	if err := fetchAndUpdateBase(baseRef); err != nil {
 		ui.Warnf("Could not update base ref '%s': %v", baseRef, err)
 	}
 
@@ -301,11 +301,11 @@ func issueToSlug(number int, title string) string {
 	return fmt.Sprintf("fix/%d-%s", number, slug)
 }
 
-func fetchAndUpdateBase(baseRef string, cfg *remote.Config) error {
-	if strings.Contains(baseRef, "/") {
-		parts := strings.SplitN(baseRef, "/", 2)
+func fetchAndUpdateBase(baseRef string) error {
+	remotes, _ := git.ListRemotes()
+	if remoteName, branch, ok := splitRemoteRef(baseRef, remotes); ok {
 		return ui.Spin(fmt.Sprintf("Fetching %s...", baseRef), func() error {
-			return git.Fetch(parts[0], parts[1])
+			return git.Fetch(remoteName, branch)
 		})
 	}
 
@@ -346,6 +346,23 @@ func fetchAndUpdateBase(baseRef string, cfg *remote.Config) error {
 		}
 	}
 	return nil
+}
+
+// splitRemoteRef separates a remote-qualified ref when its remote name is
+// configured locally. This avoids mistaking slash-containing local branches
+// (for example, docs/fix-typo) for remote refs.
+func splitRemoteRef(ref string, remotes []string) (remoteName, branch string, ok bool) {
+	for _, remote := range remotes {
+		prefix := remote + "/"
+		if strings.HasPrefix(ref, prefix) && len(remote) > len(remoteName) {
+			remoteName = remote
+			branch = strings.TrimPrefix(ref, prefix)
+		}
+	}
+	if remoteName == "" || branch == "" {
+		return "", "", false
+	}
+	return remoteName, branch, true
 }
 
 func parsePRNumber(choice string) (int, error) {
