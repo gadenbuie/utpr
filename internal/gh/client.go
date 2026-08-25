@@ -796,6 +796,7 @@ func GetCheckRuns(ownerRepo, sha string) ([]CheckRun, error) {
 type WorkflowRun struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
+	WorkflowID   int64  `json:"workflow_id"`
 	Status       string `json:"status"`     // queued, in_progress, completed
 	Conclusion   string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, startup_failure
 	HTMLURL      string `json:"html_url"`

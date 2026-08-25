@@ -901,15 +901,26 @@ func logSeparator(label string) string {
 	return ui.StyleMuted.Render(prefix + strings.Repeat("─", remaining))
 }
 
-// latestRunsPerWorkflow keeps the first (most recent) run per workflow name.
+// latestRunsPerWorkflow keeps the first (most recent) run per workflow,
+// deduplicating by workflow_id (a stable identifier) rather than display
+// name, which is not guaranteed to be unique.
 func latestRunsPerWorkflow(runs []gh.WorkflowRun) []gh.WorkflowRun {
-	seen := map[string]bool{}
+	seenIDs := map[int64]bool{}
+	seenNames := map[string]bool{} // fallback when workflow_id is absent
 	var result []gh.WorkflowRun
 	for _, r := range runs {
-		if !seen[r.Name] {
-			seen[r.Name] = true
-			result = append(result, r)
+		if r.WorkflowID != 0 {
+			if seenIDs[r.WorkflowID] {
+				continue
+			}
+			seenIDs[r.WorkflowID] = true
+		} else {
+			if seenNames[r.Name] {
+				continue
+			}
+			seenNames[r.Name] = true
 		}
+		result = append(result, r)
 	}
 	return result
 }
@@ -1235,22 +1246,31 @@ func runCIRerun(cmd *cobra.Command, args []string) error {
 	}
 	ownerRepo, sha := target.ownerRepo, target.sha
 
+	var picked *gh.WorkflowRun
 	if flagCIRerunPick {
-		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
+		var pickErr error
+		picked, pickErr = pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
 		if pickErr != nil {
 			return pickErr
 		}
 		if picked == nil {
 			return nil // cancelled, or no runs found (message already printed)
 		}
-		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
+		ownerRepo = target.pickOwnerRepo
 	}
 
-	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
-		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
-	})
-	if err != nil {
-		return ui.Dief("Could not fetch CI runs: %v", err)
+	var runs []gh.WorkflowRun
+	if picked != nil {
+		// Use only the selected run, not all runs for its SHA.
+		runs = []gh.WorkflowRun{*picked}
+	} else {
+		fetched, ferr := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
+			return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
+		})
+		if ferr != nil {
+			return ui.Dief("Could not fetch CI runs: %v", ferr)
+		}
+		runs = fetched
 	}
 	if len(runs) == 0 {
 		printCIInfo(flagCIRerunAgent, "No CI runs found for this commit.")
@@ -1298,6 +1318,7 @@ func runCIRerun(cmd *cobra.Command, args []string) error {
 // picker, and executes the rerun based on the user's selection.
 func runCIRerunInteractive(ownerRepo string, runs []gh.WorkflowRun, agent bool) error {
 	var allJobs, failedJobs []jobEntry
+	fetchFailures := 0
 	for _, run := range runs {
 		jobs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
@@ -1307,6 +1328,7 @@ func runCIRerunInteractive(ownerRepo string, runs []gh.WorkflowRun, agent bool) 
 		)
 		if fetchErr != nil {
 			ui.Warnf("Could not fetch jobs for '%s': %v", run.Name, fetchErr)
+			fetchFailures++
 			continue
 		}
 		for _, job := range jobs {
@@ -1334,15 +1356,29 @@ func runCIRerunInteractive(ownerRepo string, runs []gh.WorkflowRun, agent bool) 
 		return nil // cancelled
 	}
 
+	var rerunErr error
 	switch selection.mode {
 	case "failed":
-		return rerunWorkflowRuns(ownerRepo, runs, "failed", agent)
+		rerunErr = rerunWorkflowRuns(ownerRepo, runs, "failed", agent)
 	case "all":
-		return rerunWorkflowRuns(ownerRepo, runs, "all", agent)
+		rerunErr = rerunWorkflowRuns(ownerRepo, runs, "all", agent)
 	default:
 		label := fmt.Sprintf("%s / %s", selection.targets[0].RunName, selection.targets[0].Job.Name)
-		return rerunJobEntries(ownerRepo, selection.targets, label, agent)
+		rerunErr = rerunJobEntries(ownerRepo, selection.targets, label, agent)
 	}
+	if rerunErr != nil {
+		return rerunErr
+	}
+	if fetchFailures > 0 {
+		msg := fmt.Sprintf("Could not fetch jobs for %d workflow run(s).", fetchFailures)
+		if agent {
+			_, _ = fmt.Fprintln(os.Stdout, msg)
+		} else {
+			ui.Warn(msg)
+		}
+		return fmt.Errorf("could not fetch jobs for %d workflow run(s)", fetchFailures)
+	}
+	return nil
 }
 
 // rerunSelection holds the result of the interactive job picker.
@@ -1445,6 +1481,8 @@ func rerunWorkflowRuns(ownerRepo string, runs []gh.WorkflowRun, mode string, age
 // (substring match), across all completed workflow runs.
 func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string, agent bool) error {
 	var targets []jobEntry
+	seenRuns := map[int64]bool{}
+	fetchFailures := 0
 	for _, run := range runs {
 		jobs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
@@ -1454,6 +1492,7 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 		)
 		if fetchErr != nil {
 			ui.Warnf("Could not fetch jobs for '%s': %v", run.Name, fetchErr)
+			fetchFailures++
 			continue
 		}
 		for _, job := range jobs {
@@ -1463,12 +1502,19 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 			if !matchesAnyFilter(job.Name, filters) {
 				continue
 			}
+			if seenRuns[job.RunID] {
+				continue
+			}
 			targets = append(targets, jobEntry{RunName: run.Name, Job: job})
+			seenRuns[job.RunID] = true
 		}
 	}
 
 	if len(targets) == 0 {
 		quoted := quoteFilters(filters)
+		if fetchFailures > 0 {
+			return fmt.Errorf("no jobs matching %s (could not fetch jobs for %d workflow run(s))", quoted, fetchFailures)
+		}
 		printCISuccess(agent, fmt.Sprintf("No jobs matching %s.", quoted))
 		return nil
 	}
@@ -1479,7 +1525,20 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 		noun = "jobs"
 	}
 	description := fmt.Sprintf("%d %s matching %s", len(targets), noun, quoted)
-	return rerunJobEntries(ownerRepo, targets, description, agent)
+	rerunErr := rerunJobEntries(ownerRepo, targets, description, agent)
+	if rerunErr != nil {
+		return rerunErr
+	}
+	if fetchFailures > 0 {
+		msg := fmt.Sprintf("Could not fetch jobs for %d workflow run(s).", fetchFailures)
+		if agent {
+			_, _ = fmt.Fprintln(os.Stdout, msg)
+		} else {
+			ui.Warn(msg)
+		}
+		return fmt.Errorf("could not fetch jobs for %d workflow run(s)", fetchFailures)
+	}
+	return nil
 }
 
 // rerunJobEntries re-runs the given job entries individually and reports results.
@@ -1489,12 +1548,13 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 func rerunJobEntries(ownerRepo string, targets []jobEntry, description string, agent bool) error {
 	printCIRerunStart(agent, fmt.Sprintf("Re-running %s...", description))
 
-	var successCount, failCount int
+	var successCount, failCount, skipCount int
 	seenRuns := map[int64]bool{}
 	for _, t := range targets {
 		label := fmt.Sprintf("%s / %s", t.RunName, t.Job.Name)
 		if seenRuns[t.Job.RunID] {
 			printCIRerunItem(agent, false, label, "skipped: another job from this run was already re-queued")
+			skipCount++
 			continue
 		}
 		apiErr := gh.RerunWorkflowJob(ownerRepo, t.Job.ID)
@@ -1508,7 +1568,7 @@ func rerunJobEntries(ownerRepo string, targets []jobEntry, description string, a
 		}
 	}
 
-	return summarizeRerun(agent, successCount, failCount, description)
+	return summarizeRerun(agent, successCount, failCount+skipCount, description)
 }
 
 // matchesAnyFilter reports whether name contains any of the filters as a

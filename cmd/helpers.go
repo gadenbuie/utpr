@@ -201,14 +201,23 @@ func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
 		if err := pullBranchInDir(remote, baseBranch, wtPath); err != nil {
 			return err
 		}
-		// Switch to the default branch instead, since we can't switch to base.
-		onDefault, _ := git.IsOnBranch(defaultBranch)
-		if !onDefault {
-			if err := git.SwitchBranch(defaultBranch); err != nil {
-				return err
+		// We need to get off the current branch so it can be deleted. Try
+		// the default branch; if that's also in a worktree (or is the same
+		// as the base), use detached HEAD instead.
+		if baseBranch != defaultBranch && git.GetBranchWorktreePath(defaultBranch) == "" {
+			onDefault, _ := git.IsOnBranch(defaultBranch)
+			if !onDefault {
+				if err := git.SwitchBranch(defaultBranch); err != nil {
+					return err
+				}
 			}
+			return pullBranch(remote, defaultBranch)
 		}
-		return pullBranch(remote, defaultBranch)
+		ui.Info("Switching to detached HEAD (target branch is in a worktree).")
+		if _, err := git.Run("switch", "--detach"); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	// Case 2: normal — switch to base branch and pull.
