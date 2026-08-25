@@ -42,6 +42,21 @@ func TestRenderCheckRunsPlain(t *testing.T) {
 	}
 }
 
+func TestRenderCIHeaderPlain(t *testing.T) {
+	var got strings.Builder
+	renderCIHeader(&got, "feature/agent-output", "0123456789abcdef", false)
+
+	want := "CI status\n" +
+		"Branch: feature/agent-output\n" +
+		"Commit: 0123456789abcdef\n\n"
+	if got.String() != want {
+		t.Errorf("renderCIHeader() = %q, want %q", got.String(), want)
+	}
+	if strings.Contains(got.String(), "\x1b[") {
+		t.Errorf("renderCIHeader() contains ANSI escape codes: %q", got.String())
+	}
+}
+
 func TestSpinCIWithResultSkipsSpinnerForAgent(t *testing.T) {
 	oldCIAgent, oldCILogsAgent := flagCIAgent, flagCILogsAgent
 	defer func() {

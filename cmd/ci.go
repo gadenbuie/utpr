@@ -254,10 +254,11 @@ func runCI(cmd *cobra.Command, args []string) error {
 		if mode == "" {
 			mode = "all"
 		}
+		printCIHeader(flagCIAgent, target.pickBranch, sha)
 		return waitCI(ownerRepo, sha, mode, flagCIWatch)
 	}
 
-	err = showCIChecks(ownerRepo, sha)
+	err = showCIChecks(ownerRepo, target.pickBranch, sha)
 	if errors.Is(err, errNoChecksFound) {
 		// Only offer the automatic picker fallback when the user didn't
 		// already pick a specific target (no args, no explicit --pick).
@@ -267,7 +268,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 				return pickErr
 			}
 			if picked != nil {
-				return showCIChecks(target.pickOwnerRepo, picked.HeadSHA)
+				return showCIChecks(target.pickOwnerRepo, target.pickBranch, picked.HeadSHA)
 			}
 		}
 		printCIInfo(flagCIAgent, "No checks found for this commit.")
@@ -311,9 +312,38 @@ func printCISuccess(agent bool, msg string) {
 	ui.Success(msg)
 }
 
+func renderCIHeader(w io.Writer, branch, sha string, styled bool) {
+	title := "CI status"
+	branchLabel := "Branch:"
+	commitLabel := "Commit:"
+	if styled {
+		title = ui.StyleBold.Render(title)
+		branchLabel = ui.StyleLabel.Render(branchLabel)
+		commitLabel = ui.StyleLabel.Render(commitLabel)
+		branch = ui.StyleBranchName(branch)
+		sha = ui.StyleHash.Render(sha)
+	}
+
+	_, _ = fmt.Fprintln(w, title)
+	if branch != "" {
+		_, _ = fmt.Fprintf(w, "%s %s\n", branchLabel, branch)
+	}
+	_, _ = fmt.Fprintf(w, "%s %s\n\n", commitLabel, sha)
+}
+
+func printCIHeader(agent bool, branch, sha string) {
+	if agent {
+		renderCIHeader(os.Stdout, branch, sha, false)
+		return
+	}
+	renderCIHeader(os.Stderr, branch, sha, true)
+}
+
 // showCIChecks fetches and renders check runs for a commit SHA. Returns
 // errNoChecksFound (wrapped) if no check runs exist for the commit.
-func showCIChecks(ownerRepo, sha string) error {
+func showCIChecks(ownerRepo, branch, sha string) error {
+	printCIHeader(flagCIAgent, branch, sha)
+
 	type ciStatus struct {
 		checkRuns    []gh.CheckRun
 		workflowRuns []gh.WorkflowRun
