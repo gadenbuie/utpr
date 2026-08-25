@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -23,6 +24,8 @@ var worktreeListCmd = &cobra.Command{
 	RunE:    runWorktreeList,
 }
 
+var flagWorktreeListJSON bool
+
 var worktreeRemoveCmd = &cobra.Command{
 	Use:     "remove [branch]",
 	Aliases: []string{"rm"},
@@ -40,6 +43,7 @@ var worktreeOpenCmd = &cobra.Command{
 }
 
 func init() {
+	worktreeListCmd.Flags().BoolVar(&flagWorktreeListJSON, "json", false, "Output worktrees as JSON")
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeRemoveCmd)
 	worktreeCmd.AddCommand(worktreeOpenCmd)
@@ -49,6 +53,9 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 	worktrees, err := git.WorktreeList()
 	if err != nil {
 		return ui.Die(err.Error())
+	}
+	if flagWorktreeListJSON {
+		return writeWorktreeJSON(worktrees)
 	}
 	if len(worktrees) == 0 {
 		ui.Info("No worktrees found.")
@@ -97,6 +104,34 @@ func runWorktreeList(cmd *cobra.Command, args []string) error {
 		fmt.Println(line)
 	}
 	return nil
+}
+
+type worktreeJSONEntry struct {
+	Path   string `json:"path"`
+	Branch string `json:"branch"`
+	Head   string `json:"head"`
+	PRURL  string `json:"pr_url,omitempty"`
+	IsMain bool   `json:"is_main"`
+}
+
+func writeWorktreeJSON(worktrees []git.Worktree) error {
+	entries := worktreeJSONEntries(worktrees, git.GetBranchPRURL)
+	return json.NewEncoder(os.Stdout).Encode(entries)
+}
+
+func worktreeJSONEntries(worktrees []git.Worktree, prURL func(string) string) []worktreeJSONEntry {
+	entries := make([]worktreeJSONEntry, 0, len(worktrees))
+	for i, wt := range worktrees {
+		branch := strings.TrimPrefix(wt.Branch, "refs/heads/")
+		entries = append(entries, worktreeJSONEntry{
+			Path:   wt.Path,
+			Branch: branch,
+			Head:   wt.HEAD,
+			PRURL:  prURL(branch),
+			IsMain: i == 0,
+		})
+	}
+	return entries
 }
 
 // shortenHomeDir replaces the user's home directory prefix with "~".
