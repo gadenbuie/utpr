@@ -35,7 +35,7 @@ func init() {
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
 	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
-	viewCmd.Flags().StringVar(&flagViewComments, "comments", "reviews", "Comment display mode: reviews (default, unresolved review comments), regular (issue comments only), all (all comments including resolved), none (no comments)")
+	viewCmd.Flags().StringVar(&flagViewComments, "comments", "reviews", "Comment display mode: reviews (default, unresolved review comments), regular (issue comments only), all (all comments including resolved), none (no comments), only/only-reviews (unresolved review comments only), only-regular (regular comments only)")
 	viewCmd.Flags().Lookup("comments").NoOptDefVal = "reviews"
 }
 
@@ -100,6 +100,10 @@ func runView(cmd *cobra.Command, args []string) error {
 }
 
 func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
+	if commentOnlyMode() != "" {
+		return ui.Die("--comments only-* is only valid for pull requests")
+	}
+
 	// Validate state
 	switch flagViewState {
 	case "open", "closed", "all":
@@ -203,14 +207,35 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	}
 
 	switch flagViewComments {
-	case "regular", "reviews", "all", "none":
+	case "regular", "reviews", "all", "none", "only", "only-reviews", "only-regular":
 	default:
-		return ui.Dief("Invalid --comments value: '%s' (expected: regular, reviews, all, none)", flagViewComments)
+		return ui.Dief("Invalid --comments value: '%s' (expected: reviews, regular, all, none, only, only-reviews, only-regular)", flagViewComments)
 	}
 
 	pr, err := gh.GetPR(ownerRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch PR #%d.", prNumber)
+	}
+
+	if onlyMode := commentOnlyMode(); onlyMode != "" {
+		if flagViewSummary {
+			return ui.Die("--summary cannot be combined with --comments only-*")
+		}
+
+		switch onlyMode {
+		case "reviews":
+			reviewComments, err := gh.ListUnresolvedPRReviewComments(ownerRepo, prNumber)
+			if err != nil {
+				return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
+			}
+			return renderPRWithOnlyReviewComments(pr, reviewComments)
+		case "regular":
+			comments, err := gh.ListIssueComments(ownerRepo, prNumber)
+			if err != nil {
+				return ui.Dief("Failed to fetch comments for PR #%d.", prNumber)
+			}
+			return renderPRWithOnlyRegularComments(pr, comments)
+		}
 	}
 
 	reviews, err := gh.ListPRReviews(ownerRepo, prNumber)
@@ -358,6 +383,19 @@ func formatLabelNames(names []string) string {
 	return " · **Labels:** " + strings.Join(names, ", ")
 }
 
+// commentOnlyMode maps the shorthand "only" to unresolved review comments.
+// It returns "reviews", "regular", or "".
+func commentOnlyMode() string {
+	switch flagViewComments {
+	case "only", "only-reviews":
+		return "reviews"
+	case "only-regular":
+		return "regular"
+	default:
+		return ""
+	}
+}
+
 // renderViewMarkdown returns raw Markdown for agent consumers and terminal-
 // formatted Markdown for interactive users.
 func renderViewMarkdown(content string) (string, error) {
@@ -420,6 +458,30 @@ func renderPRSummary(pr *gh.PRInfo, reviews []gh.PRReview) error {
 	}
 	fmt.Print(rendered)
 	return nil
+}
+
+func renderPRCommentHeader(pr *gh.PRInfo) error {
+	header := fmt.Sprintf("# #%d %s", pr.Number, pr.Title)
+	rendered, err := renderViewMarkdown(header)
+	if err != nil {
+		return err
+	}
+	fmt.Print(rendered)
+	return nil
+}
+
+func renderPRWithOnlyReviewComments(pr *gh.PRInfo, reviewComments []gh.ReviewComment) error {
+	if err := renderPRCommentHeader(pr); err != nil {
+		return err
+	}
+	return renderReviewComments(reviewComments)
+}
+
+func renderPRWithOnlyRegularComments(pr *gh.PRInfo, comments []gh.Comment) error {
+	if err := renderPRCommentHeader(pr); err != nil {
+		return err
+	}
+	return renderComments(comments)
 }
 
 func renderPRWithComments(pr *gh.PRInfo, reviews []gh.PRReview, comments []gh.Comment, reviewComments []gh.ReviewComment) error {

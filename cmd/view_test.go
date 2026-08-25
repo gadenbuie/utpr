@@ -49,3 +49,31 @@ func TestViewHasAgentFlag(t *testing.T) {
 		t.Errorf("unexpected --agent help: %q", flag.Usage)
 	}
 }
+
+func TestCommentOnlyMode(t *testing.T) {
+	previous := flagViewComments
+	t.Cleanup(func() {
+		flagViewComments = previous
+	})
+
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{value: "only", want: "reviews"},
+		{value: "only-reviews", want: "reviews"},
+		{value: "only-regular", want: "regular"},
+		{value: "reviews", want: ""},
+		{value: "regular", want: ""},
+		{value: "none", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			flagViewComments = tt.value
+			if got := commentOnlyMode(); got != tt.want {
+				t.Errorf("commentOnlyMode() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -164,6 +164,9 @@ utpr view
 # Print raw Markdown for an agent or other text-processing tool
 utpr view --agent
 
+# Show unresolved review comments without the PR body
+utpr view --comments only
+
 # Done reviewing
 utpr finish
 ```
