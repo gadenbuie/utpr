@@ -947,6 +947,51 @@ func GetJobLogs(ownerRepo string, jobID int64) (string, error) {
 	return string(body), nil
 }
 
+// RerunWorkflowFailedJobs re-runs the failed jobs in a workflow run.
+func RerunWorkflowFailedJobs(ownerRepo string, runID int64) error {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/rerun-failed-jobs",
+		url.PathEscape(owner), url.PathEscape(repo), runID)
+	return client.Post(path, nil, nil)
+}
+
+// RerunWorkflowAllJobs re-runs all jobs in a workflow run.
+func RerunWorkflowAllJobs(ownerRepo string, runID int64) error {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/rerun",
+		url.PathEscape(owner), url.PathEscape(repo), runID)
+	return client.Post(path, nil, nil)
+}
+
+// RerunWorkflowJob re-runs a specific job by its ID.
+func RerunWorkflowJob(ownerRepo string, jobID int64) error {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/jobs/%d/rerun",
+		url.PathEscape(owner), url.PathEscape(repo), jobID)
+	return client.Post(path, nil, nil)
+}
+
 // splitOwnerRepo splits "owner/repo" into its two components.
 // Returns an error if the input is not in "owner/repo" format.
 func splitOwnerRepo(ownerRepo string) (string, string, error) {

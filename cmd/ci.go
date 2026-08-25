@@ -44,6 +44,23 @@ var ciLogsCmd = &cobra.Command{
 	RunE:  runCILogs,
 }
 
+var ciRerunCmd = &cobra.Command{
+	Use:   "rerun [#pr | @branch | number | branch | ref]",
+	Short: "Re-run CI jobs",
+	Long: `Re-run CI jobs for the current branch or a specific PR, branch, or ref.
+
+By default, re-runs failed jobs. Use --job to control which jobs are re-run:
+
+  utpr ci rerun              re-run failed jobs (default)
+  utpr ci rerun 123          re-run failed jobs for PR #123
+  utpr ci rerun --job all    re-run all jobs
+  utpr ci rerun --job failed re-run failed jobs (explicit)
+  utpr ci rerun --job test   re-run jobs matching "test" (substring)
+  utpr ci rerun --job test --job lint  re-run jobs matching "test" or "lint"`,
+	Args: cobra.MaximumNArgs(1),
+	RunE:  runCIRerun,
+}
+
 var (
 	flagCIWeb    bool
 	flagCIWatch  bool
@@ -71,6 +88,12 @@ var (
 	flagCILogsAgent      bool
 )
 
+var (
+	flagCIRerunJob   []string
+	flagCIRerunPick  bool
+	flagCIRerunAgent bool
+)
+
 func init() {
 	ciCmd.Flags().BoolVarP(&flagCIWeb, "web", "w", false, "Open checks in the browser")
 	ciCmd.Flags().BoolVar(&flagCIWatch, "watch", false, "Poll until all checks complete, with live status display")
@@ -89,7 +112,12 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
 
+	ciRerunCmd.Flags().StringArrayVarP(&flagCIRerunJob, "job", "j", nil, "Re-run specific jobs by name (substring match); use 'failed' or 'all' for failed or all jobs")
+	ciRerunCmd.Flags().BoolVar(&flagCIRerunPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
+	ciRerunCmd.Flags().BoolVar(&flagCIRerunAgent, "agent", false, "Show unstyled output for agent consumption")
+
 	ciCmd.AddCommand(ciLogsCmd)
+	ciCmd.AddCommand(ciRerunCmd)
 }
 
 // ciTarget describes a resolved CI target: the commit to show checks for,
@@ -286,7 +314,7 @@ func printCIInfo(agent bool, msg string) {
 }
 
 func ciAgentMode() bool {
-	return flagCIAgent || flagCILogsAgent
+	return flagCIAgent || flagCILogsAgent || flagCIRerunAgent
 }
 
 func spinCIWithResult[T any](title string, fn func() (T, error)) (T, error) {
@@ -1156,5 +1184,397 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 		label = fmt.Sprintf("%d failed %s", len(targetJobs), noun)
 	}
 	fmt.Fprintln(os.Stderr, logSeparator(label))
+	return nil
+}
+
+// --- ci rerun ---
+
+// resolveRerunMode interprets --job flags and returns the rerun mode
+// ("failed", "all", or "specific") and, for "specific" mode, the job name
+// filters (substring matches).
+func resolveRerunMode(jobs []string) (mode string, filters []string, err error) {
+	var hasAll, hasFailed bool
+	var specific []string
+	for _, j := range jobs {
+		switch j {
+		case "all":
+			hasAll = true
+		case "failed":
+			hasFailed = true
+		default:
+			specific = append(specific, j)
+		}
+	}
+	switch {
+	case hasAll && hasFailed:
+		return "", nil, fmt.Errorf("--job all and --job failed are mutually exclusive")
+	case hasAll && len(specific) > 0:
+		return "", nil, fmt.Errorf("--job all cannot be combined with specific job names")
+	case hasFailed && len(specific) > 0:
+		return "", nil, fmt.Errorf("--job failed cannot be combined with specific job names")
+	case hasAll:
+		return "all", nil, nil
+	case hasFailed:
+		return "failed", nil, nil
+	case len(specific) > 0:
+		return "specific", specific, nil
+	default:
+		return "failed", nil, nil
+	}
+}
+
+func runCIRerun(cmd *cobra.Command, args []string) error {
+	cfg, err := remote.Detect()
+	if err != nil {
+		return ui.Die(err.Error())
+	}
+
+	target, err := resolveCITarget(cfg, args, flagCIRerunPick)
+	if err != nil {
+		return err
+	}
+	ownerRepo, sha := target.ownerRepo, target.sha
+
+	if flagCIRerunPick {
+		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
+		if pickErr != nil {
+			return pickErr
+		}
+		if picked == nil {
+			return nil // cancelled, or no runs found (message already printed)
+		}
+		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
+	}
+
+	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
+		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
+	})
+	if err != nil {
+		return ui.Dief("Could not fetch CI runs: %v", err)
+	}
+	if len(runs) == 0 {
+		printCIInfo(flagCIRerunAgent, "No CI runs found for this commit.")
+		return nil
+	}
+	runs = latestRunsPerWorkflow(runs)
+
+	// Only completed runs can be re-run.
+	var completedRuns []gh.WorkflowRun
+	for _, r := range runs {
+		if r.Status == "completed" {
+			completedRuns = append(completedRuns, r)
+		}
+	}
+	if len(completedRuns) == 0 {
+		printCIInfo(flagCIRerunAgent, "No completed CI runs to re-run.")
+		return nil
+	}
+
+	agent := flagCIRerunAgent
+
+	// Interactive mode: --pick without --job shows a job picker, analogous
+	// to 'utpr ci logs' interactive mode.
+	if flagCIRerunPick && len(flagCIRerunJob) == 0 {
+		return runCIRerunInteractive(ownerRepo, completedRuns, agent)
+	}
+
+	// Non-interactive: use --job flags (or default to failed).
+	mode, filters, modeErr := resolveRerunMode(flagCIRerunJob)
+	if modeErr != nil {
+		return ui.Die(modeErr.Error())
+	}
+
+	switch mode {
+	case "failed":
+		return rerunWorkflowRuns(ownerRepo, completedRuns, "failed", agent)
+	case "all":
+		return rerunWorkflowRuns(ownerRepo, completedRuns, "all", agent)
+	default:
+		return rerunSpecificJobs(ownerRepo, completedRuns, filters, agent)
+	}
+}
+
+// runCIRerunInteractive fetches jobs for all completed runs, presents a
+// picker, and executes the rerun based on the user's selection.
+func runCIRerunInteractive(ownerRepo string, runs []gh.WorkflowRun, agent bool) error {
+	var allJobs, failedJobs []jobEntry
+	for _, run := range runs {
+		jobs, fetchErr := spinCIWithResult(
+			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
+			func() ([]gh.WorkflowJob, error) {
+				return gh.ListWorkflowRunJobs(ownerRepo, run.ID)
+			},
+		)
+		if fetchErr != nil {
+			ui.Warnf("Could not fetch jobs for '%s': %v", run.Name, fetchErr)
+			continue
+		}
+		for _, job := range jobs {
+			if job.Status != "completed" {
+				continue
+			}
+			entry := jobEntry{RunName: run.Name, Job: job}
+			allJobs = append(allJobs, entry)
+			if isFailedConclusion(job.Conclusion) {
+				failedJobs = append(failedJobs, entry)
+			}
+		}
+	}
+
+	if len(allJobs) == 0 {
+		printCIInfo(agent, "No completed CI jobs found for this commit.")
+		return nil
+	}
+
+	selection, err := pickCIRerunJobs(allJobs, failedJobs)
+	if err != nil {
+		return err
+	}
+	if selection == nil {
+		return nil // cancelled
+	}
+
+	switch selection.mode {
+	case "failed":
+		return rerunWorkflowRuns(ownerRepo, runs, "failed", agent)
+	case "all":
+		return rerunWorkflowRuns(ownerRepo, runs, "all", agent)
+	default:
+		label := fmt.Sprintf("%s / %s", selection.targets[0].RunName, selection.targets[0].Job.Name)
+		return rerunJobEntries(ownerRepo, selection.targets, label, agent)
+	}
+}
+
+// rerunSelection holds the result of the interactive job picker.
+type rerunSelection struct {
+	mode    string    // "failed", "all", or "specific"
+	targets []jobEntry // for "specific" mode
+}
+
+// pickCIRerunJobs presents an interactive picker for which jobs to re-run,
+// analogous to pickCILogs. Returns (nil, nil) if the user cancels.
+func pickCIRerunJobs(allJobs, failedJobs []jobEntry) (*rerunSelection, error) {
+	const (
+		pickAllFailed = -1
+		pickAllJobs   = -2
+	)
+
+	var opts []huh.Option[int]
+	if len(failedJobs) > 0 {
+		opts = append(opts, huh.NewOption(
+			fmt.Sprintf("All failed jobs (%d)", len(failedJobs)),
+			pickAllFailed,
+		))
+	}
+	opts = append(opts, huh.NewOption(fmt.Sprintf("All jobs (%d)", len(allJobs)), pickAllJobs))
+
+	maxRunLen := 0
+	for _, e := range allJobs {
+		if l := len([]rune(e.RunName)); l > maxRunLen {
+			maxRunLen = l
+		}
+	}
+	for i, entry := range allJobs {
+		runLabel := ui.StyleMuted.Render(ui.PadRight(entry.RunName, maxRunLen) + " /")
+		label := runLabel + " " + entry.Job.Name + "  " + workflowJobIcon(entry.Job)
+		opts = append(opts, huh.NewOption(label, i))
+	}
+
+	choice := pickAllFailed
+	if len(failedJobs) == 0 {
+		choice = pickAllJobs
+	}
+
+	sel := huh.NewSelect[int]().
+		Title("Select jobs to re-run:").
+		Options(opts...).
+		Value(&choice).
+		Height(ui.SelectHeight(len(opts)))
+
+	if err := huh.NewForm(huh.NewGroup(sel)).WithShowHelp(true).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			ui.Info("Cancelled.")
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	switch choice {
+	case pickAllFailed:
+		return &rerunSelection{mode: "failed"}, nil
+	case pickAllJobs:
+		return &rerunSelection{mode: "all"}, nil
+	default:
+		return &rerunSelection{mode: "specific", targets: []jobEntry{allJobs[choice]}}, nil
+	}
+}
+
+// rerunWorkflowRuns re-runs failed or all jobs for each workflow run.
+func rerunWorkflowRuns(ownerRepo string, runs []gh.WorkflowRun, mode string, agent bool) error {
+	var description string
+	if mode == "failed" {
+		description = fmt.Sprintf("failed jobs for %d workflow %s", len(runs), pluralRun(len(runs)))
+	} else {
+		description = fmt.Sprintf("all jobs for %d workflow %s", len(runs), pluralRun(len(runs)))
+	}
+
+	printCIRerunStart(agent, fmt.Sprintf("Re-running %s...", description))
+
+	var successCount, failCount int
+	for _, run := range runs {
+		var apiErr error
+		if mode == "failed" {
+			apiErr = gh.RerunWorkflowFailedJobs(ownerRepo, run.ID)
+		} else {
+			apiErr = gh.RerunWorkflowAllJobs(ownerRepo, run.ID)
+		}
+		label := fmt.Sprintf("%s (#%d)", run.Name, run.RunNumber)
+		if apiErr != nil {
+			printCIRerunItem(agent, false, label, apiErr.Error())
+			failCount++
+		} else {
+			printCIRerunItem(agent, true, label, "")
+			successCount++
+		}
+	}
+
+	return summarizeRerun(agent, successCount, failCount, description)
+}
+
+// rerunSpecificJobs re-runs individual jobs matching the given name filters
+// (substring match), across all completed workflow runs.
+func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string, agent bool) error {
+	var targets []jobEntry
+	for _, run := range runs {
+		jobs, fetchErr := spinCIWithResult(
+			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
+			func() ([]gh.WorkflowJob, error) {
+				return gh.ListWorkflowRunJobs(ownerRepo, run.ID)
+			},
+		)
+		if fetchErr != nil {
+			ui.Warnf("Could not fetch jobs for '%s': %v", run.Name, fetchErr)
+			continue
+		}
+		for _, job := range jobs {
+			if job.Status != "completed" {
+				continue
+			}
+			if !matchesAnyFilter(job.Name, filters) {
+				continue
+			}
+			targets = append(targets, jobEntry{RunName: run.Name, Job: job})
+		}
+	}
+
+	if len(targets) == 0 {
+		quoted := quoteFilters(filters)
+		printCISuccess(agent, fmt.Sprintf("No jobs matching %s.", quoted))
+		return nil
+	}
+
+	quoted := quoteFilters(filters)
+	noun := "job"
+	if len(targets) > 1 {
+		noun = "jobs"
+	}
+	description := fmt.Sprintf("%d %s matching %s", len(targets), noun, quoted)
+	return rerunJobEntries(ownerRepo, targets, description, agent)
+}
+
+// rerunJobEntries re-runs the given job entries individually and reports results.
+func rerunJobEntries(ownerRepo string, targets []jobEntry, description string, agent bool) error {
+	printCIRerunStart(agent, fmt.Sprintf("Re-running %s...", description))
+
+	var successCount, failCount int
+	for _, t := range targets {
+		label := fmt.Sprintf("%s / %s", t.RunName, t.Job.Name)
+		apiErr := gh.RerunWorkflowJob(ownerRepo, t.Job.ID)
+		if apiErr != nil {
+			printCIRerunItem(agent, false, label, apiErr.Error())
+			failCount++
+		} else {
+			printCIRerunItem(agent, true, label, "")
+			successCount++
+		}
+	}
+
+	return summarizeRerun(agent, successCount, failCount, description)
+}
+
+// matchesAnyFilter reports whether name contains any of the filters as a
+// substring (case-sensitive, matching the --job behavior of 'utpr ci logs').
+func matchesAnyFilter(name string, filters []string) bool {
+	for _, f := range filters {
+		if strings.Contains(name, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// quoteFilters returns a human-readable, comma-separated list of quoted filters.
+func quoteFilters(filters []string) string {
+	quoted := make([]string, len(filters))
+	for i, f := range filters {
+		quoted[i] = fmt.Sprintf("%q", f)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// pluralRun returns "run" or "runs" for the given count.
+func pluralRun(n int) string {
+	if n == 1 {
+		return "run"
+	}
+	return "runs"
+}
+
+func printCIRerunStart(agent bool, msg string) {
+	if agent {
+		_, _ = fmt.Fprintln(os.Stdout, msg)
+		return
+	}
+	ui.Info(msg)
+}
+
+func printCIRerunItem(agent bool, success bool, label, errMsg string) {
+	var icon string
+	if success {
+		icon = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("✓")
+	} else {
+		icon = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗")
+	}
+	line := fmt.Sprintf("  %s %s", icon, label)
+	if errMsg != "" {
+		line += ": " + errMsg
+	}
+	if agent {
+		_, _ = fmt.Fprintln(os.Stdout, ui.StripANSI(line))
+		return
+	}
+	fmt.Fprintln(os.Stderr, line)
+}
+
+func summarizeRerun(agent bool, successCount, failCount int, description string) error {
+	if failCount == 0 {
+		printCISuccess(agent, fmt.Sprintf("Re-queued %s.", description))
+		return nil
+	}
+	if successCount == 0 {
+		msg := fmt.Sprintf("Failed to re-run %s.", description)
+		if agent {
+			_, _ = fmt.Fprintln(os.Stdout, msg)
+		} else {
+			ui.Error(msg)
+		}
+		return fmt.Errorf("failed to re-run %s", description)
+	}
+	msg := fmt.Sprintf("Re-queued %s. %d failed.", description, failCount)
+	if agent {
+		_, _ = fmt.Fprintln(os.Stdout, msg)
+	} else {
+		ui.Warn(msg)
+	}
 	return nil
 }
