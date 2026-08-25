@@ -19,10 +19,14 @@ var fetchCmd = &cobra.Command{
 	RunE:  runFetch,
 }
 
-var flagFetchWorktree bool
+var (
+	flagFetchWorktree bool
+	flagFetchYes      bool
+)
 
 func init() {
 	fetchCmd.Flags().BoolVar(&flagFetchWorktree, "worktree", false, "Check out the PR in a new git worktree")
+	fetchCmd.Flags().BoolVar(&flagFetchYes, "yes", false, "Assume yes for confirmation prompts")
 }
 
 func runFetch(cmd *cobra.Command, args []string) error {

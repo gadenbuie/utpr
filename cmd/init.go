@@ -24,11 +24,13 @@ var initCmd = &cobra.Command{
 var (
 	flagInitWorktree bool
 	flagInitBase     string
+	flagInitYes      bool
 )
 
 func init() {
 	initCmd.Flags().BoolVar(&flagInitWorktree, "worktree", false, "Create branch in a new git worktree")
 	initCmd.Flags().StringVar(&flagInitBase, "base", "", "Base branch or ref to create from")
+	initCmd.Flags().BoolVar(&flagInitYes, "yes", false, "Assume yes for confirmation prompts")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -225,9 +227,13 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 
 	if existingBranch == "" {
 		suggested := issueToSlug(issueNumber, issue.Title)
-		existingBranch, err = ui.Input("Branch name:", suggested, "branch name")
-		if err != nil {
-			return "", err
+		if flagInitYes {
+			existingBranch = suggested
+		} else {
+			existingBranch, err = ui.Input("Branch name:", suggested, "branch name")
+			if err != nil {
+				return "", err
+			}
 		}
 		if existingBranch == "" {
 			return "", ui.Die("Branch name required.")
@@ -246,9 +252,12 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 		if isAssigned {
 			ui.Infof("You are already assigned to issue #%d.", issueNumber)
 		} else {
-			confirmed, err := ui.Confirm(fmt.Sprintf("Assign yourself to issue #%d?", issueNumber), true)
-			if err != nil {
-				return "", err
+			confirmed := flagInitYes
+			if !confirmed {
+				confirmed, err = ui.Confirm(fmt.Sprintf("Assign yourself to issue #%d?", issueNumber), true)
+				if err != nil {
+					return "", err
+				}
 			}
 			if confirmed {
 				if err := gh.AddIssueAssignee(ownerRepo, issueNumber, login); err != nil {
@@ -264,6 +273,10 @@ func handleIssue(issueNumber int, existingBranch string) (string, error) {
 }
 
 func previewIssue(issue *gh.IssueInfo) error {
+	if flagInitYes {
+		return nil
+	}
+
 	confirmed, err := ui.Confirm(fmt.Sprintf("Preview issue #%d?", issue.Number), false)
 	if err != nil {
 		return err

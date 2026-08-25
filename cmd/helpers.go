@@ -10,6 +10,10 @@ import (
 	"github.com/gadenbuie/utpr/internal/ui"
 )
 
+func assumeYes() bool {
+	return flagInitYes || flagFetchYes || flagResumeYes
+}
+
 // findLocalBranchForPR returns the local branch name corresponding to a PR,
 // checking the plain headRef, the current pr/{number}-{author}-{branch}
 // scheme, and the legacy pr-{number}/{branch} scheme. Returns "" if no local
@@ -49,6 +53,9 @@ func challengeUncommittedChanges() error {
 		return nil
 	}
 	ui.Warn("There are uncommitted changes, which may cause problems or be lost when we push, pull, switch or compare branches.")
+	if assumeYes() {
+		return nil
+	}
 	return ui.MustConfirm("Do you want to proceed anyway?", false)
 }
 

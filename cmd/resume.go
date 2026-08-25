@@ -17,10 +17,14 @@ var resumeCmd = &cobra.Command{
 	RunE:  runResume,
 }
 
-var flagResumeWorktree bool
+var (
+	flagResumeWorktree bool
+	flagResumeYes      bool
+)
 
 func init() {
 	resumeCmd.Flags().BoolVar(&flagResumeWorktree, "worktree", false, "Move the branch into a new git worktree")
+	resumeCmd.Flags().BoolVar(&flagResumeYes, "yes", false, "Assume yes for confirmation prompts")
 }
 
 func runResume(cmd *cobra.Command, args []string) error {

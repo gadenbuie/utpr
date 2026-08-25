@@ -70,7 +70,7 @@ func initWorktree(branch string) error {
 	runWorktreeSetup(wtDir)
 
 	ed := editor.AutoDetect()
-	if ed != "" {
+	if ed != "" && !assumeYes() {
 		_ = editor.Open(ed, wtDir)
 	}
 	ui.Infof("cd \"%s\"", wtDir)
@@ -79,6 +79,11 @@ func initWorktree(branch string) error {
 
 // offerWorktreeNavigation presents options for navigating to an existing worktree.
 func offerWorktreeNavigation(targetPath string) {
+	if assumeYes() {
+		ui.Infof("cd \"%s\"", targetPath)
+		return
+	}
+
 	ed := editor.AutoDetect()
 
 	var options []string
@@ -148,9 +153,19 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		opts[i] = huh.NewOption(item, item).Selected(!isManagedBySetupHook(item))
 	}
 
-	selected, err := ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
-	if err != nil || len(selected) == 0 {
-		return
+	var selected []string
+	if assumeYes() {
+		for _, item := range available {
+			if !isManagedBySetupHook(item) {
+				selected = append(selected, item)
+			}
+		}
+	} else {
+		var err error
+		selected, err = ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
+		if err != nil || len(selected) == 0 {
+			return
+		}
 	}
 
 	for _, item := range selected {
