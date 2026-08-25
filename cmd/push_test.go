@@ -2,6 +2,12 @@ package cmd
 
 import "testing"
 
+func TestPushHasAgentFlag(t *testing.T) {
+	if pushCmd.Flags().Lookup("agent") == nil {
+		t.Fatal("push command is missing the --agent flag")
+	}
+}
+
 func TestDeterminePRTarget(t *testing.T) {
 	tests := []struct {
 		name       string

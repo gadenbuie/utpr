@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -19,14 +20,19 @@ var pushCmd = &cobra.Command{
 	RunE:  runPush,
 }
 
-var pushEditMode string
-var pushForce bool
+var (
+	pushEditMode string
+	pushForce    bool
+	pushAgent    bool
+)
 
 func init() {
 	pushCmd.Flags().StringVar(&pushEditMode, "edit", "terminal",
 		"PR creation mode: 'terminal' (default) or 'browser'")
 	pushCmd.Flags().BoolVar(&pushForce, "force", false,
 		"Force push using --force-with-lease (safe force push after rebase)")
+	pushCmd.Flags().BoolVar(&pushAgent, "agent", false,
+		"Show unstyled output for agent consumption")
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
@@ -68,7 +74,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return ui.Die(err.Error())
 		}
-		ui.Successf("Pushed '%s' to %s.", current, cfg.PushRemote)
+		pushSuccessf("Pushed '%s' to %s.", current, cfg.PushRemote)
 
 		if pushEditMode == "browser" {
 			return openCompareURL(cfg, current)
@@ -101,10 +107,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return ui.Die(err.Error())
 	}
-	ui.Successf("Pushed to %s.", tracking)
+	pushSuccessf("Pushed to %s.", tracking)
 
 	// Check if there's already a PR for this branch
-	if git.GetBranchPRURL(current) != "" {
+	if prURL := git.GetBranchPRURL(current); prURL != "" {
+		printPushAgentURL(prURL)
 		return nil
 	}
 
@@ -112,6 +119,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if pr != nil {
 		// PR exists on GitHub but not stored locally — save it
 		_ = git.SetBranchPRURL(current, pr.HTMLURL)
+		printPushAgentURL(pr.HTMLURL)
 		return nil
 	}
 
@@ -205,8 +213,26 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 	if err := git.SetBranchPRURL(current, pr.HTMLURL); err != nil {
 		ui.Warnf("Could not store PR URL in git config: %v", err)
 	}
-	ui.Successf("PR created: %s", pr.HTMLURL)
+	if pushAgent {
+		fmt.Fprintln(os.Stdout, pr.HTMLURL)
+	} else {
+		ui.Successf("PR created: %s", pr.HTMLURL)
+	}
 	return nil
+}
+
+func pushSuccessf(format string, args ...any) {
+	if pushAgent {
+		fmt.Fprintf(os.Stdout, format+"\n", args...)
+		return
+	}
+	ui.Successf(format, args...)
+}
+
+func printPushAgentURL(url string) {
+	if pushAgent {
+		fmt.Fprintln(os.Stdout, url)
+	}
 }
 
 func openCompareURL(cfg *remote.Config, branch string) error {
@@ -232,6 +258,10 @@ func openCompareURL(cfg *remote.Config, branch string) error {
 	}
 
 	compareURL := buildCompareURL(cfg.Layout, pushOwnerRepo, sourceOwnerRepo, cfg.DefaultBranch, branch)
+	if pushAgent {
+		fmt.Fprintln(os.Stdout, compareURL)
+		return nil
+	}
 	return openURL(compareURL)
 }
 
