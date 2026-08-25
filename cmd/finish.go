@@ -170,8 +170,9 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 		return ui.Dief("Failed to fetch PR #%d details.", prNumber)
 	}
 
-	// Find and delete local branch
-	localBranch := findLocalBranchForPR(prNumber, pr.Head.Ref, pr.User.Login, cfg.DefaultBranch)
+	// Find and delete local branch (exclude the PR's base ref to avoid
+	// matching a stacked PR's base branch that shares the head branch name)
+	localBranch := findLocalBranchForPR(prNumber, pr.Head.Ref, pr.User.Login, cfg.DefaultBranch, pr.Base.Ref)
 
 	if localBranch != "" {
 		if err := removeWorktree(localBranch); err != nil {

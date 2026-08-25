@@ -1447,6 +1447,23 @@ func pickCIRerunJobs(allJobs, failedJobs []jobEntry) (*rerunSelection, error) {
 
 // rerunWorkflowRuns re-runs failed or all jobs for each workflow run.
 func rerunWorkflowRuns(ownerRepo string, runs []gh.WorkflowRun, mode string, agent bool) error {
+	// In "failed" mode, only rerun runs that have a failed conclusion.
+	// Runs with a successful conclusion have no failed jobs, so GitHub
+	// rejects the rerun request.
+	if mode == "failed" {
+		var failedRuns []gh.WorkflowRun
+		for _, r := range runs {
+			if isFailedConclusion(r.Conclusion) {
+				failedRuns = append(failedRuns, r)
+			}
+		}
+		if len(failedRuns) == 0 {
+			printCISuccess(agent, "No failed workflow runs to re-run.")
+			return nil
+		}
+		runs = failedRuns
+	}
+
 	var description string
 	if mode == "failed" {
 		description = fmt.Sprintf("failed jobs for %d workflow %s", len(runs), pluralRun(len(runs)))
@@ -1481,7 +1498,6 @@ func rerunWorkflowRuns(ownerRepo string, runs []gh.WorkflowRun, mode string, age
 // (substring match), across all completed workflow runs.
 func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string, agent bool) error {
 	var targets []jobEntry
-	seenRuns := map[int64]bool{}
 	fetchFailures := 0
 	for _, run := range runs {
 		jobs, fetchErr := spinCIWithResult(
@@ -1502,13 +1518,14 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 			if !matchesAnyFilter(job.Name, filters) {
 				continue
 			}
-			if seenRuns[job.RunID] {
-				continue
-			}
 			targets = append(targets, jobEntry{RunName: run.Name, Job: job})
-			seenRuns[job.RunID] = true
 		}
 	}
+
+	// Only one job per workflow run can be re-queued (GitHub API limitation:
+	// after a successful rerun, the run is no longer "completed"). Deduplicate
+	// with a visible warning for each dropped match.
+	targets = dedupJobTargets(targets, agent)
 
 	if len(targets) == 0 {
 		quoted := quoteFilters(filters)
@@ -1539,6 +1556,29 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 		return fmt.Errorf("could not fetch jobs for %d workflow run(s)", fetchFailures)
 	}
 	return nil
+}
+
+// dedupJobTargets keeps only the first job per workflow run, warning about
+// each dropped match. Only one job per run can be re-queued because the
+// GitHub API rejects rerun requests once the run is no longer "completed".
+func dedupJobTargets(targets []jobEntry, agent bool) []jobEntry {
+	seenRuns := map[int64]bool{}
+	var result []jobEntry
+	for _, t := range targets {
+		if seenRuns[t.Job.RunID] {
+			label := fmt.Sprintf("%s / %s", t.RunName, t.Job.Name)
+			msg := fmt.Sprintf("Skipping '%s': another job from this run already selected for re-run.", label)
+			if agent {
+				_, _ = fmt.Fprintln(os.Stdout, msg)
+			} else {
+				ui.Warn(msg)
+			}
+			continue
+		}
+		result = append(result, t)
+		seenRuns[t.Job.RunID] = true
+	}
+	return result
 }
 
 // rerunJobEntries re-runs the given job entries individually and reports results.

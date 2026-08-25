@@ -19,13 +19,18 @@ func assumeYes() bool {
 // scheme, and the legacy pr-{number}/{branch} scheme. Returns "" if no local
 // branch is found. The defaultBranch is excluded from the bare headRef check
 // to avoid matching the repo's own default branch when a fork's PR uses the
-// same branch name.
-func findLocalBranchForPR(prNumber int, headRef, author, defaultBranch string) string {
-	return findLocalBranchForPRWith(prNumber, headRef, author, defaultBranch, git.BranchExists)
+// same branch name. Additional branches to exclude (e.g. the PR's base ref)
+// can be passed as excludeBranches.
+func findLocalBranchForPR(prNumber int, headRef, author, defaultBranch string, excludeBranches ...string) string {
+	return findLocalBranchForPRWith(prNumber, headRef, author, defaultBranch, git.BranchExists, excludeBranches...)
 }
 
-func findLocalBranchForPRWith(prNumber int, headRef, author, defaultBranch string, branchExists func(string) bool) string {
-	if headRef != defaultBranch && branchExists(headRef) {
+func findLocalBranchForPRWith(prNumber int, headRef, author, defaultBranch string, branchExists func(string) bool, excludeBranches ...string) string {
+	excluded := map[string]bool{defaultBranch: true}
+	for _, b := range excludeBranches {
+		excluded[b] = true
+	}
+	if !excluded[headRef] && branchExists(headRef) {
 		return headRef
 	}
 	newName := fmt.Sprintf("pr/%d-%s-%s", prNumber, author, headRef)
@@ -224,10 +229,30 @@ func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
 	onBase, _ := git.IsOnBranch(baseBranch)
 	if !onBase {
 		if err := switchToBranch(baseBranch, remote); err != nil {
-			return err
+			// Base branch might not exist remotely (e.g., parent PR merged
+			// and branch deleted). Fall back to the default branch.
+			if baseBranch == defaultBranch {
+				return err
+			}
+			ui.Warnf("Could not switch to base branch '%s'. Falling back to '%s'.", baseBranch, defaultBranch)
+			if err := git.SwitchBranch(defaultBranch); err != nil {
+				return err
+			}
+			return pullBranch(remote, defaultBranch)
 		}
 	}
-	return pullBranch(remote, baseBranch)
+	if err := pullBranch(remote, baseBranch); err != nil {
+		// Pull might fail if the remote branch was deleted after switching.
+		if baseBranch == defaultBranch {
+			return err
+		}
+		ui.Warnf("Could not pull base branch '%s'. Falling back to '%s'.", baseBranch, defaultBranch)
+		if err := git.SwitchBranch(defaultBranch); err != nil {
+			return err
+		}
+		return pullBranch(remote, defaultBranch)
+	}
+	return nil
 }
 
 type mergedPRPickerOpts struct {
