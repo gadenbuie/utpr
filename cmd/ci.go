@@ -50,6 +50,7 @@ var (
 	flagCIFailed bool
 	flagCIWait   string
 	flagCIPick   bool
+	flagCIAgent  bool
 )
 
 // pickRunsLimit is the number of runs fetched for --pick.
@@ -67,6 +68,7 @@ var (
 	flagCILogsFailed     bool
 	flagCILogsJob        string
 	flagCILogsPick       bool
+	flagCILogsAgent      bool
 )
 
 func init() {
@@ -76,6 +78,7 @@ func init() {
 	ciCmd.Flags().StringVar(&flagCIWait, "wait", "", `Wait for checks: "all" (all complete) or "failed" (stop on first failure); exits 0 on success, 1 on failure`)
 	ciCmd.Flags().Lookup("wait").NoOptDefVal = "all"
 	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
+	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
@@ -84,6 +87,7 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsFailed, "failed", false, "Show logs for all failed jobs without prompting")
 	ciLogsCmd.Flags().StringVar(&flagCILogsJob, "job", "", "Show logs for a specific job by name (substring match)")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
+	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
 
 	ciCmd.AddCommand(ciLogsCmd)
 }
@@ -200,7 +204,7 @@ func resolveCITarget(cfg *remote.Config, args []string, pick bool) (ciTarget, er
 
 	if sha != remoteSHA {
 		if !pick {
-			ui.Info("Showing CI for the last pushed commit (HEAD has unpushed changes).")
+			printCIInfo(flagCIAgent, "Showing CI for the last pushed commit (HEAD has unpushed changes).")
 		}
 		sha = remoteSHA
 	}
@@ -266,10 +270,34 @@ func runCI(cmd *cobra.Command, args []string) error {
 				return showCIChecks(target.pickOwnerRepo, picked.HeadSHA)
 			}
 		}
-		ui.Info("No checks found for this commit.")
+		printCIInfo(flagCIAgent, "No checks found for this commit.")
 		return nil
 	}
 	return err
+}
+
+func printCIInfo(agent bool, msg string) {
+	if agent {
+		fmt.Fprintln(os.Stdout, msg)
+		return
+	}
+	ui.Info(msg)
+}
+
+func printCIInfof(agent bool, format string, args ...any) {
+	if agent {
+		fmt.Fprintf(os.Stdout, format+"\n", args...)
+		return
+	}
+	ui.Infof(format, args...)
+}
+
+func printCISuccess(agent bool, msg string) {
+	if agent {
+		fmt.Fprintln(os.Stdout, msg)
+		return
+	}
+	ui.Success(msg)
 }
 
 // showCIChecks fetches and renders check runs for a commit SHA. Returns
@@ -304,13 +332,17 @@ func showCIChecks(ownerRepo, sha string) error {
 			}
 		}
 		if len(failed) == 0 {
-			ui.Success("No failed checks.")
+			printCISuccess(flagCIAgent, "No failed checks.")
 			return nil
 		}
 		runs = failed
 	}
 
-	renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
+	if flagCIAgent {
+		fmt.Fprint(os.Stdout, renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false))
+	} else {
+		renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
+	}
 	return nil
 }
 
@@ -319,7 +351,7 @@ func showCIChecks(ownerRepo, sha string) error {
 // no runs are found (an informational message is printed in that case).
 func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, error) {
 	if branch == "" {
-		ui.Info("Could not determine a branch to list CI runs for.")
+		printCIInfo(flagCIAgent, "Could not determine a branch to list CI runs for.")
 		return nil, nil
 	}
 
@@ -330,7 +362,7 @@ func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, err
 		return nil, ui.Dief("Could not fetch CI runs: %v", err)
 	}
 	if len(runs) == 0 {
-		ui.Infof("No CI runs found for branch '%s'.", branch)
+		printCIInfof(flagCIAgent, "No CI runs found for branch '%s'.", branch)
 		return nil, nil
 	}
 
@@ -434,8 +466,8 @@ func countTerminalRows(output string, termWidth int) int {
 }
 
 func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
-	isInteractive := term.IsTerminal(int(os.Stderr.Fd()))
-	var prevLines int      // for fullDisplay mode
+	isInteractive := !flagCIAgent && term.IsTerminal(int(os.Stderr.Fd()))
+	var prevLines int       // for fullDisplay mode
 	var lastRendered string // for compact interactive: last full rendered msg (with ANSI)
 	var lastStatus string   // for compact non-interactive: last stripped status (without timestamp)
 
@@ -481,11 +513,15 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			var buf strings.Builder
 			renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
 			output := buf.String()
-			if prevLines > 0 {
-				fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+			if flagCIAgent {
+				fmt.Fprint(os.Stdout, ui.StripANSI(output))
+			} else {
+				if prevLines > 0 {
+					fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+				}
+				fmt.Fprint(os.Stderr, output)
+				prevLines = countTerminalRows(output, ui.GetTermWidth())
 			}
-			fmt.Fprint(os.Stderr, output)
-			prevLines = countTerminalRows(output, ui.GetTermWidth())
 		} else {
 			var parts []string
 			if running > 0 {
@@ -511,7 +547,11 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			} else {
 				stripped := ui.StripANSI(statusMsg)
 				if stripped != lastStatus {
-					fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
+					if flagCIAgent {
+						fmt.Fprintf(os.Stdout, "[%s] %s\n", ts, stripped)
+					} else {
+						fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
+					}
 					lastStatus = stripped
 				}
 			}
@@ -524,11 +564,20 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		}
 
 		clearLine()
+		summary := checkRunSummary(checkRuns)
 		if anyFailed {
-			ui.Error(checkRunSummary(checkRuns))
+			if flagCIAgent {
+				fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
+			} else {
+				ui.Error(summary)
+			}
 			return fmt.Errorf("CI checks failed")
 		}
-		ui.Success(checkRunSummary(checkRuns))
+		if flagCIAgent {
+			fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
+		} else {
+			ui.Success(summary)
+		}
 		return nil
 	}
 }
@@ -739,6 +788,12 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 	_, _ = fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
+func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) string {
+	var buf strings.Builder
+	renderCheckRuns(&buf, runs, suiteNames, showTimestamp)
+	return ui.StripANSI(buf.String())
+}
+
 // --- ci logs ---
 
 var actionsTimestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
@@ -831,7 +886,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(runs) == 0 {
-		ui.Info("No CI runs found for this commit.")
+		printCIInfo(flagCILogsAgent, "No CI runs found for this commit.")
 		return nil
 	}
 
@@ -875,7 +930,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(allJobs) == 0 {
-		ui.Info("No completed CI jobs found for this commit.")
+		printCIInfo(flagCILogsAgent, "No completed CI jobs found for this commit.")
 		return nil
 	}
 
@@ -906,9 +961,9 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 
 	if len(targetJobs) == 0 {
 		if flagCILogsJob != "" {
-			ui.Infof("No jobs matching '%s'.", flagCILogsJob)
+			printCIInfof(flagCILogsAgent, "No jobs matching '%s'.", flagCILogsJob)
 		} else {
-			ui.Success("No failed jobs.")
+			printCISuccess(flagCILogsAgent, "No failed jobs.")
 		}
 		return nil
 	}
@@ -999,7 +1054,11 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
-		fmt.Fprintln(os.Stderr, logSeparator(label))
+		if flagCILogsAgent {
+			fmt.Fprintf(os.Stdout, "## %s\n", label)
+		} else {
+			fmt.Fprintln(os.Stderr, logSeparator(label))
+		}
 
 		logs, fetchErr := ui.SpinWithResult(
 			fmt.Sprintf("Fetching logs for '%s'...", entry.Job.Name),
@@ -1013,14 +1072,31 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 		}
 
 		processed := processLogLines(logs, flagCILogsTimestamps, lines)
-		if lines > 0 && len(processed) == lines {
-			fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
+		if flagCILogsAgent {
+			for i := range processed {
+				processed[i] = ui.StripANSI(processed[i])
+			}
 		}
-		fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
+		if lines > 0 && len(processed) == lines {
+			if flagCILogsAgent {
+				fmt.Fprintf(os.Stdout, "(last %d lines)\n", lines)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
+			}
+		}
+		if flagCILogsAgent {
+			fmt.Fprintln(os.Stdout, strings.Join(processed, "\n"))
+		} else {
+			fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
+		}
 
-		if i < len(targetJobs)-1 {
+		if !flagCILogsAgent && i < len(targetJobs)-1 {
 			fmt.Fprintln(os.Stderr)
 		}
+	}
+
+	if flagCILogsAgent {
+		return nil
 	}
 
 	noun := "job"

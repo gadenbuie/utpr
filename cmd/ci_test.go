@@ -1,9 +1,45 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gadenbuie/utpr/internal/gh"
 )
+
+func TestCIAgentFlags(t *testing.T) {
+	for _, cmd := range []*struct {
+		name string
+		has  func(string) bool
+	}{
+		{name: "ci", has: func(name string) bool { return ciCmd.Flags().Lookup(name) != nil }},
+		{name: "ci logs", has: func(name string) bool { return ciLogsCmd.Flags().Lookup(name) != nil }},
+	} {
+		if !cmd.has("agent") {
+			t.Errorf("%s command is missing the --agent flag", cmd.name)
+		}
+	}
+}
+
+func TestRenderCheckRunsPlain(t *testing.T) {
+	run := gh.CheckRun{
+		Name:        "build / test",
+		Status:      "completed",
+		Conclusion:  "success",
+		StartedAt:   "2026-07-01T11:59:00Z",
+		CompletedAt: "2026-07-01T12:00:00Z",
+	}
+	run.CheckSuite.ID = 42
+
+	got := renderCheckRunsPlain([]gh.CheckRun{run}, map[int64]string{42: "build"}, false)
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("renderCheckRunsPlain() contains ANSI escape codes: %q", got)
+	}
+	if !strings.Contains(got, "test") || !strings.Contains(got, "1m 0s") {
+		t.Errorf("renderCheckRunsPlain() = %q, missing check details", got)
+	}
+}
 
 func TestLooksLikeGitRef(t *testing.T) {
 	tests := []struct {
