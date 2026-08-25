@@ -288,6 +288,13 @@ func ciAgentMode() bool {
 	return flagCIAgent || flagCILogsAgent
 }
 
+func spinCIWithResult[T any](title string, fn func() (T, error)) (T, error) {
+	if ciAgentMode() {
+		return fn()
+	}
+	return ui.SpinWithResult(title, fn)
+}
+
 func printCIInfof(agent bool, format string, args ...any) {
 	if agent {
 		fmt.Fprintf(os.Stdout, format+"\n", args...)
@@ -311,7 +318,7 @@ func showCIChecks(ownerRepo, sha string) error {
 		checkRuns    []gh.CheckRun
 		workflowRuns []gh.WorkflowRun
 	}
-	data, err := ui.SpinWithResult("Fetching CI status...", func() (ciStatus, error) {
+	data, err := spinCIWithResult("Fetching CI status...", func() (ciStatus, error) {
 		checkRuns, crErr := gh.GetCheckRuns(ownerRepo, sha)
 		if crErr != nil {
 			return ciStatus{}, crErr
@@ -359,7 +366,7 @@ func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, err
 		return nil, nil
 	}
 
-	runs, err := ui.SpinWithResult(fmt.Sprintf("Fetching CI runs for '%s'...", branch), func() ([]gh.WorkflowRun, error) {
+	runs, err := spinCIWithResult(fmt.Sprintf("Fetching CI runs for '%s'...", branch), func() ([]gh.WorkflowRun, error) {
 		return gh.ListWorkflowRunsForBranch(ownerRepo, branch, limit)
 	})
 	if err != nil {
@@ -882,7 +889,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
 	}
 
-	runs, err := ui.SpinWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
+	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
 		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
 	})
 	if err != nil {
@@ -911,7 +918,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		if !interactive && !flagCILogsAll && !isFailedConclusion(run.Conclusion) {
 			continue
 		}
-		jobs, fetchErr := ui.SpinWithResult(
+		jobs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
 			func() ([]gh.WorkflowJob, error) {
 				return gh.ListWorkflowRunJobs(ownerRepo, run.ID)
@@ -1064,7 +1071,7 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 			fmt.Fprintln(os.Stderr, logSeparator(label))
 		}
 
-		logs, fetchErr := ui.SpinWithResult(
+		logs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching logs for '%s'...", entry.Job.Name),
 			func() (string, error) {
 				return gh.GetJobLogs(ownerRepo, entry.Job.ID)

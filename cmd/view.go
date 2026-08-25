@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -307,9 +308,15 @@ func pickForView(ownerRepo, entity string) (int, error) {
 			})
 		}
 	} else {
-		prs, err := ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
-			return gh.ListPRs(ownerRepo, apiState)
-		})
+		var prs []gh.PRInfo
+		var err error
+		if flagViewAgent {
+			prs, err = gh.ListPRs(ownerRepo, apiState)
+		} else {
+			prs, err = ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
+				return gh.ListPRs(ownerRepo, apiState)
+			})
+		}
 		if err != nil {
 			return 0, ui.Dief("Failed to list %s.", label)
 		}
@@ -325,6 +332,10 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		}
 		if len(prs) == 0 {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
+		}
+		if flagViewAgent {
+			fmt.Fprint(os.Stdout, formatViewAgentPRChoices(prs))
+			return 0, fmt.Errorf("a PR number is required")
 		}
 		for _, pr := range prs {
 			state := strings.ToLower(pr.State)
@@ -354,6 +365,19 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		return 0, nil
 	}
 	return selected, nil
+}
+
+func formatViewAgentPRChoices(prs []gh.PRInfo) string {
+	var b strings.Builder
+	b.WriteString("Multiple PRs found. Choose one by rerunning with its number:\n")
+	for _, pr := range prs {
+		state := strings.ToLower(pr.State)
+		if pr.Merged {
+			state = "merged"
+		}
+		fmt.Fprintf(&b, "#%d\t%s\t%s\t@%s\n", pr.Number, state, pr.Title, pr.User.Login)
+	}
+	return b.String()
 }
 
 func prNumberFromURL(url string) int {

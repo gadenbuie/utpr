@@ -35,6 +35,13 @@ func init() {
 		"Show unstyled output for agent consumption")
 }
 
+func spinPush(title string, fn func() error) error {
+	if pushAgent {
+		return fn()
+	}
+	return ui.Spin(title, fn)
+}
+
 func runPush(cmd *cobra.Command, args []string) error {
 	cfg, err := remote.Detect()
 	if err != nil {
@@ -65,7 +72,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	if tracking == "" {
 		// First push
-		err := ui.Spin(
+		err := spinPush(
 			fmt.Sprintf("Pushing '%s' to %s...", current, cfg.PushRemote),
 			func() error {
 				return git.Push(cfg.PushRemote, true)
@@ -100,7 +107,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if pushForce {
 		pushArgs = append(pushArgs, "--force-with-lease")
 	}
-	err = ui.Spin(fmt.Sprintf("Pushing to %s...", tracking), func() error {
+	err = spinPush(fmt.Sprintf("Pushing to %s...", tracking), func() error {
 		_, pushErr := git.Run(pushArgs...)
 		return pushErr
 	})

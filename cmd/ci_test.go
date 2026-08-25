@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 func TestCIAgentFlags(t *testing.T) {
@@ -38,6 +39,35 @@ func TestRenderCheckRunsPlain(t *testing.T) {
 	}
 	if !strings.Contains(got, "test") || !strings.Contains(got, "1m 0s") {
 		t.Errorf("renderCheckRunsPlain() = %q, missing check details", got)
+	}
+}
+
+func TestSpinCIWithResultSkipsSpinnerForAgent(t *testing.T) {
+	oldCIAgent, oldCILogsAgent := flagCIAgent, flagCILogsAgent
+	defer func() {
+		flagCIAgent, flagCILogsAgent = oldCIAgent, oldCILogsAgent
+	}()
+	flagCIAgent = true
+	flagCILogsAgent = false
+
+	spinnerCalled := false
+	restore := ui.SetSpinFunc(func(title string, action func() error) error {
+		spinnerCalled = true
+		return action()
+	})
+	defer restore()
+
+	got, err := spinCIWithResult("Fetching CI status...", func() (string, error) {
+		return "status", nil
+	})
+	if err != nil {
+		t.Fatalf("spinCIWithResult() error = %v", err)
+	}
+	if got != "status" {
+		t.Errorf("spinCIWithResult() = %q, want %q", got, "status")
+	}
+	if spinnerCalled {
+		t.Error("spinCIWithResult() invoked the spinner in agent mode")
 	}
 }
 

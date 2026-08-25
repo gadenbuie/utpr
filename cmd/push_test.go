@@ -1,10 +1,36 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gadenbuie/utpr/internal/ui"
+)
 
 func TestPushHasAgentFlag(t *testing.T) {
 	if pushCmd.Flags().Lookup("agent") == nil {
 		t.Fatal("push command is missing the --agent flag")
+	}
+}
+
+func TestSpinPushSkipsSpinnerForAgent(t *testing.T) {
+	previous := pushAgent
+	t.Cleanup(func() {
+		pushAgent = previous
+	})
+	pushAgent = true
+
+	spinnerCalled := false
+	restore := ui.SetSpinFunc(func(title string, action func() error) error {
+		spinnerCalled = true
+		return action()
+	})
+	t.Cleanup(restore)
+
+	if err := spinPush("Pushing...", func() error { return nil }); err != nil {
+		t.Fatalf("spinPush() error = %v", err)
+	}
+	if spinnerCalled {
+		t.Error("spinPush() invoked the spinner in agent mode")
 	}
 }
 

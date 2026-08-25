@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"testing"
+
+	"github.com/gadenbuie/utpr/internal/gh"
 )
 
 func TestRenderViewMarkdownAgent(t *testing.T) {
@@ -75,5 +77,22 @@ func TestCommentOnlyMode(t *testing.T) {
 				t.Errorf("commentOnlyMode() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatViewAgentPRChoices(t *testing.T) {
+	prs := []gh.PRInfo{
+		{Number: 123, State: "open", Title: "Fix the flaky test"},
+		{Number: 120, State: "closed", Merged: true, Title: "Ship the fix"},
+	}
+	prs[0].User.Login = "alice"
+	prs[1].User.Login = "bob"
+
+	got := formatViewAgentPRChoices(prs)
+	want := "Multiple PRs found. Choose one by rerunning with its number:\n" +
+		"#123\topen\tFix the flaky test\t@alice\n" +
+		"#120\tmerged\tShip the fix\t@bob\n"
+	if got != want {
+		t.Errorf("formatViewAgentPRChoices() = %q, want %q", got, want)
 	}
 }
