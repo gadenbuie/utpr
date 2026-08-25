@@ -22,6 +22,7 @@ var viewCmd = &cobra.Command{
 var (
 	flagViewWeb      bool
 	flagViewSummary  bool
+	flagViewAgent    bool
 	flagViewIssue    string
 	flagViewState    string
 	flagViewComments string
@@ -30,6 +31,7 @@ var (
 func init() {
 	viewCmd.Flags().BoolVarP(&flagViewWeb, "web", "w", false, "Open in the browser")
 	viewCmd.Flags().BoolVar(&flagViewSummary, "summary", false, "Show brief summary (no comments)")
+	viewCmd.Flags().BoolVar(&flagViewAgent, "agent", false, "Show raw Markdown output for agent consumption")
 	viewCmd.Flags().StringVar(&flagViewIssue, "issue", "", "View an issue instead of a PR (optionally specify number)")
 	viewCmd.Flags().Lookup("issue").NoOptDefVal = " "
 	viewCmd.Flags().StringVar(&flagViewState, "state", "open", "Filter picker by state: open, closed, merged, all")
@@ -356,6 +358,18 @@ func formatLabelNames(names []string) string {
 	return " · **Labels:** " + strings.Join(names, ", ")
 }
 
+// renderViewMarkdown returns raw Markdown for agent consumers and terminal-
+// formatted Markdown for interactive users.
+func renderViewMarkdown(content string) (string, error) {
+	if flagViewAgent {
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		return content, nil
+	}
+	return ui.RenderMarkdown(content)
+}
+
 func renderIssueSummary(issue *gh.IssueInfo) error {
 	body := issue.Body
 	if body == "" {
@@ -368,7 +382,7 @@ func renderIssueSummary(issue *gh.IssueInfo) error {
 	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s\n\n%s",
 		issue.Number, issue.Title, issue.User.Login, issue.State,
 		formatLabelNames(labelNames), body)
-	rendered, err := ui.RenderMarkdown(md)
+	rendered, err := renderViewMarkdown(md)
 	if err != nil {
 		return err
 	}
@@ -400,7 +414,7 @@ func renderPRSummary(pr *gh.PRInfo, reviews []gh.PRReview) error {
 	md := fmt.Sprintf("# #%d %s\n\n**Author:** %s · **State:** %s%s%s\n\n%s",
 		pr.Number, pr.Title, pr.User.Login, state,
 		formatLabelNames(labelNames), reviewSection, body)
-	rendered, err := ui.RenderMarkdown(md)
+	rendered, err := renderViewMarkdown(md)
 	if err != nil {
 		return err
 	}
@@ -498,7 +512,7 @@ func renderComments(comments []gh.Comment) error {
 		if len(date) >= 10 {
 			date = date[:10]
 		}
-		header, err := ui.RenderMarkdown(fmt.Sprintf("---\n**@%s** commented on %s:", c.Author.Login, date))
+		header, err := renderViewMarkdown(fmt.Sprintf("---\n**@%s** commented on %s:", c.Author.Login, date))
 		if err != nil {
 			return err
 		}
@@ -506,7 +520,7 @@ func renderComments(comments []gh.Comment) error {
 		if showIDs {
 			fmt.Printf("%s<!-- comment_id:%d -->\n", renderedIndent(header), c.ID)
 		}
-		body, err := ui.RenderMarkdown(c.Body)
+		body, err := renderViewMarkdown(c.Body)
 		if err != nil {
 			return err
 		}
@@ -565,7 +579,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		if len(date) >= 10 {
 			date = date[:10]
 		}
-		header, err := ui.RenderMarkdown(fmt.Sprintf("---\n**@%s** reviewed %s %s:",
+		header, err := renderViewMarkdown(fmt.Sprintf("---\n**@%s** reviewed %s %s:",
 			root.Author.Login, reviewCommentLocation(root), reviewCommentAtDate(root, date)))
 		if err != nil {
 			return err
@@ -578,7 +592,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 			}
 			fmt.Printf("%s<!-- thread_id:%d comment_id:%d -->\n", renderedIndent(header), threadID, root.ID)
 		}
-		body, err := ui.RenderMarkdown(root.Body)
+		body, err := renderViewMarkdown(root.Body)
 		if err != nil {
 			return err
 		}
@@ -589,7 +603,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 			if len(date) >= 10 {
 				date = date[:10]
 			}
-			replyHeader, err := ui.RenderMarkdown(fmt.Sprintf("↳ **@%s** replied on %s:", reply.Author.Login, date))
+			replyHeader, err := renderViewMarkdown(fmt.Sprintf("↳ **@%s** replied on %s:", reply.Author.Login, date))
 			if err != nil {
 				return err
 			}
@@ -603,7 +617,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 			if showIDs {
 				fmt.Printf("%s<!-- comment_id:%d -->\n", "  "+renderedIndent(replyHeader), reply.ID)
 			}
-			replyBody, err := ui.RenderMarkdown(reply.Body)
+			replyBody, err := renderViewMarkdown(reply.Body)
 			if err != nil {
 				return err
 			}

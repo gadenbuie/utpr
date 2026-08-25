@@ -114,7 +114,7 @@ utpr <command> [options]
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
-| `utpr view [<pr>]` | View PR in browser |
+| `utpr view [<pr>]` | View PR details and comments; `--agent` emits raw Markdown |
 | `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
 Run `utpr <command> --help` for detailed usage of any command.
@@ -160,6 +160,9 @@ utpr fetch 42
 
 # View it in the browser
 utpr view
+
+# Print raw Markdown for an agent or other text-processing tool
+utpr view --agent
 
 # Done reviewing
 utpr finish
