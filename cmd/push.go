@@ -221,7 +221,7 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 		ui.Warnf("Could not store PR URL in git config: %v", err)
 	}
 	if pushAgent {
-		fmt.Fprintln(os.Stdout, pr.HTMLURL)
+		_, _ = fmt.Fprintln(os.Stdout, pr.HTMLURL)
 	} else {
 		ui.Successf("PR created: %s", pr.HTMLURL)
 	}
@@ -230,7 +230,7 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 
 func pushSuccessf(format string, args ...any) {
 	if pushAgent {
-		fmt.Fprintf(os.Stdout, format+"\n", args...)
+		_, _ = fmt.Fprintf(os.Stdout, format+"\n", args...)
 		return
 	}
 	ui.Successf(format, args...)
@@ -238,7 +238,7 @@ func pushSuccessf(format string, args ...any) {
 
 func printPushAgentURL(url string) {
 	if pushAgent {
-		fmt.Fprintln(os.Stdout, url)
+		_, _ = fmt.Fprintln(os.Stdout, url)
 	}
 }
 
@@ -266,7 +266,7 @@ func openCompareURL(cfg *remote.Config, branch string) error {
 
 	compareURL := buildCompareURL(cfg.Layout, pushOwnerRepo, sourceOwnerRepo, cfg.DefaultBranch, branch)
 	if pushAgent {
-		fmt.Fprintln(os.Stdout, compareURL)
+		_, _ = fmt.Fprintln(os.Stdout, compareURL)
 		return nil
 	}
 	return openURL(compareURL)

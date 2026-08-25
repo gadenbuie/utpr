@@ -1090,13 +1090,13 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 		}
 		if lines > 0 && len(processed) == lines {
 			if flagCILogsAgent {
-				fmt.Fprintf(os.Stdout, "(last %d lines)\n", lines)
+				_, _ = fmt.Fprintf(os.Stdout, "(last %d lines)\n", lines)
 			} else {
 				fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
 			}
 		}
 		if flagCILogsAgent {
-			fmt.Fprintln(os.Stdout, strings.Join(processed, "\n"))
+			_, _ = fmt.Fprintln(os.Stdout, strings.Join(processed, "\n"))
 		} else {
 			fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
 		}
