@@ -119,6 +119,24 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		if pr.Base.Ref != "" {
 			baseBranch = pr.Base.Ref
 		}
+	} else {
+		// Picker path: fetch base branches for selected stacked PRs so their
+		// remote tracking refs are up to date when the user later switches.
+		fetchedBases := map[string]bool{}
+		for _, prNum := range prNumbers {
+			pr, err := gh.GetPR(sourceRepo, prNum)
+			if err != nil || pr == nil || pr.Base.Ref == "" || pr.Base.Ref == cfg.DefaultBranch {
+				continue
+			}
+			if fetchedBases[pr.Base.Ref] {
+				continue
+			}
+			fetchedBases[pr.Base.Ref] = true
+			refspec := fmt.Sprintf("+refs/heads/%s:refs/remotes/%s/%s", pr.Base.Ref, cfg.SourceRemote, pr.Base.Ref)
+			if err := git.Fetch(cfg.SourceRemote, refspec); err != nil {
+				ui.Warnf("Could not fetch base branch '%s' for PR #%d.", pr.Base.Ref, prNum)
+			}
+		}
 	}
 	if baseBranch == "" {
 		baseBranch = cfg.DefaultBranch
@@ -127,17 +145,13 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		ui.Infof("PR targets '%s' (not '%s').", baseBranch, cfg.DefaultBranch)
 	}
 
-	// Switch to base branch and pull
-	onBase, _ := git.IsOnBranch(baseBranch)
-	if !onBase {
+	// Switch to base branch and pull (handles worktree case)
+	if onBase, _ := git.IsOnBranch(baseBranch); !onBase {
 		if err := challengeUncommittedChanges(); err != nil {
 			return err
 		}
-		if err := switchToBranch(baseBranch, cfg.SourceRemote); err != nil {
-			return err
-		}
 	}
-	if err := pullBranch(cfg.SourceRemote, baseBranch); err != nil {
+	if err := prepareBaseBranch(baseBranch, cfg.DefaultBranch, cfg.SourceRemote); err != nil {
 		return err
 	}
 

@@ -1483,12 +1483,20 @@ func rerunSpecificJobs(ownerRepo string, runs []gh.WorkflowRun, filters []string
 }
 
 // rerunJobEntries re-runs the given job entries individually and reports results.
+// Only one job per workflow run is re-queued: after a successful rerun, the
+// run is no longer "completed" and subsequent rerun attempts for the same
+// run would fail, so they are skipped with a message.
 func rerunJobEntries(ownerRepo string, targets []jobEntry, description string, agent bool) error {
 	printCIRerunStart(agent, fmt.Sprintf("Re-running %s...", description))
 
 	var successCount, failCount int
+	seenRuns := map[int64]bool{}
 	for _, t := range targets {
 		label := fmt.Sprintf("%s / %s", t.RunName, t.Job.Name)
+		if seenRuns[t.Job.RunID] {
+			printCIRerunItem(agent, false, label, "skipped: another job from this run was already re-queued")
+			continue
+		}
 		apiErr := gh.RerunWorkflowJob(ownerRepo, t.Job.ID)
 		if apiErr != nil {
 			printCIRerunItem(agent, false, label, apiErr.Error())
@@ -1496,6 +1504,7 @@ func rerunJobEntries(ownerRepo string, targets []jobEntry, description string, a
 		} else {
 			printCIRerunItem(agent, true, label, "")
 			successCount++
+			seenRuns[t.Job.RunID] = true
 		}
 	}
 
@@ -1576,5 +1585,5 @@ func summarizeRerun(agent bool, successCount, failCount int, description string)
 	} else {
 		ui.Warn(msg)
 	}
-	return nil
+	return fmt.Errorf("re-run completed with %d failure(s)", failCount)
 }

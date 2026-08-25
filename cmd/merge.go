@@ -106,6 +106,20 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Dief("PR #%d is not open (state: %s). Use 'utpr finish' to clean up.", pr.Number, pr.State)
 	}
 
+	baseBranch := cfg.DefaultBranch
+	if pr.Base.Ref != "" {
+		baseBranch = pr.Base.Ref
+	}
+
+	// If the PR targets a non-default branch, we'll need to switch after
+	// merge. Challenge uncommitted changes now, before the merge is
+	// irreversible.
+	if baseBranch != cfg.DefaultBranch {
+		if err := challengeUncommittedChanges(); err != nil {
+			return err
+		}
+	}
+
 	strategyFlag := "--squash"
 	strategyLabel := "squash commit"
 	switch {
@@ -135,21 +149,11 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die("Failed to merge PR. See output above for details.")
 	}
 
-	baseBranch := cfg.DefaultBranch
-	if pr.Base.Ref != "" {
-		baseBranch = pr.Base.Ref
-	}
 	if baseBranch != cfg.DefaultBranch {
 		ui.Infof("PR targets '%s' (not '%s').", baseBranch, cfg.DefaultBranch)
 	}
 
-	onBase, _ := git.IsOnBranch(baseBranch)
-	if !onBase {
-		if err := switchToBranch(baseBranch, cfg.SourceRemote); err != nil {
-			return err
-		}
-	}
-	if err := pullBranch(cfg.SourceRemote, baseBranch); err != nil {
+	if err := prepareBaseBranch(baseBranch, cfg.DefaultBranch, cfg.SourceRemote); err != nil {
 		return err
 	}
 

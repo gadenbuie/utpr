@@ -172,6 +172,55 @@ func switchToBranch(branch, remote string) error {
 	return nil
 }
 
+// pullBranchInDir pulls a branch from the remote within the given directory.
+func pullBranchInDir(remote, branch, dir string) error {
+	err := ui.Spin(
+		fmt.Sprintf("Pulling %s...", branch),
+		func() error {
+			_, e := git.Run("-C", dir, "pull", remote, branch)
+			return e
+		},
+	)
+	if err != nil {
+		return ui.Die(err.Error())
+	}
+	return nil
+}
+
+// prepareBaseBranch switches to the base branch and pulls it. If the base
+// branch is checked out in a linked worktree, pulls within the worktree and
+// switches to the default branch instead (git refuses to switch to a branch
+// that is already checked out in another worktree).
+//
+// The caller should call challengeUncommittedChanges before this function
+// when switching away from the current branch.
+func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
+	// Case 1: base branch is checked out in a worktree — can't switch to it.
+	if wtPath := git.GetBranchWorktreePath(baseBranch); wtPath != "" {
+		ui.Infof("Branch '%s' is checked out in a worktree (%s). Pulling there.", baseBranch, wtPath)
+		if err := pullBranchInDir(remote, baseBranch, wtPath); err != nil {
+			return err
+		}
+		// Switch to the default branch instead, since we can't switch to base.
+		onDefault, _ := git.IsOnBranch(defaultBranch)
+		if !onDefault {
+			if err := git.SwitchBranch(defaultBranch); err != nil {
+				return err
+			}
+		}
+		return pullBranch(remote, defaultBranch)
+	}
+
+	// Case 2: normal — switch to base branch and pull.
+	onBase, _ := git.IsOnBranch(baseBranch)
+	if !onBase {
+		if err := switchToBranch(baseBranch, remote); err != nil {
+			return err
+		}
+	}
+	return pullBranch(remote, baseBranch)
+}
+
 type mergedPRPickerOpts struct {
 	preselectAll   bool
 	requireConfirm bool
