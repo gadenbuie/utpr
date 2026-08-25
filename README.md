@@ -103,14 +103,14 @@ utpr <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree |
+| `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree; `--yes` assumes setup defaults |
 | `utpr pause` | Switch back to the default branch |
-| `utpr resume [<branch>]` | Resume work on a PR branch |
-| `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree |
-| `utpr push [--edit=...]` | Push branch and create/update PR |
+| `utpr resume [<branch>]` | Resume work on a PR branch; `--yes` assumes setup defaults |
+| `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree; `--yes` assumes setup defaults |
+| `utpr push [--edit=...]` | Push branch and create/update PR; `--agent` emits plain results |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status; `--wait` blocks until done; `utpr ci logs` streams failed-job output |
+| `utpr ci [<ref>]` | Show GitHub Actions status; `--agent` emits plain output; `--wait` blocks until done; `utpr ci logs` streams failed-job output |
 | `utpr forget` | Abandon local PR branch |
 | `utpr finish [<pr>]` | Clean up after a merged PR |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -185,6 +185,9 @@ utpr ci @some-branch
 # Poll until all checks finish (live status display)
 utpr ci --watch
 
+# Show unstyled check output for an agent
+utpr ci --agent
+
 # Wait for all checks, then exit 0 (pass) or 1 (fail) — useful in scripts
 utpr ci --wait
 
@@ -204,6 +207,9 @@ utpr ci logs
 
 # Show logs for all failed jobs at once
 utpr ci logs --failed
+
+# Show unstyled logs for an agent
+utpr ci logs --failed --agent
 
 # Filter to a specific job by name
 utpr ci logs --job "test"
@@ -243,10 +249,10 @@ settings.
 
 ```bash
 # Start a new branch in its own worktree
-utpr init feat/add-auth --worktree
+utpr init feat/add-auth --worktree --yes
 
 # Fetch a contributor's PR into a worktree for parallel review
-utpr fetch 42 --worktree
+utpr fetch 42 --worktree --yes
 ```
 
 Worktrees are created at `<parent>/<repo>.worktrees/<branch>/`.
@@ -259,6 +265,12 @@ utpr automatically:
 `utpr finish` and `utpr forget` clean up worktrees automatically.
 `utpr resume` detects when a branch has a worktree and offers to
 navigate there instead of switching in the main repo.
+
+List worktrees as JSON for agent or script consumption:
+
+```bash
+utpr worktree list --json
+```
 
 The symlinked files and directories are controlled by the `UTPR_SYMLINK_DIRS`
 environment variable. The default covers common untracked project state:
