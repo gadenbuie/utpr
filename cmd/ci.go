@@ -204,7 +204,7 @@ func resolveCITarget(cfg *remote.Config, args []string, pick bool) (ciTarget, er
 
 	if sha != remoteSHA {
 		if !pick {
-			printCIInfo(flagCIAgent, "Showing CI for the last pushed commit (HEAD has unpushed changes).")
+			printCIInfo(ciAgentMode(), "Showing CI for the last pushed commit (HEAD has unpushed changes).")
 		}
 		sha = remoteSHA
 	}
@@ -284,6 +284,10 @@ func printCIInfo(agent bool, msg string) {
 	ui.Info(msg)
 }
 
+func ciAgentMode() bool {
+	return flagCIAgent || flagCILogsAgent
+}
+
 func printCIInfof(agent bool, format string, args ...any) {
 	if agent {
 		fmt.Fprintf(os.Stdout, format+"\n", args...)
@@ -351,7 +355,7 @@ func showCIChecks(ownerRepo, sha string) error {
 // no runs are found (an informational message is printed in that case).
 func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, error) {
 	if branch == "" {
-		printCIInfo(flagCIAgent, "Could not determine a branch to list CI runs for.")
+		printCIInfo(ciAgentMode(), "Could not determine a branch to list CI runs for.")
 		return nil, nil
 	}
 
@@ -362,7 +366,7 @@ func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, err
 		return nil, ui.Dief("Could not fetch CI runs: %v", err)
 	}
 	if len(runs) == 0 {
-		printCIInfof(flagCIAgent, "No CI runs found for branch '%s'.", branch)
+		printCIInfof(ciAgentMode(), "No CI runs found for branch '%s'.", branch)
 		return nil, nil
 	}
 
