@@ -97,7 +97,8 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// For non-picker path: confirm first
+	// For non-picker path: confirm first and determine the PR's base branch
+	var baseBranch string
 	if !fromPicker {
 		pr, err := gh.GetPR(sourceRepo, prNumbers[0])
 		if err != nil {
@@ -115,19 +116,28 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
+		if pr.Base.Ref != "" {
+			baseBranch = pr.Base.Ref
+		}
+	}
+	if baseBranch == "" {
+		baseBranch = cfg.DefaultBranch
+	}
+	if baseBranch != cfg.DefaultBranch {
+		ui.Infof("PR targets '%s' (not '%s').", baseBranch, cfg.DefaultBranch)
 	}
 
-	// Switch to default branch and pull
-	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
-	if !onDefault {
+	// Switch to base branch and pull
+	onBase, _ := git.IsOnBranch(baseBranch)
+	if !onBase {
 		if err := challengeUncommittedChanges(); err != nil {
 			return err
 		}
-		if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
+		if err := switchToBranch(baseBranch, cfg.SourceRemote); err != nil {
 			return err
 		}
 	}
-	if err := pullDefaultBranch(cfg); err != nil {
+	if err := pullBranch(cfg.SourceRemote, baseBranch); err != nil {
 		return err
 	}
 

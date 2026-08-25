@@ -135,12 +135,21 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return ui.Die("Failed to merge PR. See output above for details.")
 	}
 
-	if !onDefault {
-		if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
+	baseBranch := cfg.DefaultBranch
+	if pr.Base.Ref != "" {
+		baseBranch = pr.Base.Ref
+	}
+	if baseBranch != cfg.DefaultBranch {
+		ui.Infof("PR targets '%s' (not '%s').", baseBranch, cfg.DefaultBranch)
+	}
+
+	onBase, _ := git.IsOnBranch(baseBranch)
+	if !onBase {
+		if err := switchToBranch(baseBranch, cfg.SourceRemote); err != nil {
 			return err
 		}
 	}
-	if err := pullDefaultBranch(cfg); err != nil {
+	if err := pullBranch(cfg.SourceRemote, baseBranch); err != nil {
 		return err
 	}
 

@@ -99,6 +99,7 @@ type PRInfo struct {
 		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
+		Ref  string `json:"ref"`
 		Repo struct {
 			FullName string `json:"full_name"`
 		} `json:"repo"`

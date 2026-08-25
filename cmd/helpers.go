@@ -125,14 +125,14 @@ func challengeLocalBranchDelete(branch string) (bool, error) {
 	return false, nil
 }
 
-// pullDefaultBranch fetches and pulls the default branch.
-func pullDefaultBranch(cfg *remote.Config) error {
+// pullBranch fetches and pulls the given branch from the remote.
+func pullBranch(remote, branch string) error {
 	before, _ := git.RevParse("HEAD")
 
 	err := ui.Spin(
-		fmt.Sprintf("Pulling %s...", cfg.DefaultBranch),
+		fmt.Sprintf("Pulling %s...", branch),
 		func() error {
-			return git.Pull(cfg.SourceRemote, cfg.DefaultBranch)
+			return git.Pull(remote, branch)
 		},
 	)
 	if err != nil {
@@ -143,8 +143,31 @@ func pullDefaultBranch(cfg *remote.Config) error {
 	if before != after {
 		n, _ := git.RevListCount(before + ".." + after)
 		if n > 0 {
-			ui.Successf("Pulled %d new commit(s) on %s.", n, cfg.DefaultBranch)
+			ui.Successf("Pulled %d new commit(s) on %s.", n, branch)
 		}
+	}
+	return nil
+}
+
+// pullDefaultBranch fetches and pulls the default branch.
+func pullDefaultBranch(cfg *remote.Config) error {
+	return pullBranch(cfg.SourceRemote, cfg.DefaultBranch)
+}
+
+// switchToBranch switches to the given branch. If the branch doesn't exist
+// locally, it is fetched from the remote and created as a tracking branch.
+func switchToBranch(branch, remote string) error {
+	if git.BranchExists(branch) {
+		return git.SwitchBranch(branch)
+	}
+	// Branch doesn't exist locally — fetch and create a tracking branch.
+	ui.Infof("Branch '%s' not found locally, fetching from %s...", branch, remote)
+	refspec := fmt.Sprintf("+refs/heads/%s:refs/remotes/%s/%s", branch, remote, branch)
+	if err := git.Fetch(remote, refspec); err != nil {
+		return ui.Dief("Could not fetch branch '%s' from '%s'.", branch, remote)
+	}
+	if _, err := git.Run("switch", "-c", branch, fmt.Sprintf("%s/%s", remote, branch)); err != nil {
+		return ui.Dief("Could not switch to branch '%s'.", branch)
 	}
 	return nil
 }
