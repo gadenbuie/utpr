@@ -334,7 +334,7 @@ func pickForView(ownerRepo, entity string) (int, error) {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
 		}
 		if flagViewAgent {
-			fmt.Fprint(os.Stdout, formatViewAgentPRChoices(prs))
+			_, _ = fmt.Fprint(os.Stdout, formatViewAgentPRChoices(prs))
 			return 0, fmt.Errorf("a PR number is required")
 		}
 		for _, pr := range prs {

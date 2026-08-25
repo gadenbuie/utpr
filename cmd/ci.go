@@ -278,7 +278,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 
 func printCIInfo(agent bool, msg string) {
 	if agent {
-		fmt.Fprintln(os.Stdout, msg)
+		_, _ = fmt.Fprintln(os.Stdout, msg)
 		return
 	}
 	ui.Info(msg)
@@ -297,7 +297,7 @@ func spinCIWithResult[T any](title string, fn func() (T, error)) (T, error) {
 
 func printCIInfof(agent bool, format string, args ...any) {
 	if agent {
-		fmt.Fprintf(os.Stdout, format+"\n", args...)
+		_, _ = fmt.Fprintf(os.Stdout, format+"\n", args...)
 		return
 	}
 	ui.Infof(format, args...)
@@ -305,7 +305,7 @@ func printCIInfof(agent bool, format string, args ...any) {
 
 func printCISuccess(agent bool, msg string) {
 	if agent {
-		fmt.Fprintln(os.Stdout, msg)
+		_, _ = fmt.Fprintln(os.Stdout, msg)
 		return
 	}
 	ui.Success(msg)
@@ -350,7 +350,7 @@ func showCIChecks(ownerRepo, sha string) error {
 	}
 
 	if flagCIAgent {
-		fmt.Fprint(os.Stdout, renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false))
+		_, _ = fmt.Fprint(os.Stdout, renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false))
 	} else {
 		renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
 	}
@@ -525,7 +525,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
 			output := buf.String()
 			if flagCIAgent {
-				fmt.Fprint(os.Stdout, ui.StripANSI(output))
+				_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
 			} else {
 				if prevLines > 0 {
 					fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
@@ -559,7 +559,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 				stripped := ui.StripANSI(statusMsg)
 				if stripped != lastStatus {
 					if flagCIAgent {
-						fmt.Fprintf(os.Stdout, "[%s] %s\n", ts, stripped)
+						_, _ = fmt.Fprintf(os.Stdout, "[%s] %s\n", ts, stripped)
 					} else {
 						fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
 					}
@@ -578,14 +578,14 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		summary := checkRunSummary(checkRuns)
 		if anyFailed {
 			if flagCIAgent {
-				fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
+				_, _ = fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
 			} else {
 				ui.Error(summary)
 			}
 			return fmt.Errorf("CI checks failed")
 		}
 		if flagCIAgent {
-			fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
+			_, _ = fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
 		} else {
 			ui.Success(summary)
 		}
@@ -1066,7 +1066,7 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
 		if flagCILogsAgent {
-			fmt.Fprintf(os.Stdout, "## %s\n", label)
+			_, _ = fmt.Fprintf(os.Stdout, "## %s\n", label)
 		} else {
 			fmt.Fprintln(os.Stderr, logSeparator(label))
 		}
