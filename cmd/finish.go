@@ -44,7 +44,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		if err != nil || !ok {
 			return err
 		}
-		return runForget(cmd, args)
+		return finishLocalCleanup(cmd, args)
 	}
 
 	cfg, err := remote.Detect()
@@ -57,7 +57,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		if err != nil || !ok {
 			return err
 		}
-		return runForget(cmd, args)
+		return finishLocalCleanup(cmd, args)
 	}
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
@@ -124,15 +124,19 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		}
 		if pr.State != "closed" {
 			ui.Warnf("PR #%d is still open (state: %s).", prNumbers[0], pr.State)
-			if err := ui.MustConfirm("Continue anyway?", false); err != nil {
-				return nil
+			if !assumeYes() {
+				if err := ui.MustConfirm("Continue anyway?", false); err != nil {
+					return nil
+				}
 			}
 		}
-		if err := ui.MustConfirm(fmt.Sprintf("Finish PR #%d (branch: %s)?", prNumbers[0], pr.Head.Ref), true); err != nil {
-			if err == ui.ErrCancelled {
-				ui.Info("Cancelled.")
+		if !assumeYes() {
+			if err := ui.MustConfirm(fmt.Sprintf("Finish PR #%d (branch: %s)?", prNumbers[0], pr.Head.Ref), true); err != nil {
+				if err == ui.ErrCancelled {
+					ui.Info("Cancelled.")
+				}
+				return nil
 			}
-			return nil
 		}
 		if pr.Base.Ref != "" {
 			baseBranch = pr.Base.Ref
@@ -232,6 +236,53 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 
 	ui.Successf("Finished PR #%d.", prNumber)
 	return nil
+}
+
+// finishLocalCleanup runs the local-only cleanup fallback, mapping
+// PR-number arguments to their local branches first.
+func finishLocalCleanup(cmd *cobra.Command, args []string) error {
+	forgetArgs, err := localCleanupArgs(args)
+	if err != nil {
+		return err
+	}
+	return runForgetIn(cmd, forgetArgs, true)
+}
+
+// localCleanupArgs maps finish arguments to forget-style arguments for
+// local-only cleanup. A PR number is resolved to its local branch via the
+// stored PR URL (no GitHub access needed); branch names pass through.
+func localCleanupArgs(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	if _, err := strconv.Atoi(args[0]); err != nil {
+		return args, nil
+	}
+	n, _ := strconv.Atoi(args[0])
+	branch, err := findBranchWithPRNumber(n)
+	if err != nil {
+		return nil, err
+	}
+	return []string{branch}, nil
+}
+
+// findBranchWithPRNumber returns the local branch whose stored PR URL is
+// for the given PR number, searching all local branches.
+func findBranchWithPRNumber(prNumber int) (string, error) {
+	refs, err := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
+	if err != nil {
+		return "", ui.Dief("Could not look up local branches to resolve PR #%d.", prNumber)
+	}
+	for _, branch := range strings.Split(refs, "\n") {
+		branch = strings.TrimSpace(branch)
+		if branch == "" {
+			continue
+		}
+		if prNumberFromStoredURL(git.GetBranchPRURL(branch)) == prNumber {
+			return branch, nil
+		}
+	}
+	return "", ui.Dief("Could not find a local branch for PR #%d. Run 'utpr forget <branch>' to clean up locally.", prNumber)
 }
 
 // offerLocalCleanupFallback warns that PR checks are unavailable and asks

@@ -26,6 +26,13 @@ func init() {
 }
 
 func runForget(cmd *cobra.Command, args []string) error {
+	return runForgetIn(cmd, args, false)
+}
+
+// runForgetIn implements forget. When localOnly is true, no remote
+// detection or network operations are performed; the default branch is
+// guessed from local branches and pulling is skipped.
+func runForgetIn(cmd *cobra.Command, args []string, localOnly bool) error {
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
 		branch, _ := git.GetCurrentBranch()
@@ -35,13 +42,17 @@ func runForget(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot run from a worktree")
 	}
 
-	cfg, err := remote.Detect()
-	if err != nil {
-		if errors.Is(err, ui.ErrCancelled) {
-			return err
+	var cfg *remote.Config
+	if !localOnly {
+		var err error
+		cfg, err = remote.Detect()
+		if err != nil {
+			if errors.Is(err, ui.ErrCancelled) {
+				return err
+			}
+			cfg = nil
+			ui.Warnf("Continuing without remote operations: %v", err)
 		}
-		cfg = nil
-		ui.Warnf("Continuing without remote operations: %v", err)
 	}
 	// Without a remote config, guess the default branch from local branches.
 	defaultBranch := ""
@@ -49,6 +60,9 @@ func runForget(cmd *cobra.Command, args []string) error {
 		defaultBranch = cfg.DefaultBranch
 	} else {
 		defaultBranch = git.GetLocalDefaultBranch()
+	}
+	if defaultBranch == "" {
+		return ui.Die("Could not determine the default branch (no git remote and no local 'main' or 'master' branch). Cannot safely forget branches.")
 	}
 
 	var target string

@@ -5,6 +5,8 @@ package cmd
 // Integration tests in this file mutate the process working directory. Do NOT use t.Parallel().
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/git"
@@ -112,5 +114,81 @@ func TestForgetNoRemote(t *testing.T) {
 	}
 	if current, _ := git.GetCurrentBranch(); current != "main" {
 		t.Errorf("current branch = %q, want %q", current, "main")
+	}
+}
+
+// TestFinishNoRemotePRNumberResolves verifies that a PR-number argument in
+// the local cleanup fallback resolves to its local branch via the stored
+// PR URL instead of being treated as a branch name.
+func TestFinishNoRemotePRNumberResolves(t *testing.T) {
+	testutil.TempRepo(t)
+
+	prevYes := flagFinishYes
+	t.Cleanup(func() { flagFinishYes = prevYes })
+	flagFinishYes = true
+
+	testutil.CreateBranch(t, ".", "feature/pr-branch")
+	if err := git.SetBranchPRURL("feature/pr-branch", "https://github.com/owner/repo/pull/99"); err != nil {
+		t.Fatalf("failed to set stored PR URL: %v", err)
+	}
+
+	if err := runFinish(finishCmd, []string{"99"}); err != nil {
+		t.Fatalf("runFinish failed with a PR number argument: %v", err)
+	}
+
+	if git.BranchExists("feature/pr-branch") {
+		t.Error("expected branch 'feature/pr-branch' to be deleted via PR number resolution")
+	}
+}
+
+// TestFinishNoRemoteUnresolvablePRNumber verifies that an unresolvable PR
+// number errors clearly instead of deleting a branch named after it.
+func TestFinishNoRemoteUnresolvablePRNumber(t *testing.T) {
+	testutil.TempRepo(t)
+
+	prevYes := flagFinishYes
+	t.Cleanup(func() { flagFinishYes = prevYes })
+	flagFinishYes = true
+
+	testutil.CreateBranch(t, ".", "42")
+
+	if err := runFinish(finishCmd, []string{"77"}); err == nil {
+		t.Fatal("expected an error for an unresolvable PR number")
+	}
+	if !git.BranchExists("42") {
+		t.Error("unrelated branch '42' must not be deleted")
+	}
+}
+
+// TestForgetNoDefaultBranch verifies that forget refuses to run when the
+// default branch cannot be determined (no remote, no local main/master).
+func TestForgetNoDefaultBranch(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	dir := t.TempDir()
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("failed to resolve symlinks: %v", err)
+	}
+	testutil.RunGit(t, dir, "init", "--initial-branch=trunk")
+	testutil.RunGit(t, dir, "config", "user.name", "Test User")
+	testutil.RunGit(t, dir, "config", "user.email", "test@example.com")
+	testutil.AddCommit(t, dir, "initial commit")
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	prevYes := flagForgetYes
+	t.Cleanup(func() { flagForgetYes = prevYes })
+	flagForgetYes = true
+
+	if err := runForget(forgetCmd, []string{"trunk"}); err == nil {
+		t.Fatal("expected forget to refuse when the default branch cannot be determined")
+	}
+	if !git.BranchExists("trunk") {
+		t.Error("branch 'trunk' must be preserved when forget refuses")
 	}
 }

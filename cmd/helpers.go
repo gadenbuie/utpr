@@ -329,7 +329,7 @@ func runMergedPRPicker(cfg *remote.Config, sourceRepo string, opts mergedPRPicke
 		return nil, nil
 	}
 
-	if opts.requireConfirm {
+	if opts.requireConfirm && !assumeYes() {
 		var msg string
 		if len(selected) == 1 {
 			msg = fmt.Sprintf("Finish PR #%d?", selected[0])
