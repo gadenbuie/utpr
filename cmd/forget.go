@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -18,6 +19,12 @@ var forgetCmd = &cobra.Command{
 	RunE:  runForget,
 }
 
+var flagForgetYes bool
+
+func init() {
+	forgetCmd.Flags().BoolVar(&flagForgetYes, "yes", false, "Assume yes for confirmation prompts")
+}
+
 func runForget(cmd *cobra.Command, args []string) error {
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
@@ -30,7 +37,18 @@ func runForget(cmd *cobra.Command, args []string) error {
 
 	cfg, err := remote.Detect()
 	if err != nil {
-		return ui.Die(err.Error())
+		if errors.Is(err, ui.ErrCancelled) {
+			return err
+		}
+		cfg = nil
+		ui.Warnf("Continuing without remote operations: %v", err)
+	}
+	// Without a remote config, guess the default branch from local branches.
+	defaultBranch := ""
+	if cfg != nil {
+		defaultBranch = cfg.DefaultBranch
+	} else {
+		defaultBranch = git.GetLocalDefaultBranch()
 	}
 
 	var target string
@@ -39,20 +57,20 @@ func runForget(cmd *cobra.Command, args []string) error {
 		if err := git.ValidateBranchName(target); err != nil {
 			return ui.Die(err.Error())
 		}
-		if target == cfg.DefaultBranch {
-			return ui.Dief("Cannot forget the default branch '%s'.", cfg.DefaultBranch)
+		if target == defaultBranch {
+			return ui.Dief("Cannot forget the default branch '%s'.", defaultBranch)
 		}
 		if !git.BranchExists(target) {
 			return ui.Dief("Branch '%s' does not exist locally.", target)
 		}
 	} else {
-		onDefault, err := git.IsOnBranch(cfg.DefaultBranch)
+		onDefault, err := git.IsOnBranch(defaultBranch)
 		if err != nil {
 			return err
 		}
 
 		if onDefault {
-			target, err = pickBranch(cfg.DefaultBranch, "Select a branch to forget:")
+			target, err = pickBranch(defaultBranch, "Select a branch to forget:")
 			if err != nil {
 				return err
 			}
@@ -81,7 +99,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 
 	if target == current {
 		if !alreadyConfirmed {
-			if err := ui.MustConfirm("Abandon branch '"+target+"' and switch to "+cfg.DefaultBranch+"?", true); err != nil {
+			if err := ui.MustConfirm("Abandon branch '"+target+"' and switch to "+defaultBranch+"?", true); err != nil {
 				if err == ui.ErrCancelled {
 					ui.Info("Cancelled.")
 					return nil
@@ -92,11 +110,13 @@ func runForget(cmd *cobra.Command, args []string) error {
 		if err := removeWorktree(target); err != nil {
 			return err
 		}
-		if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
+		if err := git.SwitchBranch(defaultBranch); err != nil {
 			return ui.Die(err.Error())
 		}
-		if err := pullDefaultBranch(cfg); err != nil {
-			ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)
+		if cfg != nil {
+			if err := pullDefaultBranch(cfg); err != nil {
+				ui.Warnf("Could not pull latest %s. Run 'git pull' to update.", cfg.DefaultBranch)
+			}
 		}
 	} else {
 		if !alreadyConfirmed {
@@ -129,9 +149,13 @@ func removeWorktree(branch string) error {
 	}
 
 	ui.Infof("Branch '%s' has a worktree at: %s", branch, wtPath)
-	confirmed, err := ui.Confirm("Remove worktree?", true)
-	if err != nil {
-		return err
+	var err error
+	confirmed := true
+	if !assumeYes() {
+		confirmed, err = ui.Confirm("Remove worktree?", true)
+		if err != nil {
+			return err
+		}
 	}
 	if !confirmed {
 		return nil
@@ -140,6 +164,9 @@ func removeWorktree(branch string) error {
 	err = git.WorktreeRemove(wtPath, false)
 	if err != nil {
 		ui.Warn("Worktree has uncommitted changes.")
+		if assumeYes() {
+			return ui.Die("Worktree has uncommitted changes. Re-run without --yes to decide whether to force-remove it.")
+		}
 		forceConfirmed, err := ui.Confirm("Force remove worktree?", false)
 		if err != nil || !forceConfirmed {
 			return ui.Die("Cannot proceed without removing the worktree.")

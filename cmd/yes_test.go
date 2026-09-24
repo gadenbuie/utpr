@@ -11,6 +11,8 @@ func TestSetupCommandsHaveYesFlags(t *testing.T) {
 		{name: "fetch", has: func(name string) bool { return fetchCmd.Flags().Lookup(name) != nil }},
 		{name: "resume", has: func(name string) bool { return resumeCmd.Flags().Lookup(name) != nil }},
 		{name: "worktree create", has: func(name string) bool { return worktreeCreateCmd.Flags().Lookup(name) != nil }},
+		{name: "finish", has: func(name string) bool { return finishCmd.Flags().Lookup(name) != nil }},
+		{name: "forget", has: func(name string) bool { return forgetCmd.Flags().Lookup(name) != nil }},
 	}
 
 	for _, tt := range tests {
@@ -21,16 +23,20 @@ func TestSetupCommandsHaveYesFlags(t *testing.T) {
 }
 
 func TestAssumeYes(t *testing.T) {
-	previous := [3]bool{flagInitYes, flagFetchYes, flagResumeYes}
+	previous := [5]bool{flagInitYes, flagFetchYes, flagResumeYes, flagFinishYes, flagForgetYes}
 	t.Cleanup(func() {
 		flagInitYes = previous[0]
 		flagFetchYes = previous[1]
 		flagResumeYes = previous[2]
+		flagFinishYes = previous[3]
+		flagForgetYes = previous[4]
 	})
 
 	flagInitYes = false
 	flagFetchYes = false
 	flagResumeYes = false
+	flagFinishYes = false
+	flagForgetYes = false
 	if assumeYes() {
 		t.Fatal("assumeYes() = true with all flags disabled")
 	}

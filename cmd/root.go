@@ -104,12 +104,12 @@ func Execute() error {
 
 // commandNeedsAuth reports whether a command requires GitHub
 // authentication. Commands that can operate entirely on the local
-// repository don't; GitHub operations within them fail with their own
-// clear errors when they are actually needed.
+// repository (or degrade to local cleanup) don't; GitHub operations
+// within them fail with their own clear errors when they are needed.
 func commandNeedsAuth(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		switch c.Name() {
-		case "init", "resume", "worktree":
+		case "init", "resume", "worktree", "finish", "forget":
 			return false
 		}
 	}

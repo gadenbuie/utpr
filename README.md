@@ -112,8 +112,8 @@ utpr <command> [options]
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
 | `utpr ci [<ref>]` | Show GitHub Actions status; `--agent` emits plain output; `--wait` blocks until done; `utpr ci logs` streams failed-job output |
-| `utpr forget` | Abandon local PR branch |
-| `utpr finish [<pr>]` | Clean up after a merged PR |
+| `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
+| `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
 | `utpr view [<pr>]` | View PR details and comments; `--agent` emits raw Markdown |
 | `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |

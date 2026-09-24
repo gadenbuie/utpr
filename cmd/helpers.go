@@ -11,7 +11,7 @@ import (
 )
 
 func assumeYes() bool {
-	return flagInitYes || flagFetchYes || flagResumeYes
+	return flagInitYes || flagFetchYes || flagResumeYes || flagFinishYes || flagForgetYes
 }
 
 // findLocalBranchForPR returns the local branch name corresponding to a PR,
@@ -114,6 +114,9 @@ func challengeBranchBehindRemote() error {
 // Returns (true, nil) if the user was prompted and confirmed, (false, nil) if
 // no prompt was needed, or (false, err) if the user declined or an error occurred.
 func challengeLocalBranchDelete(branch string) (bool, error) {
+	if assumeYes() {
+		return true, nil
+	}
 	tracking, _ := git.Run("rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{u}")
 	if tracking == "" {
 		ui.Warnf("Local branch '%s' has no associated remote branch.", branch)

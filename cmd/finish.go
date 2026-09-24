@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -22,6 +23,12 @@ var finishCmd = &cobra.Command{
 	RunE:  runFinish,
 }
 
+var flagFinishYes bool
+
+func init() {
+	finishCmd.Flags().BoolVar(&flagFinishYes, "yes", false, "Assume yes for confirmation prompts")
+}
+
 func runFinish(cmd *cobra.Command, args []string) error {
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
@@ -33,13 +40,24 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	}
 
 	if !gh.IsReachable() {
-		ui.Warn("utpr finish requires a network connection to check PR status.")
-		return ui.Die("To delete a local branch without checking GitHub, run: utpr forget")
+		ok, err := offerLocalCleanupFallback("utpr finish needs GitHub access to check PR status.")
+		if err != nil || !ok {
+			return err
+		}
+		return runForget(cmd, args)
 	}
 
 	cfg, err := remote.Detect()
 	if err != nil {
-		return ui.Die(err.Error())
+		if errors.Is(err, ui.ErrCancelled) {
+			return err
+		}
+		ui.Warnf("Continuing without remote operations: %v", err)
+		ok, err := offerLocalCleanupFallback("utpr finish needs a git remote to check PR status.")
+		if err != nil || !ok {
+			return err
+		}
+		return runForget(cmd, args)
 	}
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
@@ -214,6 +232,21 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 
 	ui.Successf("Finished PR #%d.", prNumber)
 	return nil
+}
+
+// offerLocalCleanupFallback warns that PR checks are unavailable and asks
+// whether to fall back to local cleanup (remove the worktree and delete the
+// branch, like 'utpr forget'). Returns false when the user declines.
+func offerLocalCleanupFallback(reason string) (bool, error) {
+	ui.Warn(reason)
+	if assumeYes() {
+		return true, nil
+	}
+	confirmed, err := ui.Confirm("Fall back to local cleanup (like 'utpr forget')?", true)
+	if err != nil {
+		return false, err
+	}
+	return confirmed, nil
 }
 
 // shouldDeleteRemoteBranch returns true if the PR is merged and the

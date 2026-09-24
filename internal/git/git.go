@@ -56,6 +56,18 @@ func RunInDir(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// GetLocalDefaultBranch returns the default branch based on local branches
+// alone (main, then master), or "" when neither exists. Used when no remote
+// is available to determine the default branch.
+func GetLocalDefaultBranch() string {
+	for _, name := range []string{"main", "master"} {
+		if BranchExists(name) {
+			return name
+		}
+	}
+	return ""
+}
+
 // RemoteBranchExists reports whether refs/heads/<branch> exists on the
 // given remote. Returns (false, nil) when the branch is confirmed absent
 // (ls-remote --exit-code 2) and an error when the remote cannot be reached,

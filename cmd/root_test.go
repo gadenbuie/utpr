@@ -13,8 +13,9 @@ func TestCommandNeedsAuth(t *testing.T) {
 		{"worktree", []string{"worktree"}, false},
 		{"worktree create", []string{"worktree", "create"}, false},
 		{"worktree list", []string{"worktree", "list"}, false},
+		{"finish", []string{"finish"}, false},
+		{"forget", []string{"forget"}, false},
 		{"push", []string{"push"}, true},
-		{"finish", []string{"finish"}, true},
 		{"fetch", []string{"fetch"}, true},
 	}
 
