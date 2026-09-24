@@ -63,6 +63,9 @@ func init() {
 		if cmd.Name() == "completion" || (cmd.Parent() != nil && cmd.Parent().Name() == "completion") {
 			return nil
 		}
+		if !commandNeedsAuth(cmd) {
+			return checkGitPrerequisites()
+		}
 		return checkPrerequisites()
 	}
 
@@ -99,15 +102,36 @@ func Execute() error {
 	return err
 }
 
+// commandNeedsAuth reports whether a command requires GitHub
+// authentication. Commands that can operate entirely on the local
+// repository don't; GitHub operations within them fail with their own
+// clear errors when they are actually needed.
+func commandNeedsAuth(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "init", "resume", "worktree":
+			return false
+		}
+	}
+	return true
+}
+
 func checkPrerequisites() error {
+	if err := checkGitPrerequisites(); err != nil {
+		return err
+	}
+	if !gh.IsAuthenticated() {
+		return ui.Die("GitHub authentication not found. Run 'gh auth login' or set GITHUB_TOKEN.")
+	}
+	return nil
+}
+
+func checkGitPrerequisites() error {
 	if !git.IsInstalled() {
 		return ui.Die("Missing dependency: git. Install from https://git-scm.com")
 	}
 	if !git.IsInsideWorkTree() {
 		return ui.Die("Not inside a git repository (or worktree). Run utpr from a repository checkout.")
-	}
-	if !gh.IsAuthenticated() {
-		return ui.Die("GitHub authentication not found. Run 'gh auth login' or set GITHUB_TOKEN.")
 	}
 	return nil
 }

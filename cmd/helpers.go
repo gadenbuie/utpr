@@ -192,10 +192,26 @@ func pullBranchInDir(remote, branch, dir string) error {
 	return nil
 }
 
+// remoteBranchGone reports whether refs/heads/<branch> is confirmed absent
+// from the remote. Network or other errors are not treated as "gone".
+func remoteBranchGone(remote, branch string) bool {
+	exists, err := git.RemoteBranchExists(remote, branch)
+	if err != nil {
+		ui.Warnf("Could not check remote branch '%s' on '%s': %v", branch, remote, err)
+		return false
+	}
+	return !exists
+}
+
 // prepareBaseBranch switches to the base branch and pulls it. If the base
 // branch is checked out in a linked worktree, pulls within the worktree and
 // switches to the default branch instead (git refuses to switch to a branch
 // that is already checked out in another worktree).
+//
+// When the base branch no longer exists on the remote (e.g., a parent PR
+// was merged and its branch deleted), the pull is skipped and the caller
+// falls back to the default branch. Other pull failures are returned so
+// they are not silently masked.
 //
 // The caller should call challengeUncommittedChanges before this function
 // when switching away from the current branch.
@@ -204,7 +220,10 @@ func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
 	if wtPath := git.GetBranchWorktreePath(baseBranch); wtPath != "" {
 		ui.Infof("Branch '%s' is checked out in a worktree (%s). Pulling there.", baseBranch, wtPath)
 		if err := pullBranchInDir(remote, baseBranch, wtPath); err != nil {
-			return err
+			if baseBranch == defaultBranch || !remoteBranchGone(remote, baseBranch) {
+				return err
+			}
+			ui.Warnf("Remote branch '%s' is gone; skipping its update.", baseBranch)
 		}
 		// We need to get off the current branch so it can be deleted. Try
 		// the default branch; if that's also in a worktree (or is the same
@@ -230,11 +249,12 @@ func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
 	if !onBase {
 		if err := switchToBranch(baseBranch, remote); err != nil {
 			// Base branch might not exist remotely (e.g., parent PR merged
-			// and branch deleted). Fall back to the default branch.
-			if baseBranch == defaultBranch {
+			// and branch deleted). Fall back to the default branch only when
+			// the remote branch is confirmed gone.
+			if baseBranch == defaultBranch || !remoteBranchGone(remote, baseBranch) {
 				return err
 			}
-			ui.Warnf("Could not switch to base branch '%s'. Falling back to '%s'.", baseBranch, defaultBranch)
+			ui.Warnf("Remote branch '%s' is gone. Falling back to '%s'.", baseBranch, defaultBranch)
 			if err := git.SwitchBranch(defaultBranch); err != nil {
 				return err
 			}
@@ -243,10 +263,10 @@ func prepareBaseBranch(baseBranch, defaultBranch, remote string) error {
 	}
 	if err := pullBranch(remote, baseBranch); err != nil {
 		// Pull might fail if the remote branch was deleted after switching.
-		if baseBranch == defaultBranch {
+		if baseBranch == defaultBranch || !remoteBranchGone(remote, baseBranch) {
 			return err
 		}
-		ui.Warnf("Could not pull base branch '%s'. Falling back to '%s'.", baseBranch, defaultBranch)
+		ui.Warnf("Remote branch '%s' is gone. Falling back to '%s'.", baseBranch, defaultBranch)
 		if err := git.SwitchBranch(defaultBranch); err != nil {
 			return err
 		}

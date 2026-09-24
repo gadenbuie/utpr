@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/git"
@@ -32,6 +33,9 @@ func runResume(cmd *cobra.Command, args []string) error {
 	// below skip or warn when no remote is available.
 	cfg, err := remote.Detect()
 	if err != nil {
+		if errors.Is(err, ui.ErrCancelled) {
+			return err
+		}
 		cfg = nil
 		ui.Warnf("Continuing without remote operations: %v", err)
 	}

@@ -56,6 +56,29 @@ func RunInDir(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// RemoteBranchExists reports whether refs/heads/<branch> exists on the
+// given remote. Returns (false, nil) when the branch is confirmed absent
+// (ls-remote --exit-code 2) and an error when the remote cannot be reached,
+// so callers can distinguish a deleted branch from a network failure.
+func RemoteBranchExists(remoteName, branch string) (bool, error) {
+	cmd := exec.Command("git", "ls-remote", "--exit-code", remoteName, "refs/heads/"+branch)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		return false, nil
+	}
+	if err != nil {
+		stderrStr := strings.TrimSpace(stderr.String())
+		if stderrStr != "" {
+			return false, fmt.Errorf("git ls-remote: %w\n%s", err, stderrStr)
+		}
+		return false, fmt.Errorf("git ls-remote: %w", err)
+	}
+	return strings.TrimSpace(stdout.String()) != "", nil
+}
+
 // RunInteractive runs a git command with stdin/stdout/stderr connected
 // to the terminal. Used for commands where the user needs to see output
 // live (e.g., git merge with conflicts).

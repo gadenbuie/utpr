@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -59,13 +60,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 	var cfg *remote.Config
 	var err error
 	if cfg, err = remote.Detect(); err != nil {
+		if errors.Is(err, ui.ErrCancelled) {
+			return err
+		}
 		hasRemote = false
 		ui.Warnf("Continuing without remote operations: %v", err)
 	}
 
 	// If no args, show issue picker (or ask for branch name if offline)
 	if branch == "" && issueNumber == 0 {
-		if !hasRemote || !gh.IsReachable() {
+		if !hasRemote || !gh.IsReachable() || !gh.IsAuthenticated() {
 			if hasRemote {
 				ui.Warn("No network connection. Enter a branch name to create.")
 			}
