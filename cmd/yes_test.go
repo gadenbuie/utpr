@@ -10,6 +10,7 @@ func TestSetupCommandsHaveYesFlags(t *testing.T) {
 		{name: "init", has: func(name string) bool { return initCmd.Flags().Lookup(name) != nil }},
 		{name: "fetch", has: func(name string) bool { return fetchCmd.Flags().Lookup(name) != nil }},
 		{name: "resume", has: func(name string) bool { return resumeCmd.Flags().Lookup(name) != nil }},
+		{name: "worktree create", has: func(name string) bool { return worktreeCreateCmd.Flags().Lookup(name) != nil }},
 	}
 
 	for _, tt := range tests {

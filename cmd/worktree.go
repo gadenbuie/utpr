@@ -42,9 +42,24 @@ var worktreeOpenCmd = &cobra.Command{
 	RunE:  runWorktreeOpen,
 }
 
+var worktreeCreateCmd = &cobra.Command{
+	Use:     "create [branch]",
+	Aliases: []string{"new"},
+	Short:   "Create a branch in a new git worktree",
+	Long:    "Create a branch in a new git worktree. Equivalent to 'utpr init --worktree'.\n\nIf the branch already exists, its worktree is created instead (or the\nexisting worktree is offered for navigation).",
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		flagInitWorktree = true
+		return runInit(cmd, args)
+	},
+}
+
 func init() {
 	worktreeListCmd.Flags().BoolVar(&flagWorktreeListJSON, "json", false, "Output worktrees as JSON")
+	worktreeCreateCmd.Flags().StringVar(&flagInitBase, "base", "", "Base branch or ref to create from")
+	worktreeCreateCmd.Flags().BoolVar(&flagInitYes, "yes", false, "Assume yes for confirmation prompts")
 	worktreeCmd.AddCommand(worktreeListCmd)
+	worktreeCmd.AddCommand(worktreeCreateCmd)
 	worktreeCmd.AddCommand(worktreeRemoveCmd)
 	worktreeCmd.AddCommand(worktreeOpenCmd)
 }

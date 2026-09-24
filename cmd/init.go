@@ -56,8 +56,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// A remote is only needed for issue lookups and fetching updates; local
 	// branch creation and worktrees work without one.
 	hasRemote := true
+	var cfg *remote.Config
 	var err error
-	if _, err = remote.Detect(); err != nil {
+	if cfg, err = remote.Detect(); err != nil {
 		hasRemote = false
 		ui.Warnf("Continuing without remote operations: %v", err)
 	}
@@ -116,7 +117,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if flagInitWorktree {
 			ui.Infof("Creating worktree for existing branch '%s'.", branch)
-			return initWorktree(branch)
+			return promoteBranchToWorktree(cfg, branch)
 		}
 		ui.Infof("Branch '%s' already exists locally. Resuming.", branch)
 		return runResume(resumeCmd, []string{branch})

@@ -112,7 +112,7 @@ func runFetch(cmd *cobra.Command, args []string) error {
 				return nil
 			}
 			if git.IsBranchInMainWorktree(localBranch) {
-				if err := freeUpCurrentBranch(cfg); err != nil {
+				if err := freeUpCurrentBranch(cfg, localBranch); err != nil {
 					return err
 				}
 			}

@@ -22,10 +22,7 @@ func promoteBranchToWorktree(cfg *remote.Config, branch string) error {
 	}
 
 	if git.IsBranchInMainWorktree(branch) {
-		if cfg == nil {
-			return ui.Die("The branch is checked out in the main repo, but there is no default branch to switch to (no git remote configured).")
-		}
-		if err := freeUpCurrentBranch(cfg); err != nil {
+		if err := freeUpCurrentBranch(cfg, branch); err != nil {
 			return err
 		}
 	}
@@ -34,14 +31,22 @@ func promoteBranchToWorktree(cfg *remote.Config, branch string) error {
 }
 
 // freeUpCurrentBranch switches the main repo off its current branch (onto
-// the default branch) so that branch can be checked out in a worktree
-// instead. It must be run from the main repo, not another worktree.
-func freeUpCurrentBranch(cfg *remote.Config) error {
+// the default branch, or a detached HEAD when there is no remote to provide
+// one) so that branch can be checked out in a worktree instead. It must be
+// run from the main repo, not another worktree.
+func freeUpCurrentBranch(cfg *remote.Config, branch string) error {
 	if git.IsInWorktree() {
 		return ui.Die("The branch is checked out in the main repo. Run this command from the main repo to move it into a worktree.")
 	}
 	if err := challengeUncommittedChanges(); err != nil {
 		return err
+	}
+	if cfg == nil || cfg.DefaultBranch == "" {
+		ui.Warnf("No default branch to switch to; detaching HEAD in the main repo to free up '%s'.", branch)
+		if _, err := git.Run("switch", "--detach"); err != nil {
+			return ui.Die(err.Error())
+		}
+		return nil
 	}
 	if err := git.SwitchBranch(cfg.DefaultBranch); err != nil {
 		return ui.Die(err.Error())

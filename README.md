@@ -104,6 +104,7 @@ utpr <command> [options]
 | Command | Description |
 |---------|-------------|
 | `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree; `--yes` assumes setup defaults |
+| `utpr worktree create [<branch>]` | Create a branch in a new worktree; alias for `utpr init --worktree` |
 | `utpr pause` | Switch back to the default branch |
 | `utpr resume [<branch>]` | Resume work on a PR branch; `--yes` assumes setup defaults |
 | `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree; `--yes` assumes setup defaults |
@@ -253,6 +254,9 @@ settings.
 ```bash
 # Start a new branch in its own worktree
 utpr init feat/add-auth --worktree --yes
+
+# Same thing, discovered from the worktree subcommands
+utpr worktree create feat/add-auth --yes
 
 # Fetch a contributor's PR into a worktree for parallel review
 utpr fetch 42 --worktree --yes
