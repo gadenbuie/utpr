@@ -142,7 +142,7 @@ func detect() (*Config, error) {
 		// No origin — use first available remote
 		remotes, err := git.Run("remote")
 		if err != nil || remotes == "" {
-			return nil, fmt.Errorf("no git remotes configured. Add a remote before using utpr")
+			return nil, fmt.Errorf("no git remotes configured. A git remote is required for issue lookups and for fetching, pulling, or pushing branches")
 		}
 		originName = strings.Split(remotes, "\n")[0]
 		ui.Warnf("No 'origin' remote found. Using '%s'.", originName)

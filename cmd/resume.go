@@ -28,9 +28,12 @@ func init() {
 }
 
 func runResume(cmd *cobra.Command, args []string) error {
+	// Resuming a local branch works without a remote; remote operations
+	// below skip or warn when no remote is available.
 	cfg, err := remote.Detect()
 	if err != nil {
-		return ui.Die(err.Error())
+		cfg = nil
+		ui.Warnf("Continuing without remote operations: %v", err)
 	}
 
 	var branch string
@@ -40,7 +43,11 @@ func runResume(cmd *cobra.Command, args []string) error {
 			return ui.Die(err.Error())
 		}
 	} else {
-		branch, err = pickBranch(cfg.DefaultBranch, "Select a branch to resume:")
+		defaultBranch := ""
+		if cfg != nil {
+			defaultBranch = cfg.DefaultBranch
+		}
+		branch, err = pickBranch(defaultBranch, "Select a branch to resume:")
 		if err != nil {
 			return err
 		}

@@ -22,6 +22,9 @@ func promoteBranchToWorktree(cfg *remote.Config, branch string) error {
 	}
 
 	if git.IsBranchInMainWorktree(branch) {
+		if cfg == nil {
+			return ui.Die("The branch is checked out in the main repo, but there is no default branch to switch to (no git remote configured).")
+		}
 		if err := freeUpCurrentBranch(cfg); err != nil {
 			return err
 		}

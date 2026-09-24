@@ -53,15 +53,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 		branch = arg
 	}
 
-	_, err := remote.Detect()
-	if err != nil {
-		return ui.Die(err.Error())
+	// A remote is only needed for issue lookups and fetching updates; local
+	// branch creation and worktrees work without one.
+	hasRemote := true
+	var err error
+	if _, err = remote.Detect(); err != nil {
+		hasRemote = false
+		ui.Warnf("Continuing without remote operations: %v", err)
 	}
 
 	// If no args, show issue picker (or ask for branch name if offline)
 	if branch == "" && issueNumber == 0 {
-		if !gh.IsReachable() {
-			ui.Warn("No network connection. Enter a branch name to create.")
+		if !hasRemote || !gh.IsReachable() {
+			if hasRemote {
+				ui.Warn("No network connection. Enter a branch name to create.")
+			}
 			branch, err = ui.Input("Branch name:", "", "branch name")
 			if err != nil {
 				return err
@@ -83,6 +89,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Look up issue and prompt for branch name
 	if issueNumber > 0 {
+		if !hasRemote {
+			return ui.Dief("Looking up issue #%d requires a git remote pointing at a GitHub repository.", issueNumber)
+		}
 		branch, err = handleIssue(issueNumber, branch)
 		if err != nil {
 			return err
