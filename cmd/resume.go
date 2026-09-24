@@ -50,6 +50,8 @@ func runResume(cmd *cobra.Command, args []string) error {
 		defaultBranch := ""
 		if cfg != nil {
 			defaultBranch = cfg.DefaultBranch
+		} else {
+			defaultBranch = git.GetLocalDefaultBranch()
 		}
 		branch, err = pickBranch(defaultBranch, "Select a branch to resume:")
 		if err != nil {

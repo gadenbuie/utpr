@@ -39,14 +39,6 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot run from a worktree")
 	}
 
-	if !gh.IsReachable() {
-		ok, err := offerLocalCleanupFallback("utpr finish needs GitHub access to check PR status.")
-		if err != nil || !ok {
-			return err
-		}
-		return finishLocalCleanup(cmd, args)
-	}
-
 	cfg, err := remote.Detect()
 	if err != nil {
 		if errors.Is(err, ui.ErrCancelled) {
@@ -57,7 +49,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		if err != nil || !ok {
 			return err
 		}
-		return finishLocalCleanup(cmd, args)
+		return finishLocalCleanup(cmd, args, "")
 	}
 
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
@@ -67,6 +59,14 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	sourceRepo, err := remote.ParseRepoSpec(sourceURL)
 	if err != nil {
 		return ui.Die(err.Error())
+	}
+
+	if !gh.IsReachable() {
+		ok, err := offerLocalCleanupFallback("utpr finish needs GitHub access to check PR status.")
+		if err != nil || !ok {
+			return err
+		}
+		return finishLocalCleanup(cmd, args, sourceRepo)
 	}
 
 	var prNumbers []int
@@ -239,9 +239,10 @@ func finishOnePR(cfg *remote.Config, sourceRepo string, prNumber int) error {
 }
 
 // finishLocalCleanup runs the local-only cleanup fallback, mapping
-// PR-number arguments to their local branches first.
-func finishLocalCleanup(cmd *cobra.Command, args []string) error {
-	forgetArgs, err := localCleanupArgs(args)
+// PR-number arguments to their local branches first. sourceRepo may be
+// empty when it can't be determined (no git remote).
+func finishLocalCleanup(cmd *cobra.Command, args []string, sourceRepo string) error {
+	forgetArgs, err := localCleanupArgs(args, sourceRepo)
 	if err != nil {
 		return err
 	}
@@ -251,7 +252,7 @@ func finishLocalCleanup(cmd *cobra.Command, args []string) error {
 // localCleanupArgs maps finish arguments to forget-style arguments for
 // local-only cleanup. A PR number is resolved to its local branch via the
 // stored PR URL (no GitHub access needed); branch names pass through.
-func localCleanupArgs(args []string) ([]string, error) {
+func localCleanupArgs(args []string, sourceRepo string) ([]string, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
@@ -259,7 +260,7 @@ func localCleanupArgs(args []string) ([]string, error) {
 		return args, nil
 	}
 	n, _ := strconv.Atoi(args[0])
-	branch, err := findBranchWithPRNumber(n)
+	branch, err := findBranchWithPRNumber(n, sourceRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -267,22 +268,54 @@ func localCleanupArgs(args []string) ([]string, error) {
 }
 
 // findBranchWithPRNumber returns the local branch whose stored PR URL is
-// for the given PR number, searching all local branches.
-func findBranchWithPRNumber(prNumber int) (string, error) {
+// for the given PR number, searching all local branches. When sourceRepo
+// is known, stored URLs for other repositories are ignored. Returns an
+// error for zero or multiple matches.
+func findBranchWithPRNumber(prNumber int, sourceRepo string) (string, error) {
 	refs, err := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
 	if err != nil {
 		return "", ui.Dief("Could not look up local branches to resolve PR #%d.", prNumber)
 	}
+	var matches []string
 	for _, branch := range strings.Split(refs, "\n") {
 		branch = strings.TrimSpace(branch)
 		if branch == "" {
 			continue
 		}
-		if prNumberFromStoredURL(git.GetBranchPRURL(branch)) == prNumber {
-			return branch, nil
+		url := git.GetBranchPRURL(branch)
+		if prNumberFromStoredURL(url) != prNumber {
+			continue
 		}
+		if sourceRepo != "" {
+			if prRepo := prRepoFromStoredURL(url); prRepo != "" && prRepo != sourceRepo {
+				continue
+			}
+		}
+		matches = append(matches, branch)
 	}
-	return "", ui.Dief("Could not find a local branch for PR #%d. Run 'utpr forget <branch>' to clean up locally.", prNumber)
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", ui.Dief("Could not find a local branch for PR #%d. Run 'utpr forget <branch>' to clean up locally.", prNumber)
+	default:
+		return "", ui.Dief("Multiple local branches reference PR #%d (%s). Run 'utpr forget <branch>' to choose one.", prNumber, strings.Join(matches, ", "))
+	}
+}
+
+// prRepoFromStoredURL extracts "owner/repo" from a stored GitHub PR URL
+// (the two path segments before "/pull/<number>"). Returns "" when it
+// can't be determined.
+func prRepoFromStoredURL(storedURL string) string {
+	if storedURL == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/\d+$`)
+	m := re.FindStringSubmatch(storedURL)
+	if m == nil {
+		return ""
+	}
+	return m[1] + "/" + m[2]
 }
 
 // offerLocalCleanupFallback warns that PR checks are unavailable and asks

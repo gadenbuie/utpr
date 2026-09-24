@@ -42,6 +42,15 @@ func freeUpCurrentBranch(cfg *remote.Config, branch string) error {
 		return err
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
+		// Prefer a local default branch when one is available so the main
+		// checkout isn't left detached.
+		if localDefault := git.GetLocalDefaultBranch(); localDefault != "" &&
+			localDefault != branch && git.GetBranchWorktreePath(localDefault) == "" {
+			if err := git.SwitchBranch(localDefault); err != nil {
+				return ui.Die(err.Error())
+			}
+			return nil
+		}
 		ui.Warnf("No default branch to switch to; detaching HEAD in the main repo to free up '%s'.", branch)
 		if _, err := git.Run("switch", "--detach"); err != nil {
 			return ui.Die(err.Error())

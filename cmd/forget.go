@@ -101,6 +101,14 @@ func runForgetIn(cmd *cobra.Command, args []string, localOnly bool) error {
 		return err
 	}
 
+	// Without a remote, the default branch is guessed from local branches
+	// (main, then master). When both exist, the non-guessed candidate may
+	// be the real default branch — refuse to delete it.
+	if cfg == nil && (target == "main" || target == "master") && target != defaultBranch &&
+		git.BranchExists("main") && git.BranchExists("master") {
+		return ui.Dief("Both 'main' and 'master' exist locally and the default branch can't be determined without a git remote. Refusing to delete '%s'.", target)
+	}
+
 	if target == current {
 		if err := challengeUncommittedChanges(); err != nil {
 			return err
