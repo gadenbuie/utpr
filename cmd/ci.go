@@ -842,8 +842,8 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		// when the completion fetch added log-derived ones. Compact mode
 		// has no earlier grouped view to update, so it renders once here.
 		// A rendered frame ends with the summary line: watch mode renders
-		// a frame every poll, compact mode only on failure with reasons.
-		// The standalone summary below covers only paths without a frame.
+		// a frame every poll, compact mode only on failure when reasons
+		// are enabled. The standalone summary below covers only paths without a frame.
 		frameRendered := fullDisplay
 		if fullDisplay && logReasonsAdded {
 			render(checkRuns, lastWfRuns, true, reasons)
