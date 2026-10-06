@@ -104,6 +104,9 @@ func runFinish(cmd *cobra.Command, args []string) error {
 				prNumbers = []int{pr.Number}
 			}
 		} else {
+			if err := requireInteractiveTTY("pass a PR number or branch name as an argument"); err != nil {
+				return err
+			}
 			fromPicker = true
 			prNumbers, err = pickMergedPRs(cfg, sourceRepo)
 			if err != nil {

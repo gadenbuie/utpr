@@ -195,6 +195,10 @@ func configureFetchedBranch(localBranch, remoteName, headRef, prURL string) {
 }
 
 func pickPR(header string) (int, error) {
+	if err := requireInteractiveTTY("pass a PR number as an argument"); err != nil {
+		return 0, err
+	}
+
 	cfg := remote.Require()
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {

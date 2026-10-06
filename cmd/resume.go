@@ -115,6 +115,10 @@ func runResume(cmd *cobra.Command, args []string) error {
 
 // pickBranch shows an interactive branch picker, excluding the default branch.
 func pickBranch(defaultBranch, header string) (string, error) {
+	if err := requireInteractiveTTY("pass a branch name as an argument"); err != nil {
+		return "", err
+	}
+
 	branchOutput, err := ui.SpinWithResult("Looking up local branches...", func() (string, error) {
 		return git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
 	})
