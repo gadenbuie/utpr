@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 func TestRenderViewMarkdownAgent(t *testing.T) {
@@ -94,5 +95,42 @@ func TestFormatViewAgentPRChoices(t *testing.T) {
 		"#120\tmerged\tShip the fix\t@bob\n"
 	if got != want {
 		t.Errorf("formatViewAgentPRChoices() = %q, want %q", got, want)
+	}
+}
+
+func TestViewAgentModeMatrix(t *testing.T) {
+	previousAgent, previousRootAgent, previousRootPretty := flagViewAgent, flagRootAgent, flagRootPretty
+	t.Cleanup(func() {
+		flagViewAgent, flagRootAgent, flagRootPretty = previousAgent, previousRootAgent, previousRootPretty
+	})
+
+	restoreTTY := ui.SetTTYFuncs(func() bool { return true }, func() bool { return true })
+	t.Cleanup(restoreTTY)
+
+	tests := []struct {
+		name      string
+		stdoutTTY bool
+		agent     bool
+		pretty    bool
+		wantAgent bool
+	}{
+		{"tty no flags", true, false, false, false},
+		{"pipe no flags", false, false, false, true},
+		{"tty --agent", true, true, false, true},
+		{"pipe --pretty", false, false, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := ui.SetTTYFuncs(func() bool { return tt.stdoutTTY }, func() bool { return true })
+			t.Cleanup(restore)
+			flagViewAgent, flagRootAgent, flagRootPretty = tt.agent, false, tt.pretty
+
+			// showIDs follows the same decision, so comment IDs must
+			// appear exactly when agent mode is active.
+			if got := viewAgentMode(); got != tt.wantAgent {
+				t.Errorf("viewAgentMode() = %v, want %v", got, tt.wantAgent)
+			}
+		})
 	}
 }
