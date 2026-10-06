@@ -224,6 +224,19 @@ utpr ci logs --job "test"
 utpr ci logs --full
 ```
 
+CI output is capped at 256 KB by default so a huge log can't flood your
+terminal or an agent's context. When the cap is hit, output ends with a
+truncation marker reporting how much was hidden. Use `--max-bytes` to change
+the cap or `--max-bytes 0` to disable it:
+
+```bash
+# Cap output at 64 KB
+utpr ci logs --full --max-bytes 65536
+
+# No cap
+utpr ci logs --full --max-bytes 0
+```
+
 ### Keeping a clean repo
 
 `utpr clean` is an interactive housekeeping command that sweeps the
