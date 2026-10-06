@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gadenbuie/utpr/internal/cilog"
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/ui"
 )
@@ -143,5 +145,116 @@ func TestFormatRelativeTimeAt_AbsoluteTimestampAfter7Days(t *testing.T) {
 	want := then.Local().Format("2006-01-02 15:04")
 	if got != want {
 		t.Errorf("formatRelativeTimeAt(now-7d) = %q, want %q", got, want)
+	}
+}
+
+// ciLogsFixture builds a raw job log whose tail is post-failure noise:
+// the failing assertion appears mid-log, followed by artifact upload and
+// post-run cleanup steps.
+func ciLogsFixture(fill int, tailNoise int) string {
+	var b strings.Builder
+	line := func(s string) { b.WriteString("2026-07-01T10:00:00.0000000Z " + s + "\n") }
+	for i := 0; i < fill; i++ {
+		line(fmt.Sprintf("checkout output %d", i))
+	}
+	line("##[group]Run R CMD check")
+	line("##[endgroup]")
+	line("running tests for package 'utpr'")
+	line("Failed tests:")
+	line("expect_equal(x, 2) is not TRUE")
+	line("Execution halted")
+	line("##[error]Process completed with exit code 1.")
+	line("##[group]Run actions/upload-artifact@v4")
+	line("##[endgroup]")
+	for i := 0; i < tailNoise; i++ {
+		line(fmt.Sprintf("upload noise %d", i))
+	}
+	line("##[group]Post Run actions/checkout@v4")
+	line("##[endgroup]")
+	line("Cleaning up repository...")
+	return b.String()
+}
+
+func TestProcessLogLinesAnchorsWindowOnFailure(t *testing.T) {
+	raw := ciLogsFixture(150, 120)
+
+	processed, mode := processLogLines(raw, false, 100)
+	if mode != cilog.ModeLandmark {
+		t.Fatalf("processLogLines() mode = %v, want ModeLandmark", mode)
+	}
+	if len(processed) > 100 {
+		t.Errorf("processLogLines() returned %d lines, want at most 100", len(processed))
+	}
+	got := strings.Join(processed, "\n")
+	for _, want := range []string{"Failed tests:", "expect_equal(x, 2)", "Execution halted"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("processLogLines() window missing failure context %q", want)
+		}
+	}
+	for _, noise := range []string{"upload noise", "Post Run", "Cleaning up"} {
+		if strings.Contains(got, noise) {
+			t.Errorf("processLogLines() window includes post-failure noise %q", noise)
+		}
+	}
+	for _, line := range processed {
+		if strings.Contains(line, "2026-07-01T10:00:00") {
+			t.Errorf("processLogLines() left a timestamp on line %q", line)
+		}
+	}
+}
+
+func TestProcessLogLinesFullWindow(t *testing.T) {
+	raw := ciLogsFixture(150, 5)
+	total := strings.Count(raw, "\n")
+
+	processed, mode := processLogLines(raw, false, 0)
+	if mode != cilog.ModeFull {
+		t.Fatalf("processLogLines(raw, _, 0) mode = %v, want ModeFull", mode)
+	}
+	if len(processed) != total {
+		t.Errorf("processLogLines(raw, _, 0) returned %d lines, want all %d", len(processed), total)
+	}
+	got := strings.Join(processed, "\n")
+	if !strings.Contains(got, "upload noise") || !strings.Contains(got, "Cleaning up repository") {
+		t.Errorf("processLogLines(raw, _, 0) dropped post-job step output")
+	}
+
+	// A log that fits within n lines is shown in full.
+	small := ciLogsFixture(3, 2)
+	total = strings.Count(small, "\n")
+	processed, mode = processLogLines(small, false, 100)
+	if mode != cilog.ModeFull {
+		t.Errorf("processLogLines(short log) mode = %v, want ModeFull", mode)
+	}
+	if len(processed) != total {
+		t.Errorf("processLogLines(short log) returned %d lines, want all %d", len(processed), total)
+	}
+}
+
+func TestProcessLogLinesKeepsTimestamps(t *testing.T) {
+	raw := ciLogsFixture(0, 0)
+
+	processed, _ := processLogLines(raw, true, 50)
+	if len(processed) == 0 {
+		t.Fatal("processLogLines() returned no lines")
+	}
+	if !strings.HasPrefix(processed[0], "2026-07-01T10:00:00") {
+		t.Errorf("processLogLines(showTimestamps) first line %q lost its timestamp", processed[0])
+	}
+	if strings.Contains(processed[0], "\x1b[") {
+		t.Errorf("processLogLines(showTimestamps) should keep timestamps, stripped ANSI elsewhere: %q", processed[0])
+	}
+}
+
+func TestCILogsFullFlag(t *testing.T) {
+	if ciLogsCmd.Flags().Lookup("full") == nil {
+		t.Fatal("ci logs command is missing the --full flag")
+	}
+	help := ciLogsCmd.Flags().Lookup("lines").Usage
+	if strings.Contains(help, "0 = all") {
+		t.Errorf("--lines help %q still advertises -n 0; it should be documented only via --full", help)
+	}
+	if !strings.Contains(ciLogsCmd.Long, "--full") {
+		t.Errorf("ci logs long help should document --full, got %q", ciLogsCmd.Long)
 	}
 }

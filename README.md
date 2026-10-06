@@ -203,7 +203,9 @@ utpr ci --web
 ```
 
 When checks fail, `utpr ci logs` streams the output of failed jobs so
-you can debug without leaving the terminal:
+you can debug without leaving the terminal. By default, post-job steps
+(artifact upload, cleanup) are excluded and the shown window is anchored on
+the errors, so the failure isn't buried in teardown noise:
 
 ```bash
 # Interactive picker — choose which failed job to inspect
@@ -217,6 +219,9 @@ utpr ci logs --failed --agent
 
 # Filter to a specific job by name
 utpr ci logs --job "test"
+
+# Show the complete log, including post-job steps
+utpr ci logs --full
 ```
 
 ### Keeping a clean repo
