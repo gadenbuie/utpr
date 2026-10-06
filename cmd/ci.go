@@ -301,7 +301,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 	if errors.Is(err, errNoChecksFound) {
 		// Only offer the automatic picker fallback when the user didn't
 		// already pick a specific target (no args, no explicit --pick).
-		if len(args) == 0 && !flagCIPick {
+		if len(args) == 0 && !flagCIPick && ciStdinIsTTY() {
 			picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, autoPickRunsLimit)
 			if pickErr != nil {
 				return pickErr
@@ -445,6 +445,9 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 // prompts the user to pick one. Returns (nil, nil) if the user cancels or
 // no runs are found (an informational message is printed in that case).
 func pickRunForBranch(ownerRepo, branch string, limit int) (*gh.WorkflowRun, error) {
+	if err := requireInteractiveTTY("pass a PR number, branch, or ref instead of --pick"); err != nil {
+		return nil, err
+	}
 	if branch == "" {
 		printCIInfo(ciAgentMode(), "Could not determine a branch to list CI runs for.")
 		return nil, nil
@@ -1084,6 +1087,9 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 // pickCILogs presents an interactive picker for which jobs to view and how
 // many lines to show. Returns (nil, _, nil) when the user cancels.
 func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines int) ([]jobEntry, int, error) {
+	if err := requireInteractiveTTY("use --failed, --all, or --job to select logs non-interactively"); err != nil {
+		return nil, 0, err
+	}
 	const pickAllFailed = -1
 	const pickAllJobs = -2
 
@@ -1416,6 +1422,9 @@ type rerunSelection struct {
 // pickCIRerunJobs presents an interactive picker for which jobs to re-run,
 // analogous to pickCILogs. Returns (nil, nil) if the user cancels.
 func pickCIRerunJobs(allJobs, failedJobs []jobEntry) (*rerunSelection, error) {
+	if err := requireInteractiveTTY("use --job to select jobs non-interactively"); err != nil {
+		return nil, err
+	}
 	const (
 		pickAllFailed = -1
 		pickAllJobs   = -2
