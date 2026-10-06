@@ -73,13 +73,14 @@ By default, re-runs failed jobs. Use --job to control which jobs are re-run:
 }
 
 var (
-	flagCIWeb    bool
-	flagCIWatch  bool
-	flagCIFailed bool
-	flagCIWait   string
-	flagCIPick   bool
-	flagCIAgent  bool
-	flagCIPretty bool
+	flagCIWeb       bool
+	flagCIWatch     bool
+	flagCIFailed    bool
+	flagCIWait      string
+	flagCIPick      bool
+	flagCIAgent     bool
+	flagCIPretty    bool
+	flagCINoReasons bool
 )
 
 // ciStdoutIsTTY and ciStdinIsTTY report terminal attachment. They are
@@ -127,6 +128,7 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
+	ciCmd.Flags().BoolVar(&flagCINoReasons, "no-reasons", false, "Skip the inline failure reason shown for each failed check")
 	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes for the check list (0 disables)")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
@@ -425,11 +427,11 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		workflowRuns []gh.WorkflowRun
 	}
 	data, err := spinCIWithResult("Fetching CI status...", func() (ciStatus, error) {
-		checkRuns, crErr := gh.GetCheckRuns(ownerRepo, sha)
+		checkRuns, crErr := ghGetCheckRuns(ownerRepo, sha)
 		if crErr != nil {
 			return ciStatus{}, crErr
 		}
-		wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
+		wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 		return ciStatus{checkRuns: checkRuns, workflowRuns: wfRuns}, nil
 	})
 	if err != nil {
@@ -455,12 +457,19 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		runs = failed
 	}
 
+	reasons := map[int64]string{}
+	if !flagCINoReasons && anyFailedCheckRun(runs) {
+		reasons, _ = spinCIWithResult("Fetching failure reasons...", func() (map[int64]string, error) {
+			return fetchCheckRunReasons(ownerRepo, runs, data.workflowRuns), nil
+		})
+	}
+
 	limiter := ui.NewByteLimiter(flagCILogsMaxBytes)
 	if ciAgentMode() {
-		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false)))
+		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false, reasons)))
 	} else {
 		var buf bytes.Buffer
-		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false)
+		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false, reasons)
 		_, _ = fmt.Fprint(os.Stderr, limiter.Limit(buf.String()))
 	}
 	return nil
@@ -588,11 +597,38 @@ func countTerminalRows(output string, termWidth int) int {
 	return rows
 }
 
+// ciPollInterval is the delay between CI status polls; a var so tests
+// can shorten it.
+var ciPollInterval = 10 * time.Second
+
 func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 	isInteractive := !ciAgentMode() && term.IsTerminal(int(os.Stderr.Fd()))
 	var prevLines int       // for fullDisplay mode
 	var lastRendered string // for compact interactive: last full rendered msg (with ANSI)
 	var lastStatus string   // for compact non-interactive: last stripped status (without timestamp)
+
+	var cache *reasonCache
+	if !flagCINoReasons {
+		cache = newReasonCache()
+	}
+	var lastWfRuns []gh.WorkflowRun // latest workflow runs seen by fullDisplay
+
+	// render writes the grouped check run view, overwriting the previous
+	// frame in interactive fullDisplay mode.
+	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string) {
+		var buf strings.Builder
+		renderCheckRuns(&buf, runs, buildSuiteNameMap(wfRuns), showTimestamp, reasons)
+		output := buf.String()
+		if ciAgentMode() {
+			_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
+		} else {
+			if prevLines > 0 {
+				fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
+			}
+			fmt.Fprint(os.Stderr, output)
+			prevLines = countTerminalRows(output, ui.GetTermWidth())
+		}
+	}
 
 	clearLine := func() {
 		if isInteractive && lastRendered != "" {
@@ -603,15 +639,21 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 	}
 
 	for {
-		checkRuns, err := gh.GetCheckRuns(ownerRepo, sha)
+		checkRuns, err := ghGetCheckRuns(ownerRepo, sha)
 		if err != nil {
 			clearLine()
 			return ui.Dief("Could not fetch CI status: %v", err)
 		}
 
 		if len(checkRuns) == 0 {
-			time.Sleep(10 * time.Second)
+			time.Sleep(ciPollInterval)
 			continue
+		}
+
+		// Annotations are collected as failed runs appear, within the
+		// existing poll cadence; each run is fetched at most once.
+		if cache != nil {
+			cache.collectAnnotations(ownerRepo, checkRuns)
 		}
 
 		var running, passing, failing, skipped int
@@ -632,19 +674,13 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		allDone := running == 0
 
 		if fullDisplay {
-			wfRuns, _ := gh.ListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
-			var buf strings.Builder
-			renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
-			output := buf.String()
-			if ciAgentMode() {
-				_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
-			} else {
-				if prevLines > 0 {
-					fmt.Fprintf(os.Stderr, "\033[%dA\033[J", prevLines)
-				}
-				fmt.Fprint(os.Stderr, output)
-				prevLines = countTerminalRows(output, ui.GetTermWidth())
+			wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
+			lastWfRuns = wfRuns
+			var reasons map[int64]string
+			if cache != nil {
+				reasons = cache.annotationReasons(checkRuns)
 			}
+			render(checkRuns, wfRuns, true, reasons)
 		} else {
 			var parts []string
 			if running > 0 {
@@ -682,11 +718,30 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 
 		shouldStop := allDone || (mode == "failed" && anyFailed)
 		if !shouldStop {
-			time.Sleep(10 * time.Second)
+			time.Sleep(ciPollInterval)
 			continue
 		}
 
+		// Completion: erase any compact status line, fetch the logs of failed
+		// jobs whose annotations were generic (once), and show the final
+		// state with reasons.
 		clearLine()
+		var reasons map[int64]string
+		if anyFailed && cache != nil {
+			wfRuns := lastWfRuns
+			if !fullDisplay && needsSuiteMapping(checkRuns) {
+				wfRuns, _ = ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort, once
+				lastWfRuns = wfRuns
+			}
+			reasons = cache.resolveLogReasons(ownerRepo, checkRuns, wfRuns, cache.annotationReasons(checkRuns))
+		}
+
+		if fullDisplay {
+			render(checkRuns, lastWfRuns, true, reasons)
+		} else if anyFailed && cache != nil {
+			render(checkRuns, lastWfRuns, false, reasons)
+		}
+
 		summary := checkRunSummary(checkRuns)
 		if anyFailed {
 			if ciAgentMode() {
@@ -873,7 +928,16 @@ func checkRunSummary(runs []gh.CheckRun) string {
 	return strings.Join(parts, " · ")
 }
 
-func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) {
+func anyFailedCheckRun(runs []gh.CheckRun) bool {
+	for _, r := range runs {
+		if isFailedCheckRun(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
 		_, _ = fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
@@ -904,6 +968,9 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 				icon,
 				ui.PadRight(name, maxLen),
 				dur)
+			if reason, ok := reasons[r.ID]; ok {
+				_, _ = fmt.Fprintf(w, "      %s\n", ui.StyleMuted.Render("↳ "+reason))
+			}
 		}
 		_, _ = fmt.Fprintln(w)
 	}
@@ -911,9 +978,9 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 	_, _ = fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
-func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool) string {
+func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string) string {
 	var buf strings.Builder
-	renderCheckRuns(&buf, runs, suiteNames, showTimestamp)
+	renderCheckRuns(&buf, runs, suiteNames, showTimestamp, reasons)
 	return ui.StripANSI(buf.String())
 }
 

@@ -38,7 +38,7 @@ func TestRenderCheckRunsPlain(t *testing.T) {
 	}
 	run.CheckSuite.ID = 42
 
-	got := renderCheckRunsPlain([]gh.CheckRun{run}, map[int64]string{42: "build"}, false)
+	got := renderCheckRunsPlain([]gh.CheckRun{run}, map[int64]string{42: "build"}, false, nil)
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("renderCheckRunsPlain() contains ANSI escape codes: %q", got)
 	}
