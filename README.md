@@ -101,6 +101,12 @@ utpr also needs GitHub authentication. You have two options:
 utpr <command> [options]
 ```
 
+Every command is TTY-aware: when stdout is piped (e.g. `utpr pull |
+cat`), output is plain and unstyled, spinners are skipped, and any
+interactive prompt fails fast with guidance instead of hanging. Pass the
+global `--agent` flag to force plain output in a terminal, or `--pretty`
+to force styled output when piping.
+
 | Command | Description |
 |---------|-------------|
 | `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree; `--yes` assumes setup defaults |
@@ -108,14 +114,14 @@ utpr <command> [options]
 | `utpr pause` | Switch back to the default branch |
 | `utpr resume [<branch>]` | Resume work on a PR branch; `--yes` assumes setup defaults |
 | `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree; `--yes` assumes setup defaults |
-| `utpr push [--edit=...]` | Push branch and create/update PR; `--agent` emits plain results |
+| `utpr push [--edit=...]` | Push branch and create/update PR; plain results when piped or with `--agent` |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
 | `utpr ci [<ref>]` | Show GitHub Actions status; plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `utpr ci logs` streams failed-job output |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
-| `utpr view [<pr>]` | View PR details and comments; `--agent` emits raw Markdown |
+| `utpr view [<pr>]` | View PR details and comments; raw Markdown when piped or with `--agent` |
 | `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
 Run `utpr <command> --help` for detailed usage of any command.
@@ -163,6 +169,7 @@ utpr fetch 42
 utpr view
 
 # Print raw Markdown for an agent or other text-processing tool
+# (also automatic when piping, e.g. `utpr view | cat`; --pretty overrides)
 utpr view --agent
 
 # Show unresolved review comments without the PR body
