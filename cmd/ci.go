@@ -50,8 +50,8 @@ Use --grep to keep only lines matching a pattern (case-insensitive), with
 -A/--after and -B/--before lines of context. Grep runs on the complete log
 before any windowing; the line cap then applies to the filtered result
 (--full removes the cap).`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runCILogs,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCILogs,
 }
 
 var ciRerunCmd = &cobra.Command{
