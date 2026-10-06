@@ -847,6 +847,15 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			render(checkRuns, lastWfRuns, false, reasons)
 		}
 
+		// Watch frames already end with the summary line, so compact mode
+		// alone prints the standalone completion summary.
+		if fullDisplay {
+			if anyFailed {
+				return fmt.Errorf("CI checks failed")
+			}
+			return nil
+		}
+
 		summary := checkRunSummary(checkRuns)
 		if anyFailed {
 			if ciAgentMode() {

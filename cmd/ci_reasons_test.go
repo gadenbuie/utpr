@@ -624,6 +624,87 @@ func TestWaitCIWatchNoDoubleRender(t *testing.T) {
 	})
 }
 
+func TestWaitCICompletionSummaryOnce(t *testing.T) {
+	// count matches the summary only as a standalone line, so poll
+	// status lines like "[ts] Waiting for CI: 1 passing" don't count.
+	count := func(out, want string) int {
+		return strings.Count(out, "\n"+want+"\n")
+	}
+
+	t.Run("watch success prints summary once", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		s.checkRuns = [][]gh.CheckRun{{reasonCheckRun(8, "CI / lint", "success")}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err != nil {
+			t.Fatalf("waitCI() = %v, want nil", err)
+		}
+		if n := count(out, "1 passing"); n != 1 {
+			t.Errorf("summary printed %d times, want 1:\n%s", n, out)
+		}
+	})
+
+	t.Run("watch failure prints summary once", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, true) // no completion render: frame alone carries the summary
+
+		s.checkRuns = [][]gh.CheckRun{{reasonCheckRun(7, "CI / build", "failure")}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := count(out, "1 failing"); n != 1 {
+			t.Errorf("summary printed %d times, want 1:\n%s", n, out)
+		}
+	})
+
+	t.Run("compact success prints final summary", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		s.checkRuns = [][]gh.CheckRun{{reasonCheckRun(8, "CI / lint", "success")}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", false) })
+		if err != nil {
+			t.Fatalf("waitCI() = %v, want nil", err)
+		}
+		if n := count(out, "Checking CI..."); n != 0 {
+			t.Errorf("compact mode rendered %d frames, want 0:\n%s", n, out)
+		}
+		if n := count(out, "1 passing"); n != 1 {
+			t.Errorf("summary printed %d times, want 1:\n%s", n, out)
+		}
+	})
+
+	t.Run("compact failure prints final summary", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", false) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := count(out, "1 passing · 1 failing"); n < 1 {
+			t.Errorf("summary missing from output:\n%s", out)
+		}
+	})
+}
+
 func TestWaitCIWatchAnnotationOnlyReasonsOneFrame(t *testing.T) {
 	s := &reasonSeam{}
 	withReasonSeam(t, s)
