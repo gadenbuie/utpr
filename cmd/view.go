@@ -598,7 +598,7 @@ func formatAssociation(a string) string {
 }
 
 func renderComments(comments []gh.Comment) error {
-	showIDs := !ui.IsStdoutTTY()
+	showIDs := viewAgentMode()
 	for _, c := range comments {
 		date := c.CreatedAt
 		if len(date) >= 10 {
@@ -662,7 +662,7 @@ func renderReviewComments(comments []gh.ReviewComment) error {
 		}
 	}
 
-	showIDs := !ui.IsStdoutTTY()
+	showIDs := viewAgentMode()
 	for _, rootID := range rootOrder {
 		t := threads[rootID]
 
