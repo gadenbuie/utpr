@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/cilog"
@@ -26,7 +27,11 @@ const reasonLineMaxRunes = 160
 // annotations are generic, the failed job's log. Runs without a usable
 // reason are omitted from the map.
 func fetchCheckRunReasons(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
-	c := newReasonCache()
+	return newReasonCache().resolve(ownerRepo, runs, wfRuns)
+}
+
+// resolve completes the reason map for the failed runs in one pass.
+func (c *reasonCache) resolve(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
 	c.collectAnnotations(ownerRepo, runs)
 	reasons := c.annotationReasons(runs)
 	c.resolveLogReasons(ownerRepo, runs, wfRuns, reasons)
@@ -50,11 +55,14 @@ func informativeAnnotation(anns []gh.CheckRunAnnotation) string {
 }
 
 // reasonCache stores per-check-run annotations, per-run job lists, and
-// per-job logs so repeated polls and renders never re-fetch.
+// per-job logs so repeated polls and renders never re-fetch. Fetch
+// failures are collected as warnings and reported once via
+// flushWarnings, keeping spinner and status output ungarbled.
 type reasonCache struct {
 	annotations map[int64][]gh.CheckRunAnnotation
 	jobs        map[int64][]gh.WorkflowJob
 	logs        map[int64]string
+	warnings    []string
 }
 
 func newReasonCache() *reasonCache {
@@ -65,10 +73,22 @@ func newReasonCache() *reasonCache {
 	}
 }
 
+func (c *reasonCache) warnf(format string, args ...any) {
+	c.warnings = append(c.warnings, fmt.Sprintf(format, args...))
+}
+
+// flushWarnings reports collected fetch failures once and clears them.
+func (c *reasonCache) flushWarnings() {
+	for _, msg := range c.warnings {
+		ui.Warn(msg)
+	}
+	c.warnings = nil
+}
+
 // collectAnnotations fetches annotations for failed check runs that are
 // not cached yet. Annotations are immutable once a check run completes,
 // so each run is fetched at most once. Fetch failures are cached as empty
-// and reported once.
+// and collected as warnings.
 func (c *reasonCache) collectAnnotations(ownerRepo string, runs []gh.CheckRun) {
 	for _, r := range runs {
 		if !isFailedCheckRun(r) {
@@ -79,7 +99,7 @@ func (c *reasonCache) collectAnnotations(ownerRepo string, runs []gh.CheckRun) {
 		}
 		anns, err := ghListCheckRunAnnotations(ownerRepo, r.ID)
 		if err != nil {
-			ui.Warnf("Could not fetch annotations for '%s': %v", r.Name, err)
+			c.warnf("Could not fetch annotations for '%s': %v", r.Name, err)
 			anns = nil
 		}
 		c.annotations[r.ID] = anns
@@ -130,7 +150,7 @@ func (c *reasonCache) logReason(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	if !ok {
 		fetched, err := ghGetJobLogs(ownerRepo, job.ID)
 		if err != nil {
-			ui.Warnf("Could not fetch log for job '%s': %v", job.Name, err)
+			c.warnf("Could not fetch log for job '%s': %v", job.Name, err)
 		}
 		c.logs[job.ID] = fetched
 		log = fetched
@@ -159,7 +179,7 @@ func (c *reasonCache) failedJob(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	if !ok {
 		fetched, err := ghListWorkflowRunJobs(ownerRepo, runID)
 		if err != nil {
-			ui.Warnf("Could not fetch jobs for run %d: %v", runID, err)
+			c.warnf("Could not fetch jobs for run %d: %v", runID, err)
 		}
 		c.jobs[runID] = fetched
 		jobs = fetched

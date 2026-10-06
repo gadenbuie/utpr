@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -524,6 +525,101 @@ func TestMatchFailedJob(t *testing.T) {
 		got := matchFailedJob(run, []gh.WorkflowJob{failed(1, "other-a"), failed(2, "other-b")})
 		if got != nil {
 			t.Errorf("matchFailedJob() = %+v, want nil when several failed jobs match none", got)
+		}
+	})
+}
+
+func TestReasonCacheWarningsFlushOnce(t *testing.T) {
+	c := newReasonCache()
+	c.warnf("Could not fetch annotations for '%s': %v", "build", errBoom)
+	c.warnf("Could not fetch log for job '%s': %v", "build", errBoom)
+	if len(c.warnings) != 2 {
+		t.Fatalf("collected %d warnings, want 2", len(c.warnings))
+	}
+	c.flushWarnings()
+	if len(c.warnings) != 0 {
+		t.Errorf("flushWarnings left %d warnings, want 0", len(c.warnings))
+	}
+	c.flushWarnings() // a second flush must be a no-op
+	if len(c.warnings) != 0 {
+		t.Errorf("second flushWarnings left %d warnings, want 0", len(c.warnings))
+	}
+}
+
+var errBoom = fmt.Errorf("boom")
+
+func TestWaitCIWatchNoDoubleRender(t *testing.T) {
+	countFrames := func(out string) int {
+		return strings.Count(out, "Checking CI...")
+	}
+
+	t.Run("success renders one frame", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		s.checkRuns = [][]gh.CheckRun{{passed}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err != nil {
+			t.Fatalf("waitCI() = %v, want nil", err)
+		}
+		if n := countFrames(out); n != 1 {
+			t.Errorf("rendered %d frames on success, want 1:\n%s", n, out)
+		}
+	})
+
+	t.Run("failure without reasons does not re-render", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+		s.annotations[7] = []gh.CheckRunAnnotation{
+			{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
+		}
+		s.logs[7] = "nothing informative\n" // no landmark: no reason
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := countFrames(out); n != 1 {
+			t.Errorf("rendered %d frames without reasons, want 1:\n%s", n, out)
+		}
+		if strings.Contains(out, "↳") {
+			t.Errorf("unexpected reason line:\n%s", out)
+		}
+	})
+
+	t.Run("failure with reasons re-renders once", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+		s.annotations[7] = []gh.CheckRunAnnotation{
+			{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
+		}
+		s.logs[7] = "Error: object 'foo' not found\n"
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := countFrames(out); n != 2 {
+			t.Errorf("rendered %d frames, want 2 (poll + final with reasons):\n%s", n, out)
+		}
+		if !strings.Contains(out, "↳ Error: object 'foo' not found") {
+			t.Errorf("final frame missing the inline reason:\n%s", out)
 		}
 	})
 }
