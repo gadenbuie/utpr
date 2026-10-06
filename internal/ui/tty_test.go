@@ -80,6 +80,13 @@ func TestPromptsRequireTTY(t *testing.T) {
 	}
 }
 
+func TestRequireTTYAllowsTerminalStdin(t *testing.T) {
+	withTTY(t, true, true)
+	if err := requireTTY(); err != nil {
+		t.Errorf("requireTTY() = %v with TTY stdin, want nil", err)
+	}
+}
+
 func TestSpinSkipsInPlainMode(t *testing.T) {
 	restore := SetSpinFunc(func(title string, fn func() error) error {
 		t.Error("Spin() invoked the spinner in plain mode")

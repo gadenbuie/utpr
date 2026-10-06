@@ -57,5 +57,8 @@ func RequireInteractiveTTY(guidance string) error {
 // requireTTY is the shared guard for interactive prompts that have no
 // command-specific guidance.
 func requireTTY() error {
+	if stdinIsTTY() {
+		return nil
+	}
 	return Die("This prompt requires an interactive terminal; pass --yes or explicit arguments instead")
 }
