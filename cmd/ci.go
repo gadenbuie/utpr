@@ -930,6 +930,10 @@ func processLogLines(raw string, showTimestamps bool, n int, gf *grepFilter) pro
 		result.GrepTotal = len(lines)
 		if n > 0 && len(lines) > n {
 			lines = lines[len(lines)-n:]
+			// The cap can land on a group separator; drop it.
+			if len(lines) > 0 && lines[0] == "--" {
+				lines = lines[1:]
+			}
 		}
 	} else {
 		sel := cilog.Select(lines, n)

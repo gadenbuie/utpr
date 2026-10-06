@@ -102,8 +102,10 @@ func Grep(lines []string, re *regexp.Regexp, before, after int) ([]string, int) 
 		if !keep[i] {
 			continue
 		}
-		if prev >= 0 && i > prev+1 {
-			// Separate non-contiguous match groups, like grep's "--".
+		// Separate non-contiguous match groups, like grep's "--" — but
+		// only when context was requested; grep prints no separators
+		// for bare matches.
+		if prev >= 0 && i > prev+1 && (before > 0 || after > 0) {
 			out = append(out, "--")
 		}
 		out = append(out, line)

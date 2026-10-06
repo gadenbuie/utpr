@@ -389,13 +389,19 @@ func TestGrepNegativeContext(t *testing.T) {
 
 func TestGrepSeparatesNonContiguousGroups(t *testing.T) {
 	lines := []string{"a", "hit1", "b", "c", "hit2", "d"}
-	got, matched := Grep(lines, regexp.MustCompile(`hit`), 0, 0)
+	got, matched := Grep(lines, regexp.MustCompile(`hit`), 1, 0)
 	if matched != 2 {
 		t.Fatalf("Grep() matched %d lines, want 2", matched)
 	}
-	want := []string{"hit1", "--", "hit2"}
+	want := []string{"a", "hit1", "--", "c", "hit2"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("Grep() = %q, want %q", got, want)
+	}
+
+	// Without context there are no separators, like grep.
+	got, _ = Grep(lines, regexp.MustCompile(`hit`), 0, 0)
+	if containsLine(got, "--") {
+		t.Errorf("Grep() = %q, want no separators without context", got)
 	}
 
 	// Overlapping context merges into one group: no separator.

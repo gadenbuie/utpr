@@ -396,3 +396,16 @@ func TestParseCILogsGrepRequiresGrepForContext(t *testing.T) {
 		t.Errorf("parseCILogsGrep() = %v without flags, want nil", err)
 	}
 }
+
+func TestProcessLogLinesGrepCapDropsLeadingSeparator(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 9; i++ {
+		fmt.Fprintf(&b, "hit%d\nf\nf\n", i)
+	}
+	gf := &grepFilter{re: regexp.MustCompile(`hit`), before: 1}
+
+	result := processLogLines(b.String(), false, 6, gf)
+	if len(result.Lines) > 0 && result.Lines[0] == "--" {
+		t.Errorf("processLogLines(grep) capped output starts with a separator: %q", result.Lines)
+	}
+}
