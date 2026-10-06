@@ -14,6 +14,11 @@ import (
 // Pager displays content in a scrollable viewport on stderr.
 // If the content fits within the terminal height, it prints directly instead.
 func Pager(content string) error {
+	if plainMode {
+		fmt.Fprint(os.Stderr, content)
+		return nil
+	}
+
 	lines := strings.Count(content, "\n")
 	termHeight := GetTermHeight()
 	if lines <= termHeight-2 {
