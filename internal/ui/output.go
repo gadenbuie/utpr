@@ -15,9 +15,10 @@ var (
 	successPrefix = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 )
 
+// Info prints a status message to stderr, unstyled in plain mode.
 func Info(msg string) {
 	if plainMode {
-		fmt.Fprintln(os.Stdout, msg)
+		fmt.Fprintln(os.Stderr, msg)
 		return
 	}
 	fmt.Fprintln(os.Stderr, infoPrefix.Render("ℹ "+msg))
@@ -25,7 +26,7 @@ func Info(msg string) {
 
 func Warn(msg string) {
 	if plainMode {
-		fmt.Fprintln(os.Stdout, msg)
+		fmt.Fprintln(os.Stderr, msg)
 		return
 	}
 	fmt.Fprintln(os.Stderr, warnPrefix.Render("⚠ "+msg))
@@ -37,7 +38,7 @@ func Error(msg string) {
 
 func Success(msg string) {
 	if plainMode {
-		fmt.Fprintln(os.Stdout, msg)
+		fmt.Fprintln(os.Stderr, msg)
 		return
 	}
 	fmt.Fprintln(os.Stderr, successPrefix.Render("✔ "+msg))

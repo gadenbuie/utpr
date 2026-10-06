@@ -103,7 +103,7 @@ func TestSpinSkipsInPlainMode(t *testing.T) {
 	}
 }
 
-func TestInfoRoutesToStdoutInPlainMode(t *testing.T) {
+func TestStatusStaysOnStderrInPlainMode(t *testing.T) {
 	oldPlain := plainMode
 	t.Cleanup(func() { SetPlainMode(oldPlain) })
 	SetPlainMode(true)
@@ -112,9 +112,9 @@ func TestInfoRoutesToStdoutInPlainMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe() failed: %v", err)
 	}
-	oldStdout := os.Stdout
-	os.Stdout = w
-	t.Cleanup(func() { os.Stdout = oldStdout })
+	oldStderr := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
 
 	Info("plain info")
 	Success("plain success")
