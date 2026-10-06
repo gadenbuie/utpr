@@ -841,15 +841,18 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		// Watch frames already render annotation reasons, so re-render only
 		// when the completion fetch added log-derived ones. Compact mode
 		// has no earlier grouped view to update, so it renders once here.
+		// A rendered frame ends with the summary line: watch mode renders
+		// a frame every poll, compact mode only on failure with reasons.
+		// The standalone summary below covers only paths without a frame.
+		frameRendered := fullDisplay
 		if fullDisplay && logReasonsAdded {
 			render(checkRuns, lastWfRuns, true, reasons)
 		} else if !fullDisplay && anyFailed && cache != nil {
 			render(checkRuns, lastWfRuns, false, reasons)
+			frameRendered = true
 		}
 
-		// Watch frames already end with the summary line, so compact mode
-		// alone prints the standalone completion summary.
-		if fullDisplay {
+		if frameRendered {
 			if anyFailed {
 				return fmt.Errorf("CI checks failed")
 			}
