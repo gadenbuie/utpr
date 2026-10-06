@@ -652,3 +652,30 @@ func TestWaitCIWatchAnnotationOnlyReasonsOneFrame(t *testing.T) {
 		t.Errorf("job logs fetched %d times, want 0 when annotations answer", len(s.calls.getJobLogs))
 	}
 }
+
+func TestWaitCICompactAnnotationOnlyReasons(t *testing.T) {
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	withNoReasonsFlag(t, false)
+
+	passed := reasonCheckRun(8, "CI / lint", "success")
+	failed := reasonCheckRun(7, "CI / build", "failure")
+	s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+	// Annotations answer the question: no log fetch, but the compact
+	// completion render must still show the reason line.
+	s.annotations[7] = []gh.CheckRunAnnotation{
+		{AnnotationLevel: "failure", Message: "Build failed: undefined symbol 'foo'"},
+	}
+
+	var waitErr error
+	out := captureStdout(t, func() { waitErr = waitCI("o/r", "sha", "all", false) })
+	if waitErr == nil {
+		t.Fatal("waitCI() = nil, want CI checks failed")
+	}
+	if !strings.Contains(out, "↳ Build failed: undefined symbol 'foo'") {
+		t.Errorf("compact render missing the annotation reason:\n%s", out)
+	}
+	if len(s.calls.getJobLogs) != 0 {
+		t.Errorf("job logs fetched %d times, want 0 when annotations answer", len(s.calls.getJobLogs))
+	}
+}

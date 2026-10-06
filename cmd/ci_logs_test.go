@@ -284,6 +284,11 @@ func TestRunCILogsPickerFallbackSwapsTarget(t *testing.T) {
 	flagCILogs = true
 	s := &reasonSeam{}
 	withReasonSeam(t, s)
+	// An informative annotation keeps the failure-reasons path from
+	// fetching the check run's log, so the only log fetch is --logs.
+	s.annotations[1] = []gh.CheckRunAnnotation{
+		{AnnotationLevel: "failure", Message: "test failed: boom"},
+	}
 	// First status call finds no checks; the picked run has a failing one.
 	s.checkRuns = [][]gh.CheckRun{
 		{},
