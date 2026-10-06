@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"regexp"
-	"strconv"
+	"fmt"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/cilog"
@@ -20,9 +19,6 @@ var (
 	ghGetJobLogs              = gh.GetJobLogs
 )
 
-// genericReasonRe matches GitHub's content-free failure marker.
-var genericReasonRe = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
-
 // reasonLineMaxRunes bounds the inline reason shown per failed check.
 const reasonLineMaxRunes = 160
 
@@ -31,7 +27,11 @@ const reasonLineMaxRunes = 160
 // annotations are generic, the failed job's log. Runs without a usable
 // reason are omitted from the map.
 func fetchCheckRunReasons(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
-	c := newReasonCache()
+	return newReasonCache().resolve(ownerRepo, runs, wfRuns)
+}
+
+// resolve completes the reason map for the failed runs in one pass.
+func (c *reasonCache) resolve(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
 	c.collectAnnotations(ownerRepo, runs)
 	reasons := c.annotationReasons(runs)
 	c.resolveLogReasons(ownerRepo, runs, wfRuns, reasons)
@@ -46,7 +46,7 @@ func informativeAnnotation(anns []gh.CheckRunAnnotation) string {
 			continue
 		}
 		msg := strings.TrimSpace(a.Message)
-		if msg == "" || genericReasonRe.MatchString(msg) {
+		if msg == "" || cilog.IsGenericExitMessage(msg) {
 			continue
 		}
 		return msg
@@ -55,11 +55,14 @@ func informativeAnnotation(anns []gh.CheckRunAnnotation) string {
 }
 
 // reasonCache stores per-check-run annotations, per-run job lists, and
-// per-job logs so repeated polls and renders never re-fetch.
+// per-job logs so repeated polls and renders never re-fetch. Fetch
+// failures are collected as warnings and reported once via
+// flushWarnings, keeping spinner and status output ungarbled.
 type reasonCache struct {
 	annotations map[int64][]gh.CheckRunAnnotation
 	jobs        map[int64][]gh.WorkflowJob
 	logs        map[int64]string
+	warnings    []string
 }
 
 func newReasonCache() *reasonCache {
@@ -70,10 +73,22 @@ func newReasonCache() *reasonCache {
 	}
 }
 
+func (c *reasonCache) warnf(format string, args ...any) {
+	c.warnings = append(c.warnings, fmt.Sprintf(format, args...))
+}
+
+// flushWarnings reports collected fetch failures once and clears them.
+func (c *reasonCache) flushWarnings() {
+	for _, msg := range c.warnings {
+		ui.Warn(msg)
+	}
+	c.warnings = nil
+}
+
 // collectAnnotations fetches annotations for failed check runs that are
 // not cached yet. Annotations are immutable once a check run completes,
 // so each run is fetched at most once. Fetch failures are cached as empty
-// and reported once.
+// and collected as warnings.
 func (c *reasonCache) collectAnnotations(ownerRepo string, runs []gh.CheckRun) {
 	for _, r := range runs {
 		if !isFailedCheckRun(r) {
@@ -84,7 +99,7 @@ func (c *reasonCache) collectAnnotations(ownerRepo string, runs []gh.CheckRun) {
 		}
 		anns, err := ghListCheckRunAnnotations(ownerRepo, r.ID)
 		if err != nil {
-			ui.Warnf("Could not fetch annotations for '%s': %v", r.Name, err)
+			c.warnf("Could not fetch annotations for '%s': %v", r.Name, err)
 			anns = nil
 		}
 		c.annotations[r.ID] = anns
@@ -135,7 +150,7 @@ func (c *reasonCache) logReason(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	if !ok {
 		fetched, err := ghGetJobLogs(ownerRepo, job.ID)
 		if err != nil {
-			ui.Warnf("Could not fetch log for job '%s': %v", job.Name, err)
+			c.warnf("Could not fetch log for job '%s': %v", job.Name, err)
 		}
 		c.logs[job.ID] = fetched
 		log = fetched
@@ -143,16 +158,18 @@ func (c *reasonCache) logReason(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	return normalizeReason(cilog.Reason(strings.Split(strings.TrimRight(log, "\n"), "\n")))
 }
 
-// failedJob locates the workflow job backing failed check run r. GitHub
-// Actions check runs carry the job ID in external_id; otherwise the job
-// is found via the workflow run's job list, matching names.
+// failedJob locates the workflow job backing failed check run r.
+// GitHub Actions check runs share their ID with the job they represent;
+// their external_id is a UUID, not a job ID. Check runs without app
+// information fall back to mapping the check run to a job by name via
+// the workflow run's job list.
 func (c *reasonCache) failedJob(ownerRepo string, r gh.CheckRun, wfRuns []gh.WorkflowRun) *gh.WorkflowJob {
-	if r.App.Slug != "github-actions" {
-		return nil // only Actions jobs have fetchable logs
-	}
-	if id, err := strconv.ParseInt(strings.TrimSpace(r.ExternalID), 10, 64); err == nil && id > 0 {
-		job := gh.WorkflowJob{ID: id, Name: jobNameFromCheckRun(r.Name)}
+	if r.App.Slug == "github-actions" {
+		job := gh.WorkflowJob{ID: r.ID, Name: jobNameFromCheckRun(r.Name)}
 		return &job
+	}
+	if r.App.Slug != "" {
+		return nil // third-party apps have no Actions job logs
 	}
 	runID := workflowRunIDForSuite(wfRuns, r.CheckSuite.ID)
 	if runID == 0 {
@@ -162,7 +179,7 @@ func (c *reasonCache) failedJob(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	if !ok {
 		fetched, err := ghListWorkflowRunJobs(ownerRepo, runID)
 		if err != nil {
-			ui.Warnf("Could not fetch jobs for run %d: %v", runID, err)
+			c.warnf("Could not fetch jobs for run %d: %v", runID, err)
 		}
 		c.jobs[runID] = fetched
 		jobs = fetched
@@ -188,36 +205,38 @@ func workflowRunIDForSuite(wfRuns []gh.WorkflowRun, checkSuiteID int64) int64 {
 	return 0
 }
 
-// matchFailedJob finds the failed job backing check run r: a job whose
-// name matches, or the run's only failed job.
+// matchFailedJob finds the failed job backing check run r: the job whose
+// name matches, or the run's only failed job. When several failed jobs
+// match none of them is used, to avoid misattribution.
 func matchFailedJob(r gh.CheckRun, jobs []gh.WorkflowJob) *gh.WorkflowJob {
 	name := jobNameFromCheckRun(r.Name)
-	var fallback *gh.WorkflowJob
+	var unmatched *gh.WorkflowJob
+	failed := 0
 	for i := range jobs {
 		j := &jobs[i]
 		if j.Status != "completed" || !isFailedConclusion(j.Conclusion) {
 			continue
 		}
+		failed++
 		if j.Name == name {
 			return j
 		}
-		if fallback != nil {
-			fallback = nil // ambiguous: more than one failed job
-			break
+		if unmatched == nil {
+			unmatched = j
 		}
-		fallback = j
 	}
-	return fallback
+	if failed == 1 {
+		return unmatched
+	}
+	return nil
 }
 
-// needsSuiteMapping reports whether any failed GitHub Actions check run
-// can only be resolved to a job through the workflow run's job list.
+// needsSuiteMapping reports whether any failed check run without app
+// information can only be resolved to a job through the workflow run's
+// job list.
 func needsSuiteMapping(runs []gh.CheckRun) bool {
 	for _, r := range runs {
-		if !isFailedCheckRun(r) || r.App.Slug != "github-actions" {
-			continue
-		}
-		if _, err := strconv.ParseInt(strings.TrimSpace(r.ExternalID), 10, 64); err != nil {
+		if isFailedCheckRun(r) && r.App.Slug == "" {
 			return true
 		}
 	}

@@ -486,3 +486,26 @@ func TestReason(t *testing.T) {
 		})
 	}
 }
+
+func TestIsGenericExitMessage(t *testing.T) {
+	generic := []string{
+		"Process completed with exit code 1.",
+		"Process completed with exit code 137",
+		"process completed with exit code 42.",
+	}
+	for _, msg := range generic {
+		if !IsGenericExitMessage(msg) {
+			t.Errorf("IsGenericExitMessage(%q) = false, want true", msg)
+		}
+	}
+	informative := []string{
+		"Error: object 'foo' not found",
+		"Process completed but something else went wrong",
+		"",
+	}
+	for _, msg := range informative {
+		if IsGenericExitMessage(msg) {
+			t.Errorf("IsGenericExitMessage(%q) = true, want false", msg)
+		}
+	}
+}

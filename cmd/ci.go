@@ -477,9 +477,11 @@ func showCIChecks(ownerRepo, branch, sha string) (int, error) {
 	}
 
 	reasons := map[int64]string{}
+	cache := newReasonCache()
+	defer cache.flushWarnings()
 	if !flagCINoReasons && anyFailedCheckRun(runs) {
 		reasons, _ = spinCIWithResult("Fetching failure reasons...", func() (map[int64]string, error) {
-			return fetchCheckRunReasons(ownerRepo, runs, data.workflowRuns), nil
+			return cache.resolve(ownerRepo, runs, data.workflowRuns), nil
 		})
 	}
 
@@ -661,6 +663,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 	var cache *reasonCache
 	if !flagCINoReasons {
 		cache = newReasonCache()
+		defer cache.flushWarnings() // after the spinner and status lines
 	}
 	var lastWfRuns []gh.WorkflowRun // latest workflow runs seen by fullDisplay
 
@@ -774,22 +777,27 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		}
 
 		// Completion: erase any compact status line, fetch the logs of failed
-		// jobs whose annotations were generic (once), and show the final
-		// state with reasons.
+		// jobs whose annotations were generic (once, under a spinner), and
+		// show the final state with reasons.
 		clearLine()
 		var reasons map[int64]string
 		if anyFailed && cache != nil {
-			wfRuns := lastWfRuns
-			if !fullDisplay && needsSuiteMapping(checkRuns) {
-				wfRuns, _ = ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort, once
-				lastWfRuns = wfRuns
-			}
-			reasons = cache.resolveLogReasons(ownerRepo, checkRuns, wfRuns, cache.annotationReasons(checkRuns))
+			_, _ = spinCIWithResult("Fetching failure reasons...", func() (struct{}, error) {
+				if !fullDisplay && needsSuiteMapping(checkRuns) {
+					wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort, once
+					lastWfRuns = wfRuns
+				}
+				reasons = cache.resolveLogReasons(ownerRepo, checkRuns, lastWfRuns, cache.annotationReasons(checkRuns))
+				return struct{}{}, nil
+			})
 		}
 
-		if fullDisplay {
+		// Re-render only when reasons change the frame: watch mode already
+		// printed this poll's state, and a re-render without reasons is
+		// identical to it.
+		if fullDisplay && len(reasons) > 0 {
 			render(checkRuns, lastWfRuns, true, reasons)
-		} else if anyFailed && cache != nil {
+		} else if !fullDisplay && anyFailed && cache != nil {
 			render(checkRuns, lastWfRuns, false, reasons)
 		}
 

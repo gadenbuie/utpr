@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -84,7 +85,7 @@ func reasonCheckRun(id int64, name, conclusion string) gh.CheckRun {
 		Name:       name,
 		Status:     "completed",
 		Conclusion: conclusion,
-		ExternalID: "0", // overwritten per test
+		ExternalID: "5f2d6f0e-9a1b-4c3d-8e7f-2a3b4c5d6e7f", // a UUID, not a job ID
 	}
 	r.App.Slug = "github-actions"
 	r.CheckSuite.ID = 100
@@ -218,12 +219,11 @@ func TestFetchCheckRunReasonsLogFallback(t *testing.T) {
 	withReasonSeam(t, s)
 
 	run := reasonCheckRun(7, "CI / build", "failure")
-	run.ExternalID = "99"
 	s.checkRuns = [][]gh.CheckRun{{run}}
 	s.annotations[7] = []gh.CheckRunAnnotation{
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
-	s.logs[99] = "2026-07-01T10:00:00.0000000Z ##[group]Run tests\n" +
+	s.logs[7] = "2026-07-01T10:00:00.0000000Z ##[group]Run tests\n" +
 		"2026-07-01T10:00:01.0000000Z Error: object 'foo' not found\n" +
 		"2026-07-01T10:00:02.0000000Z Execution halted\n" +
 		"2026-07-01T10:00:03.0000000Z ##[error]Process completed with exit code 1.\n"
@@ -232,8 +232,11 @@ func TestFetchCheckRunReasonsLogFallback(t *testing.T) {
 	if reasons[7] != "Error: object 'foo' not found" {
 		t.Errorf("reason = %q, want the log landmark", reasons[7])
 	}
-	if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 99 {
-		t.Errorf("job logs fetched = %v, want exactly [99]", s.calls.getJobLogs)
+	if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 7 {
+		t.Errorf("job logs fetched = %v, want exactly [7] (the check run's own ID)", s.calls.getJobLogs)
+	}
+	if s.calls.listWorkflowRunJobs != 0 {
+		t.Errorf("jobs listed %d times, want 0 with the check-run ID fast path", s.calls.listWorkflowRunJobs)
 	}
 }
 
@@ -242,7 +245,7 @@ func TestFetchCheckRunReasonsSuiteMapping(t *testing.T) {
 	withReasonSeam(t, s)
 
 	run := reasonCheckRun(7, "CI / build", "failure")
-	run.ExternalID = "" // fall back to suite mapping
+	run.App.Slug = "" // no app info: fall back to suite mapping
 	s.checkRuns = [][]gh.CheckRun{{run}}
 	s.annotations[7] = nil
 	s.wfRuns = []gh.WorkflowRun{{ID: 500, CheckSuiteID: 100}}
@@ -267,7 +270,6 @@ func TestFetchCheckRunReasonsSkipsNonActionsAndUnfailed(t *testing.T) {
 
 	failed := reasonCheckRun(7, "CI / build", "failure")
 	failed.App.Slug = "some-app" // not GitHub Actions: no job to map
-	failed.ExternalID = ""
 	ok := reasonCheckRun(8, "CI / lint", "success")
 
 	reasons := fetchCheckRunReasons("o/r", []gh.CheckRun{failed, ok}, nil)
@@ -323,7 +325,6 @@ func TestShowCIChecksNoReasonsNoExtraCalls(t *testing.T) {
 	withNoReasonsFlag(t, true)
 
 	failed := reasonCheckRun(7, "CI / build", "failure")
-	failed.ExternalID = "99"
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	s.checkRuns = [][]gh.CheckRun{{passed, failed}}
 	s.annotations[7] = []gh.CheckRunAnnotation{
@@ -354,13 +355,12 @@ func TestShowCIChecksReasonsBoundedToFailedJobs(t *testing.T) {
 	withNoReasonsFlag(t, false)
 
 	failed := reasonCheckRun(7, "CI / build", "failure")
-	failed.ExternalID = "99"
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	s.checkRuns = [][]gh.CheckRun{{passed, failed}}
 	s.annotations[7] = []gh.CheckRunAnnotation{
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
-	s.logs[99] = "Error: object 'foo' not found\n"
+	s.logs[7] = "Error: object 'foo' not found\n"
 
 	if _, err := showCIChecks("o/r", "b", "sha"); err != nil {
 		t.Fatalf("showCIChecks() = %v", err)
@@ -383,7 +383,6 @@ func TestWaitCIReasonsCallBudget(t *testing.T) {
 
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	failed := reasonCheckRun(7, "CI / build", "failure")
-	failed.ExternalID = "99"
 
 	running := reasonCheckRun(7, "CI / build", "")
 	running.Status = "in_progress"
@@ -391,7 +390,7 @@ func TestWaitCIReasonsCallBudget(t *testing.T) {
 	s.annotations[7] = []gh.CheckRunAnnotation{
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
-	s.logs[99] = "Error: object 'foo' not found\n"
+	s.logs[7] = "Error: object 'foo' not found\n"
 
 	var waitErr error
 	out := captureStdout(t, func() {
@@ -414,8 +413,8 @@ func TestWaitCIReasonsCallBudget(t *testing.T) {
 	}
 	// Log fetched once at completion; suite mapping not needed thanks to
 	// external_id, so no extra workflow-runs or jobs calls.
-	if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 99 {
-		t.Errorf("job logs fetched = %v, want exactly [99] once", s.calls.getJobLogs)
+	if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 7 {
+		t.Errorf("job logs fetched = %v, want exactly [7] once", s.calls.getJobLogs)
 	}
 	if s.calls.listWorkflowRunsForSHA != 0 {
 		t.Errorf("workflow runs fetched %d times in compact mode, want 0", s.calls.listWorkflowRunsForSHA)
@@ -432,12 +431,11 @@ func TestWaitCINoReasonsCallBudget(t *testing.T) {
 
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	failed := reasonCheckRun(7, "CI / build", "failure")
-	failed.ExternalID = "99"
 	s.checkRuns = [][]gh.CheckRun{{passed, failed}}
 	s.annotations[7] = []gh.CheckRunAnnotation{
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
-	s.logs[99] = "Error: object 'foo' not found\n"
+	s.logs[7] = "Error: object 'foo' not found\n"
 
 	var waitErr error
 	out := captureStdout(t, func() {
@@ -465,7 +463,6 @@ func TestWaitCIReasonsCallBudgetFullDisplay(t *testing.T) {
 
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	failed := reasonCheckRun(7, "CI / build", "failure")
-	failed.ExternalID = "99"
 
 	running := reasonCheckRun(7, "CI / build", "")
 	running.Status = "in_progress"
@@ -473,7 +470,7 @@ func TestWaitCIReasonsCallBudgetFullDisplay(t *testing.T) {
 	s.annotations[7] = []gh.CheckRunAnnotation{
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
-	s.logs[99] = "Error: object 'foo' not found\n"
+	s.logs[7] = "Error: object 'foo' not found\n"
 
 	if err := waitCI("o/r", "sha", "all", true); err == nil {
 		t.Fatal("waitCI() = nil, want CI checks failed")
@@ -498,4 +495,131 @@ func TestNoReasonsFlagRegistered(t *testing.T) {
 	if flag := ciCmd.Flags().Lookup("no-reasons"); flag == nil {
 		t.Error("ci command is missing the --no-reasons flag")
 	}
+}
+
+func TestMatchFailedJob(t *testing.T) {
+	failed := func(id int64, name string) gh.WorkflowJob {
+		return gh.WorkflowJob{ID: id, RunID: 500, Name: name, Status: "completed", Conclusion: "failure"}
+	}
+	success := gh.WorkflowJob{ID: 4, RunID: 500, Name: "ok", Status: "completed", Conclusion: "success"}
+
+	t.Run("match beyond the second failed job", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build-c", "failure")
+		jobs := []gh.WorkflowJob{success, failed(1, "build-a"), failed(2, "build-b"), failed(3, "build-c")}
+		got := matchFailedJob(run, jobs)
+		if got == nil || got.ID != 3 {
+			t.Errorf("matchFailedJob() = %+v, want the third failed job (ID 3)", got)
+		}
+	})
+
+	t.Run("single failed job without name match", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build", "failure")
+		got := matchFailedJob(run, []gh.WorkflowJob{success, failed(1, "other")})
+		if got == nil || got.ID != 1 {
+			t.Errorf("matchFailedJob() = %+v, want the only failed job (ID 1)", got)
+		}
+	})
+
+	t.Run("several failed jobs without name match", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build", "failure")
+		got := matchFailedJob(run, []gh.WorkflowJob{failed(1, "other-a"), failed(2, "other-b")})
+		if got != nil {
+			t.Errorf("matchFailedJob() = %+v, want nil when several failed jobs match none", got)
+		}
+	})
+}
+
+func TestReasonCacheWarningsFlushOnce(t *testing.T) {
+	c := newReasonCache()
+	c.warnf("Could not fetch annotations for '%s': %v", "build", errBoom)
+	c.warnf("Could not fetch log for job '%s': %v", "build", errBoom)
+	if len(c.warnings) != 2 {
+		t.Fatalf("collected %d warnings, want 2", len(c.warnings))
+	}
+	c.flushWarnings()
+	if len(c.warnings) != 0 {
+		t.Errorf("flushWarnings left %d warnings, want 0", len(c.warnings))
+	}
+	c.flushWarnings() // a second flush must be a no-op
+	if len(c.warnings) != 0 {
+		t.Errorf("second flushWarnings left %d warnings, want 0", len(c.warnings))
+	}
+}
+
+var errBoom = fmt.Errorf("boom")
+
+func TestWaitCIWatchNoDoubleRender(t *testing.T) {
+	countFrames := func(out string) int {
+		return strings.Count(out, "Checking CI...")
+	}
+
+	t.Run("success renders one frame", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		s.checkRuns = [][]gh.CheckRun{{passed}}
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err != nil {
+			t.Fatalf("waitCI() = %v, want nil", err)
+		}
+		if n := countFrames(out); n != 1 {
+			t.Errorf("rendered %d frames on success, want 1:\n%s", n, out)
+		}
+	})
+
+	t.Run("failure without reasons does not re-render", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+		s.annotations[7] = []gh.CheckRunAnnotation{
+			{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
+		}
+		s.logs[7] = "nothing informative\n" // no landmark: no reason
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := countFrames(out); n != 1 {
+			t.Errorf("rendered %d frames without reasons, want 1:\n%s", n, out)
+		}
+		if strings.Contains(out, "↳") {
+			t.Errorf("unexpected reason line:\n%s", out)
+		}
+	})
+
+	t.Run("failure with reasons re-renders once", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+		s.annotations[7] = []gh.CheckRunAnnotation{
+			{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
+		}
+		s.logs[7] = "Error: object 'foo' not found\n"
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		if n := countFrames(out); n != 2 {
+			t.Errorf("rendered %d frames, want 2 (poll + final with reasons):\n%s", n, out)
+		}
+		if !strings.Contains(out, "↳ Error: object 'foo' not found") {
+			t.Errorf("final frame missing the inline reason:\n%s", out)
+		}
+	})
 }
