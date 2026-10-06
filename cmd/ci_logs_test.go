@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/remote"
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 func TestCINextStepHints(t *testing.T) {
@@ -186,6 +188,139 @@ func TestShowCIChecksHint(t *testing.T) {
 	})
 }
 
+// resetCIFlags restores the ci flags runCI reads to their defaults.
+func resetCIFlags(t *testing.T) {
+	t.Helper()
+	old := map[string]any{
+		"logs": flagCILogs, "web": flagCIWeb, "watch": flagCIWatch,
+		"wait": flagCIWait, "pick": flagCIPick, "agent": flagCIAgent,
+		"pretty": flagCIPretty, "noReasons": flagCINoReasons,
+		"full": flagCILogsFull, "grep": flagCILogsGrep,
+		"after": flagCILogsAfter, "before": flagCILogsBefore,
+		"lines": flagCILogsLines,
+	}
+	t.Cleanup(func() {
+		flagCILogs, flagCIWeb, flagCIWatch = old["logs"].(bool), old["web"].(bool), old["watch"].(bool)
+		flagCIWait, flagCIPick, flagCIAgent = old["wait"].(string), old["pick"].(bool), old["agent"].(bool)
+		flagCIPretty, flagCINoReasons = old["pretty"].(bool), old["noReasons"].(bool)
+		flagCILogsFull, flagCILogsGrep = old["full"].(bool), old["grep"].(string)
+		flagCILogsAfter, flagCILogsBefore = old["after"].(int), old["before"].(int)
+		flagCILogsLines = old["lines"].(int)
+	})
+}
+
+// withRunCISeams fakes remote detection, target resolution, and the run
+// picker so runCI never touches git or the network beyond the gh seams.
+func withRunCISeams(t *testing.T, target ciTarget, picked *gh.WorkflowRun) *[]string {
+	t.Helper()
+	pickArgs := &[]string{}
+	oldDetect, oldResolve, oldPick := ciRemoteDetect, ciResolveCITarget, ciPickRunForBranch
+	ciRemoteDetect = func() (*remote.Config, error) { return &remote.Config{}, nil }
+	ciResolveCITarget = func(_ *remote.Config, _ []string, _ bool) (ciTarget, error) { return target, nil }
+	ciPickRunForBranch = func(ownerRepo, branch string, _ int) (*gh.WorkflowRun, error) {
+		*pickArgs = append(*pickArgs, ownerRepo+"/"+branch)
+		return picked, nil
+	}
+	t.Cleanup(func() { ciRemoteDetect, ciResolveCITarget, ciPickRunForBranch = oldDetect, oldResolve, oldPick })
+	return pickArgs
+}
+
+func TestRunCILogsFlagConflicts(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogs = true
+	for _, conflict := range []struct {
+		name  string
+		setup func()
+	}{
+		{"web", func() { flagCIWeb = true }},
+		{"watch", func() { flagCIWatch = true }},
+		{"wait", func() { flagCIWait = "all" }},
+	} {
+		t.Run(conflict.name, func(t *testing.T) {
+			flagCIWeb, flagCIWatch, flagCIWait = false, false, ""
+			conflict.setup()
+			err := runCI(nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+				t.Errorf("runCI() error = %v, want --logs conflict", err)
+			}
+		})
+	}
+}
+
+func TestRunCIRejectsLogFlagsWithoutLogs(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogsGrep = "Error"
+	err := runCI(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "require --logs") {
+		t.Errorf("runCI() error = %v, want rejection of --grep without --logs", err)
+	}
+}
+
+func TestRunCILogsNoFetchWhenChecksPass(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogs = true
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	s.checkRuns = [][]gh.CheckRun{{reasonCheckRun(1, "test", "success")}}
+	withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
+
+	out := captureStdout(t, func() {
+		if err := runCI(nil, nil); err != nil {
+			t.Errorf("runCI() = %v", err)
+		}
+	})
+
+	if len(s.calls.getJobLogs) != 0 || s.calls.listWorkflowRunJobs != 0 {
+		t.Errorf("log fetches ran for a passing status: jobs=%d logs=%v",
+			s.calls.listWorkflowRunJobs, s.calls.getJobLogs)
+	}
+	if strings.Contains(out, "failing — run") {
+		t.Errorf("hint printed for a passing status:\n%s", out)
+	}
+}
+
+func TestRunCILogsPickerFallbackSwapsTarget(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogs = true
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	// First status call finds no checks; the picked run has a failing one.
+	s.checkRuns = [][]gh.CheckRun{
+		{},
+		{reasonCheckRun(1, "test", "failure")},
+	}
+	s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "completed", Conclusion: "failure"}}
+	s.jobs = map[int64][]gh.WorkflowJob{
+		1: {{ID: 11, Name: "test", Status: "completed", Conclusion: "failure"}},
+	}
+	s.logs = map[int64]string{11: "Error: boom\n"}
+
+	// stdin looks like a terminal so the picker fallback runs; stdout stays
+	// a pipe so output stays in agent mode and lands on stdout.
+	restoreTTY := ui.SetTTYFuncs(func() bool { return false }, func() bool { return true })
+	defer restoreTTY()
+	withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha", pickOwnerRepo: "p/r", pickBranch: "b"},
+		&gh.WorkflowRun{HeadSHA: "pickedsha"})
+
+	out := captureStdout(t, func() {
+		if err := runCI(nil, nil); err != nil {
+			t.Errorf("runCI() = %v", err)
+		}
+	})
+
+	// Status was re-fetched for the picked run...
+	if s.calls.getCheckRuns != 2 {
+		t.Fatalf("GetCheckRuns calls = %d, want 2", s.calls.getCheckRuns)
+	}
+	// ...and the failed-job logs were fetched for the swapped target.
+	if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 11 {
+		t.Errorf("getJobLogs calls = %v, want failed job 11 of the picked run", s.calls.getJobLogs)
+	}
+	if !strings.Contains(out, "## test / test") || !strings.Contains(out, "Error: boom") {
+		t.Errorf("runCI() --logs output missing picked run's failed-job logs:\n%s", out)
+	}
+}
+
 func TestShowCILogsFailedInProgressRuns(t *testing.T) {
 	t.Run("failed job in in-progress run is shown", func(t *testing.T) {
 		s := &reasonSeam{}
@@ -228,54 +363,21 @@ func TestShowCILogsFailedInProgressRuns(t *testing.T) {
 	})
 }
 
-// resetCIFlags restores the ci flags runCI reads to their defaults.
-func resetCIFlags(t *testing.T) {
-	t.Helper()
-	old := map[string]any{
-		"logs": flagCILogs, "web": flagCIWeb, "watch": flagCIWatch,
-		"wait": flagCIWait, "pick": flagCIPick, "agent": flagCIAgent,
-		"pretty": flagCIPretty, "noReasons": flagCINoReasons,
-		"full": flagCILogsFull, "grep": flagCILogsGrep,
-		"after": flagCILogsAfter, "before": flagCILogsBefore,
-		"lines": flagCILogsLines,
-	}
-	t.Cleanup(func() {
-		flagCILogs, flagCIWeb, flagCIWatch = old["logs"].(bool), old["web"].(bool), old["watch"].(bool)
-		flagCIWait, flagCIPick, flagCIAgent = old["wait"].(string), old["pick"].(bool), old["agent"].(bool)
-		flagCIPretty, flagCINoReasons = old["pretty"].(bool), old["noReasons"].(bool)
-		flagCILogsFull, flagCILogsGrep = old["full"].(bool), old["grep"].(string)
-		flagCILogsAfter, flagCILogsBefore = old["after"].(int), old["before"].(int)
-		flagCILogsLines = old["lines"].(int)
-	})
-}
-
-func TestRunCILogsFlagConflicts(t *testing.T) {
+func TestRunCILogsInfoWhenNoRuns(t *testing.T) {
 	resetCIFlags(t)
 	flagCILogs = true
-	for _, conflict := range []struct {
-		name  string
-		setup func()
-	}{
-		{"web", func() { flagCIWeb = true }},
-		{"watch", func() { flagCIWatch = true }},
-		{"wait", func() { flagCIWait = "all" }},
-	} {
-		t.Run(conflict.name, func(t *testing.T) {
-			flagCIWeb, flagCIWatch, flagCIWait = false, false, ""
-			conflict.setup()
-			err := runCI(nil, nil)
-			if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
-				t.Errorf("runCI() error = %v, want --logs conflict", err)
-			}
-		})
-	}
-}
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	s.checkRuns = [][]gh.CheckRun{{reasonCheckRun(1, "test", "failure")}}
+	// No workflow runs at all: errNoCIRuns surfaces from showCILogsFailed.
+	withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
 
-func TestRunCIRejectsLogFlagsWithoutLogs(t *testing.T) {
-	resetCIFlags(t)
-	flagCILogsGrep = "Error"
-	err := runCI(nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "require --logs") {
-		t.Errorf("runCI() error = %v, want rejection of --grep without --logs", err)
+	out := captureStdout(t, func() {
+		if err := runCI(nil, nil); err != nil {
+			t.Errorf("runCI() = %v", err)
+		}
+	})
+	if !strings.Contains(out, "No CI runs found for this commit.") {
+		t.Errorf("runCI() missing info line for missing runs:\n%s", out)
 	}
 }

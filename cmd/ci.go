@@ -123,7 +123,7 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 	ciCmd.Flags().BoolVar(&flagCINoReasons, "no-reasons", false, "Skip the inline failure reason shown for each failed check")
-	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes for the check list (0 disables)")
+	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes for the check list and --logs output (0 disables)")
 	ciCmd.Flags().BoolVar(&flagCILogs, "logs", false, "After a failing status, show logs for all failed jobs (like 'ci logs --failed')")
 	ciCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per failed job (with --logs)")
 	ciCmd.Flags().BoolVar(&flagCILogsFull, "full", false, "Show the complete log for each failed job (with --logs)")
