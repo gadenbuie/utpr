@@ -202,7 +202,7 @@ func TestFetchCheckRunReasonsAnnotationOnly(t *testing.T) {
 		{AnnotationLevel: "failure", Message: "Build failed: undefined symbol 'foo'"},
 	}
 
-	reasons := fetchCheckRunReasons("o/r", []gh.CheckRun{run}, nil)
+	reasons := newReasonCache().resolve("o/r", []gh.CheckRun{run}, nil)
 	if reasons[7] != "Build failed: undefined symbol 'foo'" {
 		t.Errorf("reason = %q, want the annotation message", reasons[7])
 	}
@@ -228,7 +228,7 @@ func TestFetchCheckRunReasonsLogFallback(t *testing.T) {
 		"2026-07-01T10:00:02.0000000Z Execution halted\n" +
 		"2026-07-01T10:00:03.0000000Z ##[error]Process completed with exit code 1.\n"
 
-	reasons := fetchCheckRunReasons("o/r", []gh.CheckRun{run}, nil)
+	reasons := newReasonCache().resolve("o/r", []gh.CheckRun{run}, nil)
 	if reasons[7] != "Error: object 'foo' not found" {
 		t.Errorf("reason = %q, want the log landmark", reasons[7])
 	}
@@ -255,7 +255,7 @@ func TestFetchCheckRunReasonsSuiteMapping(t *testing.T) {
 	}
 	s.logs[99] = "Error: object 'foo' not found\n"
 
-	reasons := fetchCheckRunReasons("o/r", []gh.CheckRun{run}, s.wfRuns)
+	reasons := newReasonCache().resolve("o/r", []gh.CheckRun{run}, s.wfRuns)
 	if reasons[7] != "Error: object 'foo' not found" {
 		t.Errorf("reason = %q, want the log landmark via job name match", reasons[7])
 	}
@@ -272,7 +272,7 @@ func TestFetchCheckRunReasonsSkipsNonActionsAndUnfailed(t *testing.T) {
 	failed.App.Slug = "some-app" // not GitHub Actions: no job to map
 	ok := reasonCheckRun(8, "CI / lint", "success")
 
-	reasons := fetchCheckRunReasons("o/r", []gh.CheckRun{failed, ok}, nil)
+	reasons := newReasonCache().resolve("o/r", []gh.CheckRun{failed, ok}, nil)
 	if len(reasons) != 0 {
 		t.Errorf("reasons = %v, want none for a non-Actions failed check", reasons)
 	}
@@ -622,4 +622,33 @@ func TestWaitCIWatchNoDoubleRender(t *testing.T) {
 			t.Errorf("final frame missing the inline reason:\n%s", out)
 		}
 	})
+}
+
+func TestWaitCIWatchAnnotationOnlyReasonsOneFrame(t *testing.T) {
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	withNoReasonsFlag(t, false)
+
+	passed := reasonCheckRun(8, "CI / lint", "success")
+	failed := reasonCheckRun(7, "CI / build", "failure")
+	s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+	// Annotations answer the question: no log fetch, no spinner needed.
+	s.annotations[7] = []gh.CheckRunAnnotation{
+		{AnnotationLevel: "failure", Message: "Build failed: undefined symbol 'foo'"},
+	}
+
+	var err error
+	out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+	if err == nil {
+		t.Fatal("waitCI() = nil, want CI checks failed")
+	}
+	if n := strings.Count(out, "Checking CI..."); n != 1 {
+		t.Errorf("rendered %d frames, want 1 (annotation reasons show in the poll frame):\n%s", n, out)
+	}
+	if !strings.Contains(out, "↳ Build failed: undefined symbol 'foo'") {
+		t.Errorf("poll frame missing the annotation reason:\n%s", out)
+	}
+	if len(s.calls.getJobLogs) != 0 {
+		t.Errorf("job logs fetched %d times, want 0 when annotations answer", len(s.calls.getJobLogs))
+	}
 }

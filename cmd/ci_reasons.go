@@ -22,19 +22,14 @@ var (
 // reasonLineMaxRunes bounds the inline reason shown per failed check.
 const reasonLineMaxRunes = 160
 
-// fetchCheckRunReasons resolves a one-line failure reason for each failed
-// check run in runs: the first informative annotation, and only when the
-// annotations are generic, the failed job's log. Runs without a usable
-// reason are omitted from the map.
-func fetchCheckRunReasons(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
-	return newReasonCache().resolve(ownerRepo, runs, wfRuns)
-}
-
-// resolve completes the reason map for the failed runs in one pass.
+// resolve completes the reason map for the failed runs in one pass: the
+// first informative annotation, and only when the annotations are
+// generic, the failed job's log. Runs without a usable reason are
+// omitted from the map.
 func (c *reasonCache) resolve(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun) map[int64]string {
 	c.collectAnnotations(ownerRepo, runs)
 	reasons := c.annotationReasons(runs)
-	c.resolveLogReasons(ownerRepo, runs, wfRuns, reasons)
+	reasons, _ = c.resolveLogReasons(ownerRepo, runs, wfRuns, reasons)
 	return reasons
 }
 
@@ -106,6 +101,23 @@ func (c *reasonCache) collectAnnotations(ownerRepo string, runs []gh.CheckRun) {
 	}
 }
 
+// annotationReason returns the informative annotation message for a
+// failed check run whose annotations are already cached.
+func (c *reasonCache) annotationReason(r gh.CheckRun) string {
+	return informativeAnnotation(c.annotations[r.ID])
+}
+
+// needsLogReasons reports whether any failed check run still lacks an
+// annotation-derived reason, meaning a log fetch is required.
+func (c *reasonCache) needsLogReasons(runs []gh.CheckRun) bool {
+	for _, r := range runs {
+		if isFailedCheckRun(r) && c.annotationReason(r) == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // annotationReasons maps check run IDs to informative annotation messages
 // for failed runs whose annotations are already cached.
 func (c *reasonCache) annotationReasons(runs []gh.CheckRun) map[int64]string {
@@ -114,29 +126,32 @@ func (c *reasonCache) annotationReasons(runs []gh.CheckRun) map[int64]string {
 		if !isFailedCheckRun(r) {
 			continue
 		}
-		if msg := informativeAnnotation(c.annotations[r.ID]); msg != "" {
+		if msg := c.annotationReason(r); msg != "" {
 			reasons[r.ID] = normalizeReason(msg)
 		}
 	}
 	return reasons
 }
 
-// resolveLogReasons completes the reasons map with log-derived reasons for
-// failed check runs that have no annotation reason. Each failed job's log
-// is fetched at most once.
-func (c *reasonCache) resolveLogReasons(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun, reasons map[int64]string) map[int64]string {
+// resolveLogReasons completes the reasons map with log-derived reasons
+// for failed check runs that have no annotation reason. Each failed job's
+// log is fetched at most once. It returns the map and whether any
+// log-derived reason was added.
+func (c *reasonCache) resolveLogReasons(ownerRepo string, runs []gh.CheckRun, wfRuns []gh.WorkflowRun, reasons map[int64]string) (map[int64]string, bool) {
 	if reasons == nil {
 		reasons = map[int64]string{}
 	}
+	added := false
 	for _, r := range runs {
 		if !isFailedCheckRun(r) || reasons[r.ID] != "" {
 			continue
 		}
 		if reason := c.logReason(ownerRepo, r, wfRuns); reason != "" {
 			reasons[r.ID] = reason
+			added = true
 		}
 	}
-	return reasons
+	return reasons, added
 }
 
 // logReason fetches the failed job's log for check run r and extracts its

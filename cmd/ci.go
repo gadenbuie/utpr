@@ -776,26 +776,31 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			continue
 		}
 
-		// Completion: erase any compact status line, fetch the logs of failed
-		// jobs whose annotations were generic (once, under a spinner), and
-		// show the final state with reasons.
+		// Completion: erase any compact status line, then resolve reasons.
+		// Log fetches only run for failed jobs whose annotations were
+		// generic, once, under a spinner; annotation reasons are already
+		// in hand from the polls.
 		clearLine()
 		var reasons map[int64]string
+		var logReasonsAdded bool
 		if anyFailed && cache != nil {
-			_, _ = spinCIWithResult("Fetching failure reasons...", func() (struct{}, error) {
-				if !fullDisplay && needsSuiteMapping(checkRuns) {
-					wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort, once
-					lastWfRuns = wfRuns
-				}
-				reasons = cache.resolveLogReasons(ownerRepo, checkRuns, lastWfRuns, cache.annotationReasons(checkRuns))
-				return struct{}{}, nil
-			})
+			reasons = cache.annotationReasons(checkRuns)
+			if cache.needsLogReasons(checkRuns) {
+				_, _ = spinCIWithResult("Fetching failure reasons...", func() (struct{}, error) {
+					if !fullDisplay && needsSuiteMapping(checkRuns) {
+						wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort, once
+						lastWfRuns = wfRuns
+					}
+					reasons, logReasonsAdded = cache.resolveLogReasons(ownerRepo, checkRuns, lastWfRuns, reasons)
+					return struct{}{}, nil
+				})
+			}
 		}
 
-		// Re-render only when reasons change the frame: watch mode already
-		// printed this poll's state, and a re-render without reasons is
-		// identical to it.
-		if fullDisplay && len(reasons) > 0 {
+		// Watch frames already render annotation reasons, so re-render only
+		// when the completion fetch added log-derived ones. Compact mode
+		// has no earlier grouped view to update, so it renders once here.
+		if fullDisplay && logReasonsAdded {
 			render(checkRuns, lastWfRuns, true, reasons)
 		} else if !fullDisplay && anyFailed && cache != nil {
 			render(checkRuns, lastWfRuns, false, reasons)
