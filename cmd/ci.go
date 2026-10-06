@@ -45,7 +45,12 @@ var ciLogsCmd = &cobra.Command{
 
 By default, post-job steps (artifact upload, cleanup) are excluded and the
 shown window is anchored on errors (##[error] markers, test failures).
-Use --full to show the complete log.`,
+Use --full to show the complete log.
+
+Use --grep to keep only lines matching a pattern (case-insensitive), with
+-A/--after and -B/--before lines of context. Grep runs on the complete log
+before any windowing; the line cap then applies to the filtered result
+(--full removes the cap).`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCILogs,
 }
@@ -99,6 +104,9 @@ var (
 	flagCILogsAll        bool
 	flagCILogsFailed     bool
 	flagCILogsJob        string
+	flagCILogsGrep       string
+	flagCILogsAfter      int
+	flagCILogsBefore     int
 	flagCILogsPick       bool
 	flagCILogsAgent      bool
 	flagCILogsMaxBytes   int
@@ -128,6 +136,9 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAll, "all", false, "Show logs for all jobs, not just failed")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsFailed, "failed", false, "Show logs for all failed jobs without prompting")
 	ciLogsCmd.Flags().StringVar(&flagCILogsJob, "job", "", "Show logs for a specific job by name (substring match)")
+	ciLogsCmd.Flags().StringVar(&flagCILogsGrep, "grep", "", "Show only log lines matching this pattern (case-insensitive), with context")
+	ciLogsCmd.Flags().IntVarP(&flagCILogsAfter, "after", "A", 0, "Lines of context after each --grep match")
+	ciLogsCmd.Flags().IntVarP(&flagCILogsBefore, "before", "B", 0, "Lines of context before each --grep match")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
 	ciLogsCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
@@ -908,12 +919,25 @@ func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showT
 
 // --- ci logs ---
 
-func processLogLines(raw string, showTimestamps bool, n int) ([]string, cilog.Selection) {
+func processLogLines(raw string, showTimestamps bool, n int, gf *grepFilter) processedLog {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
-	sel := cilog.Select(lines, n)
 
-	processed := make([]string, 0, len(sel.Lines))
-	for _, line := range sel.Lines {
+	result := processedLog{}
+	if gf != nil {
+		// Grep runs on the full log before any windowing; the line cap
+		// then applies to the filtered result as a plain tail.
+		lines, result.GrepMatches = cilog.Grep(lines, gf.re, gf.before, gf.after)
+		result.GrepTotal = len(lines)
+		if n > 0 && len(lines) > n {
+			lines = lines[len(lines)-n:]
+		}
+	} else {
+		sel := cilog.Select(lines, n)
+		lines, result.Mode, result.Dropped = sel.Lines, sel.Mode, sel.Dropped
+	}
+
+	processed := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if showTimestamps {
 			if ts, rest, ok := cilog.SplitTimestamp(line); ok {
 				processed = append(processed, ui.StyleMuted.Render(ts)+" "+rest)
@@ -924,7 +948,28 @@ func processLogLines(raw string, showTimestamps bool, n int) ([]string, cilog.Se
 			processed = append(processed, cilog.StripTimestamp(line))
 		}
 	}
-	return processed, sel
+	result.Lines = processed
+	return result
+}
+
+// processedLog is the outcome of processing a raw job log for display.
+type processedLog struct {
+	Lines []string
+	Mode  cilog.Mode
+	// Dropped reports that post-job steps were omitted from Lines.
+	Dropped bool
+	// GrepMatches is the number of lines matching --grep (context excluded);
+	// GrepTotal is the number of filtered lines before the line cap.
+	// Both are zero unless --grep was given.
+	GrepMatches int
+	GrepTotal   int
+}
+
+// grepFilter holds a compiled --grep pattern and its context sizes.
+type grepFilter struct {
+	re     *regexp.Regexp
+	before int
+	after  int
 }
 
 func logSeparator(label string) string {
@@ -973,6 +1018,11 @@ func workflowJobIcon(job gh.WorkflowJob) string {
 
 func runCILogs(cmd *cobra.Command, args []string) error {
 	if err := requireCILogsTTY(); err != nil {
+		return err
+	}
+
+	gf, err := parseCILogsGrep()
+	if err != nil {
 		return err
 	}
 
@@ -1096,7 +1146,20 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return openURL(targetJobs[0].Job.HTMLURL)
 	}
 
-	return renderCILogs(ownerRepo, targetJobs, lines, flagCILogsMaxBytes)
+	return renderCILogs(ownerRepo, targetJobs, lines, gf, flagCILogsMaxBytes)
+}
+
+// parseCILogsGrep compiles the --grep pattern; matching is case-insensitive
+// by default.
+func parseCILogsGrep() (*grepFilter, error) {
+	if flagCILogsGrep == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile("(?i)" + flagCILogsGrep)
+	if err != nil {
+		return nil, ui.Dief("Invalid --grep pattern: %v", err)
+	}
+	return &grepFilter{re: re, before: flagCILogsBefore, after: flagCILogsAfter}, nil
 }
 
 // requireCILogsTTY fails fast, before any network calls, when ci logs would
@@ -1190,7 +1253,7 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 	return target, linesChoice, nil
 }
 
-func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, maxBytes int) error {
+func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, gf *grepFilter, maxBytes int) error {
 	limiter := ui.NewByteLimiter(maxBytes)
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
@@ -1211,22 +1274,33 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, maxBytes i
 			continue
 		}
 
-		processed, sel := processLogLines(logs, flagCILogsTimestamps, lines)
+		result := processLogLines(logs, flagCILogsTimestamps, lines, gf)
+		if gf != nil && result.GrepMatches == 0 {
+			printCIInfof(ciAgentMode(), "No lines matching '%s' in this job.", flagCILogsGrep)
+			if !ciAgentMode() && i < len(targetJobs)-1 {
+				fmt.Fprintln(os.Stderr)
+			}
+			continue
+		}
 		if ciAgentMode() {
-			for i := range processed {
-				processed[i] = ui.StripANSI(processed[i])
+			for i := range result.Lines {
+				result.Lines[i] = ui.StripANSI(result.Lines[i])
 			}
 		}
 		var note string
-		switch sel.Mode {
-		case cilog.ModeTail:
-			note = fmt.Sprintf("(last %d lines)", len(processed))
-		case cilog.ModeLandmark:
-			note = fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(processed))
-		case cilog.ModeFull:
-			if sel.Dropped {
-				note = "(post-job steps omitted; use --full for the complete log)"
+		switch {
+		case gf != nil:
+			note = fmt.Sprintf("(%d matching lines", result.GrepMatches)
+			if result.GrepTotal > len(result.Lines) {
+				note += fmt.Sprintf(", showing last %d", len(result.Lines))
 			}
+			note += "; use --full for all matches)"
+		case result.Mode == cilog.ModeTail:
+			note = fmt.Sprintf("(last %d lines)", len(result.Lines))
+		case result.Mode == cilog.ModeLandmark:
+			note = fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(result.Lines))
+		case result.Mode == cilog.ModeFull && result.Dropped:
+			note = "(post-job steps omitted; use --full for the complete log)"
 		}
 		if note != "" {
 			if ciAgentMode() {
@@ -1236,9 +1310,9 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, maxBytes i
 			}
 		}
 		if ciAgentMode() {
-			_, _ = fmt.Fprintln(os.Stdout, limiter.Limit(strings.Join(processed, "\n")))
+			_, _ = fmt.Fprintln(os.Stdout, limiter.Limit(strings.Join(result.Lines, "\n")))
 		} else {
-			fmt.Fprintln(os.Stderr, limiter.Limit(strings.Join(processed, "\n")))
+			fmt.Fprintln(os.Stderr, limiter.Limit(strings.Join(result.Lines, "\n")))
 		}
 
 		if !ciAgentMode() && i < len(targetJobs)-1 {

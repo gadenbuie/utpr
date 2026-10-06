@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/spf13/pflag"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 
 	"github.com/gadenbuie/utpr/internal/cilog"
 	"github.com/gadenbuie/utpr/internal/gh"
@@ -179,9 +181,10 @@ func ciLogsFixture(fill int, tailNoise int) string {
 func TestProcessLogLinesAnchorsWindowOnFailure(t *testing.T) {
 	raw := ciLogsFixture(150, 120)
 
-	processed, sel := processLogLines(raw, false, 100)
-	if sel.Mode != cilog.ModeLandmark {
-		t.Fatalf("processLogLines() mode = %v, want ModeLandmark", sel.Mode)
+	result := processLogLines(raw, false, 100, nil)
+	processed, mode := result.Lines, result.Mode
+	if mode != cilog.ModeLandmark {
+		t.Fatalf("processLogLines() mode = %v, want ModeLandmark", mode)
 	}
 	if len(processed) > 100 {
 		t.Errorf("processLogLines() returned %d lines, want at most 100", len(processed))
@@ -208,9 +211,10 @@ func TestProcessLogLinesFullWindow(t *testing.T) {
 	raw := ciLogsFixture(150, 5)
 	total := strings.Count(raw, "\n")
 
-	processed, sel := processLogLines(raw, false, 0)
-	if sel.Mode != cilog.ModeFull {
-		t.Fatalf("processLogLines(raw, _, 0) mode = %v, want ModeFull", sel.Mode)
+	result := processLogLines(raw, false, 0, nil)
+	processed, mode := result.Lines, result.Mode
+	if mode != cilog.ModeFull {
+		t.Fatalf("processLogLines(raw, _, 0) mode = %v, want ModeFull", mode)
 	}
 	if len(processed) != total {
 		t.Errorf("processLogLines(raw, _, 0) returned %d lines, want all %d", len(processed), total)
@@ -223,9 +227,10 @@ func TestProcessLogLinesFullWindow(t *testing.T) {
 	// A log that fits within n lines is shown in full.
 	small := ciLogsFixture(3, 2)
 	total = strings.Count(small, "\n")
-	processed, sel = processLogLines(small, false, 100)
-	if sel.Mode != cilog.ModeFull {
-		t.Errorf("processLogLines(short log) mode = %v, want ModeFull", sel.Mode)
+	result = processLogLines(small, false, 100, nil)
+	processed, mode = result.Lines, result.Mode
+	if mode != cilog.ModeFull {
+		t.Errorf("processLogLines(short log) mode = %v, want ModeFull", mode)
 	}
 	if len(processed) != total {
 		t.Errorf("processLogLines(short log) returned %d lines, want all %d", len(processed), total)
@@ -235,7 +240,7 @@ func TestProcessLogLinesFullWindow(t *testing.T) {
 func TestProcessLogLinesKeepsTimestamps(t *testing.T) {
 	raw := ciLogsFixture(0, 0)
 
-	processed, _ := processLogLines(raw, true, 50)
+	processed := processLogLines(raw, true, 50, nil).Lines
 	if len(processed) == 0 {
 		t.Fatal("processLogLines() returned no lines")
 	}
@@ -268,5 +273,79 @@ func TestCIMaxBytesFlagDefaults(t *testing.T) {
 		if tc.flag.DefValue != "-1" {
 			t.Errorf("%s --max-bytes default = %s, want -1 (use default cap)", tc.name, tc.flag.DefValue)
 		}
+	}
+}
+
+func TestProcessLogLinesGrep(t *testing.T) {
+	raw := ciLogsFixture(150, 120)
+
+	gf := &grepFilter{re: regexp.MustCompile(`(?i)expect_equal`), before: 2, after: 1}
+	result := processLogLines(raw, false, 100, gf)
+
+	if result.GrepMatches != 1 {
+		t.Fatalf("processLogLines(grep) matched %d lines, want 1", result.GrepMatches)
+	}
+	if len(result.Lines) != 4 {
+		t.Fatalf("processLogLines(grep) returned %d lines, want 4 (match + context)", len(result.Lines))
+	}
+	got := strings.Join(result.Lines, "\n")
+	if !strings.Contains(got, "expect_equal(x, 2)") {
+		t.Errorf("processLogLines(grep) missing the matching line: %q", got)
+	}
+	if strings.Contains(got, "upload noise") {
+		t.Errorf("processLogLines(grep) includes post-failure noise despite the match being earlier in the log")
+	}
+	for _, line := range result.Lines {
+		if strings.Contains(line, "2026-07-01T10:00:00") {
+			t.Errorf("processLogLines(grep) left a timestamp on line %q", line)
+		}
+	}
+}
+
+func TestProcessLogLinesGrepCappedTail(t *testing.T) {
+	raw := ciLogsFixture(150, 0)
+
+	gf := &grepFilter{re: regexp.MustCompile(`(?i)checkout output`)}
+	result := processLogLines(raw, false, 20, gf)
+
+	if result.GrepMatches != 150 {
+		t.Fatalf("processLogLines(grep) matched %d lines, want 150", result.GrepMatches)
+	}
+	if len(result.Lines) != 20 {
+		t.Fatalf("processLogLines(grep) returned %d lines, want 20 after the cap", len(result.Lines))
+	}
+	if !strings.Contains(result.Lines[len(result.Lines)-1], "checkout output 149") {
+		t.Errorf("processLogLines(grep) cap kept the wrong tail: %q", result.Lines[len(result.Lines)-1])
+	}
+}
+
+func TestProcessLogLinesGrepNoMatches(t *testing.T) {
+	raw := ciLogsFixture(5, 5)
+
+	gf := &grepFilter{re: regexp.MustCompile(`no-such-line`)}
+	result := processLogLines(raw, false, 100, gf)
+	if result.GrepMatches != 0 || len(result.Lines) != 0 {
+		t.Errorf("processLogLines(grep) = %d matches, %d lines, want none", result.GrepMatches, len(result.Lines))
+	}
+}
+
+func TestProcessLogLinesGrepFull(t *testing.T) {
+	raw := ciLogsFixture(150, 0)
+
+	gf := &grepFilter{re: regexp.MustCompile(`(?i)checkout output`)}
+	result := processLogLines(raw, false, 0, gf)
+	if len(result.Lines) != 150 || result.GrepTotal != 150 {
+		t.Errorf("processLogLines(grep, n=0) returned %d lines, want all 150 uncapped", len(result.Lines))
+	}
+}
+
+func TestCILogsGrepFlags(t *testing.T) {
+	for _, name := range []string{"grep", "after", "before"} {
+		if ciLogsCmd.Flags().Lookup(name) == nil {
+			t.Errorf("ci logs command is missing the --%s flag", name)
+		}
+	}
+	if !strings.Contains(ciLogsCmd.Long, "--grep") {
+		t.Errorf("ci logs long help should document --grep")
 	}
 }

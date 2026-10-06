@@ -63,6 +63,48 @@ func Select(lines []string, n int) Selection {
 	return Selection{Lines: window, Mode: ModeLandmark, Dropped: dropped}
 }
 
+// Grep filters lines to those whose timestamp-stripped content matches re,
+// expanding each match with before/after context lines. Overlapping
+// context windows are merged; returned lines keep their full original
+// content. It returns the kept lines and the number of matching lines
+// (context lines excluded).
+func Grep(lines []string, re *regexp.Regexp, before, after int) ([]string, int) {
+	if len(lines) == 0 {
+		return nil, 0
+	}
+	if before < 0 {
+		before = 0
+	}
+	if after < 0 {
+		after = 0
+	}
+
+	keep := make([]bool, len(lines))
+	matched := 0
+	for i, line := range lines {
+		if !re.MatchString(content(line)) {
+			continue
+		}
+		matched++
+		lo := max(0, i-before)
+		hi := min(len(lines), i+after+1)
+		for j := lo; j < hi; j++ {
+			keep[j] = true
+		}
+	}
+	if matched == 0 {
+		return nil, 0
+	}
+
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if keep[i] {
+			out = append(out, line)
+		}
+	}
+	return out, matched
+}
+
 // findLandmarks returns the sorted indices of lines that mark failures:
 // GitHub Actions error annotations, testthat failure blocks, and R's
 // Error/Execution halted messages.
