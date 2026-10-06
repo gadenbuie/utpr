@@ -36,6 +36,8 @@ const groupPrefix = "##[group]"
 var landmarkRe = regexp.MustCompile(
 	`##\[error\]|^Failed tests\b|^Error:|^Execution halted\b`)
 
+var exitCodeMsgRe = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
+
 // Select returns the lines to display for a job log:
 //   - n <= 0, or a log that fits in n lines, yields the complete log;
 //   - otherwise post-job steps are dropped and the remaining lines are
@@ -110,6 +112,80 @@ func Grep(lines []string, re *regexp.Regexp, before, after int) ([]string, int) 
 		prev = i
 	}
 	return out, matched
+}
+
+// Reason returns a single line summarizing why a job log failed: the
+// first informative failure landmark with its timestamp and ##[error]
+// marker stripped. Section headers such as testthat's "Failed tests:" or
+// "── Failure ..." defer to the message line that follows, and a testthat
+// header's title prefixes that message. Generic "Process completed with
+// exit code" markers carry no information and are skipped, so Reason
+// returns "" when they are all the log has to offer.
+func Reason(lines []string) string {
+	for i, line := range lines {
+		c := content(line)
+		if !landmarkRe.MatchString(c) {
+			continue
+		}
+		msg := strings.TrimSpace(stripErrorMarker(c))
+		if msg == "" || exitCodeMsgRe.MatchString(msg) {
+			continue
+		}
+		if isSectionHeader(msg) {
+			title, detail := firstDetail(lines[i+1:])
+			if detail == "" {
+				continue
+			}
+			if title == "" {
+				title = sectionTitle(msg)
+			}
+			if title != "" {
+				return title + ": " + detail
+			}
+			return detail
+		}
+		return msg
+	}
+	return ""
+}
+
+func stripErrorMarker(line string) string {
+	return strings.TrimPrefix(line, "##[error]")
+}
+
+// isSectionHeader reports whether a landmark line is a header whose
+// following line carries the actual failure message.
+func isSectionHeader(line string) bool {
+	return strings.HasPrefix(line, "Failed tests") || strings.HasPrefix(line, "──")
+}
+
+// sectionTitle extracts the title of a testthat section header like
+// "── Failure (test-x:12) ──────"; it returns "" for other headers.
+func sectionTitle(line string) string {
+	if !strings.HasPrefix(line, "──") {
+		return ""
+	}
+	return strings.Trim(line, "─ ")
+}
+
+// firstDetail returns the first informative line after a section header
+// along with the title of the innermost section header it skipped: it
+// ignores blank lines, further headers, and generic exit-code markers.
+func firstDetail(lines []string) (title, detail string) {
+	for _, line := range lines {
+		msg := strings.TrimSpace(stripErrorMarker(content(line)))
+		if msg == "" || exitCodeMsgRe.MatchString(msg) {
+			continue
+		}
+		if isSectionHeader(msg) {
+			if t := sectionTitle(msg); t != "" {
+				title = t
+			}
+			continue
+		}
+		return title, msg
+	}
+	return title, ""
 }
 
 // findLandmarks returns the sorted indices of lines that mark failures:
