@@ -417,7 +417,7 @@ func printCIInfo(agent bool, msg string) {
 
 func ciAgentMode() bool {
 	return ui.AgentMode(
-		flagCIAgent || flagCILogsAgent || flagCIRerunAgent || flagRootAgent,
+		flagCIAgent || flagCILogsAgent || flagCIRerunAgent || flagCIListAgent || flagRootAgent,
 		flagCIPretty || flagRootPretty,
 	)
 }
