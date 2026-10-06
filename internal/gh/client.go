@@ -88,8 +88,8 @@ type PRInfo struct {
 	Title   string `json:"title"`
 	HTMLURL string `json:"html_url"`
 	Head    struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
 		Repo struct {
 			FullName string `json:"full_name"`
 			CloneURL string `json:"clone_url"`
@@ -505,7 +505,7 @@ type PRReview struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	Body              string `json:"body"`
-	State             string `json:"state"`              // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+	State             string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
 	SubmittedAt       string `json:"submitted_at"`
 	AuthorAssociation string `json:"author_association"` // OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE
 }
@@ -531,7 +531,7 @@ func ListPRReviews(ownerRepo string, number int) ([]PRReview, error) {
 
 // Comment holds information about an issue or PR comment.
 type Comment struct {
-	ID    int `json:"id"`
+	ID     int `json:"id"`
 	Author struct {
 		Login string `json:"login"`
 	} `json:"user"`
@@ -644,8 +644,8 @@ func ListUnresolvedPRReviewComments(ownerRepo string, number int) ([]ReviewComme
 						IsResolved bool `json:"isResolved"`
 						Comments   struct {
 							Nodes []struct {
-								DatabaseID   int    `json:"databaseId"`
-								Author       struct {
+								DatabaseID int `json:"databaseId"`
+								Author     struct {
 									Login string `json:"login"`
 								} `json:"author"`
 								Body         string `json:"body"`
@@ -700,8 +700,8 @@ func ListUnresolvedPRReviewComments(ownerRepo string, number int) ([]ReviewComme
 type CheckRun struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
-	Status      string `json:"status"`      // queued, in_progress, completed
-	Conclusion  string `json:"conclusion"`  // success, failure, neutral, cancelled, skipped, timed_out, action_required
+	Status      string `json:"status"`     // queued, in_progress, completed
+	Conclusion  string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required
 	StartedAt   string `json:"started_at"`
 	CompletedAt string `json:"completed_at"`
 	HTMLURL     string `json:"html_url"`
@@ -718,8 +718,8 @@ type CheckRun struct {
 // CheckRunAnnotation represents an annotation attached to a check run.
 type CheckRunAnnotation struct {
 	AnnotationLevel string `json:"annotation_level"` // notice, warning, failure
-	Title          string `json:"title"`
-	Message        string `json:"message"`
+	Title           string `json:"title"`
+	Message         string `json:"message"`
 }
 
 // ListCheckRunAnnotations returns the annotations attached to a check
