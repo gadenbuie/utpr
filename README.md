@@ -118,7 +118,7 @@ to force styled output when piping.
 | `utpr push [--edit=...]` | Push branch and create/update PR; plain results when piped or with `--agent` |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status with a one-line failure reason for each failed check (`--no-reasons` skips it); plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output; `utpr ci list` shows recent runs with PR, ref, and runtime (`--limit`, default 10) |
+| `utpr ci [<ref>]` | Show GitHub Actions status with a one-line failure reason for each failed check (`--no-reasons` skips it); plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output; `utpr ci list` shows recent runs grouped by commit (`--limit`, default 10) |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -211,21 +211,37 @@ utpr ci --web
 ```
 
 `utpr ci list` shows the most recent Actions runs for the current
-branch — workflow, short SHA, associated PR, and elapsed time for
-in-flight runs or total duration for completed ones. With the default
-limit of 10, a quiet PR branch shows its full run history including
-conclusions, so you can see where things stand and pick a ref for
-follow-up commands like `utpr ci <ref>` or `utpr ci logs <ref>`
-without poking the API in between:
+branch, grouped by commit so jobs from the same push appear together:
+
+```text
+branch 'feat/ci-list' — 27 runs, showing latest 4
+
+abcdef1 · #123 Add ci list · started 14:00
+…  ci/main   3m
+✓  ci/lint   1m
+
+fedcba0 · started 13:52
+✗  ci/main   25m
+✓  pkgdown    6m
+```
+
+Each group heading shows the short SHA, the associated PR when there is
+one, and when the group started; on the default branch and with `--all`
+the heading also carries the branch. Each row shows the status, the
+workflow, and elapsed time for in-flight runs or total duration for
+completed ones. On any other branch a status heading states the branch
+and the total number of its runs. With the default limit of 10 a quiet
+PR branch shows its full run history including conclusions, and groups
+touched by the limit are always shown complete:
 
 ```bash
 # Up to 10 most recent runs for the current branch, any status
 utpr ci list
 
-# Repo-wide, including other branches (adds a branch column)
+# Repo-wide, including other branches
 utpr ci list --all
 
-# Show more (or fewer) recent runs
+# Show more (or fewer) recent runs (groups always show complete)
 utpr ci list --limit 20
 
 # Poll until everything finishes; exits 0 with each run's conclusion
