@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/cilog"
@@ -139,16 +138,18 @@ func (c *reasonCache) logReason(ownerRepo string, r gh.CheckRun, wfRuns []gh.Wor
 	return normalizeReason(cilog.Reason(strings.Split(strings.TrimRight(log, "\n"), "\n")))
 }
 
-// failedJob locates the workflow job backing failed check run r. GitHub
-// Actions check runs carry the job ID in external_id; otherwise the job
-// is found via the workflow run's job list, matching names.
+// failedJob locates the workflow job backing failed check run r.
+// GitHub Actions check runs share their ID with the job they represent;
+// their external_id is a UUID, not a job ID. Check runs without app
+// information fall back to mapping the check run to a job by name via
+// the workflow run's job list.
 func (c *reasonCache) failedJob(ownerRepo string, r gh.CheckRun, wfRuns []gh.WorkflowRun) *gh.WorkflowJob {
-	if r.App.Slug != "github-actions" {
-		return nil // only Actions jobs have fetchable logs
-	}
-	if id, err := strconv.ParseInt(strings.TrimSpace(r.ExternalID), 10, 64); err == nil && id > 0 {
-		job := gh.WorkflowJob{ID: id, Name: jobNameFromCheckRun(r.Name)}
+	if r.App.Slug == "github-actions" {
+		job := gh.WorkflowJob{ID: r.ID, Name: jobNameFromCheckRun(r.Name)}
 		return &job
+	}
+	if r.App.Slug != "" {
+		return nil // third-party apps have no Actions job logs
 	}
 	runID := workflowRunIDForSuite(wfRuns, r.CheckSuite.ID)
 	if runID == 0 {
@@ -210,14 +211,12 @@ func matchFailedJob(r gh.CheckRun, jobs []gh.WorkflowJob) *gh.WorkflowJob {
 	return nil
 }
 
-// needsSuiteMapping reports whether any failed GitHub Actions check run
-// can only be resolved to a job through the workflow run's job list.
+// needsSuiteMapping reports whether any failed check run without app
+// information can only be resolved to a job through the workflow run's
+// job list.
 func needsSuiteMapping(runs []gh.CheckRun) bool {
 	for _, r := range runs {
-		if !isFailedCheckRun(r) || r.App.Slug != "github-actions" {
-			continue
-		}
-		if _, err := strconv.ParseInt(strings.TrimSpace(r.ExternalID), 10, 64); err != nil {
+		if isFailedCheckRun(r) && r.App.Slug == "" {
 			return true
 		}
 	}
