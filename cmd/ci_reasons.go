@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,9 +18,6 @@ var (
 	ghListWorkflowRunJobs     = gh.ListWorkflowRunJobs
 	ghGetJobLogs              = gh.GetJobLogs
 )
-
-// genericReasonRe matches GitHub's content-free failure marker.
-var genericReasonRe = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 
 // reasonLineMaxRunes bounds the inline reason shown per failed check.
 const reasonLineMaxRunes = 160
@@ -46,7 +42,7 @@ func informativeAnnotation(anns []gh.CheckRunAnnotation) string {
 			continue
 		}
 		msg := strings.TrimSpace(a.Message)
-		if msg == "" || genericReasonRe.MatchString(msg) {
+		if msg == "" || cilog.IsGenericExitMessage(msg) {
 			continue
 		}
 		return msg

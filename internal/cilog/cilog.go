@@ -38,6 +38,12 @@ var landmarkRe = regexp.MustCompile(
 
 var exitCodeMsgRe = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 
+// IsGenericExitMessage reports whether msg is GitHub's content-free
+// "Process completed with exit code" failure marker.
+func IsGenericExitMessage(msg string) bool {
+	return exitCodeMsgRe.MatchString(msg)
+}
+
 // Select returns the lines to display for a job log:
 //   - n <= 0, or a log that fits in n lines, yields the complete log;
 //   - otherwise post-job steps are dropped and the remaining lines are
@@ -130,7 +136,7 @@ func Reason(lines []string) string {
 			continue
 		}
 		msg := strings.TrimSpace(stripErrorMarker(c))
-		if msg == "" || exitCodeMsgRe.MatchString(msg) {
+		if msg == "" || IsGenericExitMessage(msg) {
 			continue
 		}
 		if isSectionHeader(msg) {
@@ -176,7 +182,7 @@ func sectionTitle(line string) string {
 func firstDetail(lines []string) (title, detail string) {
 	for _, line := range lines {
 		msg := strings.TrimSpace(stripErrorMarker(content(line)))
-		if msg == "" || exitCodeMsgRe.MatchString(msg) {
+		if msg == "" || IsGenericExitMessage(msg) {
 			continue
 		}
 		if isSectionHeader(msg) {
