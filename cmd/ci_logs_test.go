@@ -188,7 +188,8 @@ func TestShowCIChecksHint(t *testing.T) {
 	})
 }
 
-// resetCIFlags restores the ci flags runCI reads to their defaults.
+// resetCIFlags resets the ci flags runCI reads to their defaults and
+// restores the previous values on cleanup.
 func resetCIFlags(t *testing.T) {
 	t.Helper()
 	old := map[string]any{
@@ -199,6 +200,12 @@ func resetCIFlags(t *testing.T) {
 		"after": flagCILogsAfter, "before": flagCILogsBefore,
 		"lines": flagCILogsLines,
 	}
+	flagCILogs, flagCIWeb, flagCIWatch = false, false, false
+	flagCIWait, flagCIPick, flagCIAgent = "", false, false
+	flagCIPretty, flagCINoReasons = false, false
+	flagCILogsFull, flagCILogsGrep = false, ""
+	flagCILogsAfter, flagCILogsBefore = 0, 0
+	flagCILogsLines = 100
 	t.Cleanup(func() {
 		flagCILogs, flagCIWeb, flagCIWatch = old["logs"].(bool), old["web"].(bool), old["watch"].(bool)
 		flagCIWait, flagCIPick, flagCIAgent = old["wait"].(string), old["pick"].(bool), old["agent"].(bool)

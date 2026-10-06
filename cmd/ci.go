@@ -1257,7 +1257,7 @@ func showCILogsFailed(ownerRepo, sha string, gf *grepFilter) error {
 	}
 	if len(failedJobs) == 0 {
 		if pendingRuns > 0 {
-			printCIInfo(ciAgentMode(), "Failed jobs are in runs still in progress; rerun with --logs after they complete")
+			printCIInfo(ciAgentMode(), "No completed failed jobs yet; some runs are still in progress, so rerun with --logs after they complete")
 		} else {
 			printCISuccess(ciAgentMode(), "No failed jobs.")
 		}

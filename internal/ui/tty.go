@@ -26,7 +26,8 @@ func SetTTYFuncs(stdout, stdin func() bool) func() {
 }
 
 // plainMode routes output for non-terminal consumers: no spinners, no
-// alt-screen pager, and status messages go to stdout without styling.
+// alt-screen pager, and status messages go to stderr without styling,
+// keeping stdout clean for machine-readable payloads.
 var plainMode bool
 
 // SetPlainMode enables plain output for the rest of the process.
