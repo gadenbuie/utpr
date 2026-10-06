@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,62 @@ func TestPickersRequireTTY(t *testing.T) {
 	}
 	if _, err := pickCIRerunJobs(nil, nil); err == nil {
 		t.Error("pickCIRerunJobs() = nil error with non-TTY stdin, want error")
+	}
+}
+
+func withCILogsFlags(t *testing.T, pick, all, failed bool, job string) {
+	t.Helper()
+
+	oldPick, oldAll, oldFailed, oldJob := flagCILogsPick, flagCILogsAll, flagCILogsFailed, flagCILogsJob
+	flagCILogsPick, flagCILogsAll, flagCILogsFailed, flagCILogsJob = pick, all, failed, job
+
+	t.Cleanup(func() {
+		flagCILogsPick, flagCILogsAll, flagCILogsFailed, flagCILogsJob = oldPick, oldAll, oldFailed, oldJob
+	})
+}
+
+func TestRequireCILogsTTY(t *testing.T) {
+	t.Run("non-TTY no filter errors", func(t *testing.T) {
+		withCITTYFlags(t, true, false, false, false)
+		withCILogsFlags(t, false, false, false, "")
+		if err := requireCILogsTTY(); err == nil {
+			t.Error("requireCILogsTTY() = nil, want error")
+		}
+	})
+
+	t.Run("non-TTY with filter passes", func(t *testing.T) {
+		withCITTYFlags(t, true, false, false, false)
+		withCILogsFlags(t, false, false, true, "")
+		if err := requireCILogsTTY(); err != nil {
+			t.Errorf("requireCILogsTTY() = %v, want nil", err)
+		}
+	})
+
+	t.Run("pick guidance takes precedence", func(t *testing.T) {
+		withCITTYFlags(t, true, false, false, false)
+		withCILogsFlags(t, true, false, true, "")
+		err := requireCILogsTTY()
+		if err == nil || !strings.Contains(err.Error(), "--pick") {
+			t.Errorf("requireCILogsTTY() = %v, want --pick guidance", err)
+		}
+	})
+
+	t.Run("TTY passes", func(t *testing.T) {
+		withCITTYFlags(t, true, true, false, false)
+		withCILogsFlags(t, false, false, false, "")
+		if err := requireCILogsTTY(); err != nil {
+			t.Errorf("requireCILogsTTY() = %v, want nil", err)
+		}
+	})
+}
+
+func TestRunCILogsFailsFastWithoutTTY(t *testing.T) {
+	withCITTYFlags(t, true, false, false, false)
+	withCILogsFlags(t, false, false, false, "")
+
+	err := runCILogs(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "--failed") {
+		t.Errorf("runCILogs() = %v, want TTY guidance error before any fetch", err)
 	}
 }
 

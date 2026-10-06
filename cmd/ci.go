@@ -969,6 +969,10 @@ func workflowJobIcon(job gh.WorkflowJob) string {
 }
 
 func runCILogs(cmd *cobra.Command, args []string) error {
+	if err := requireCILogsTTY(); err != nil {
+		return err
+	}
+
 	cfg, err := remote.Detect()
 	if err != nil {
 		return ui.Die(err.Error())
@@ -982,11 +986,6 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 
 	// interactive = no explicit job filter; show picker instead of dumping all failed
 	interactive := !flagCILogsAll && !flagCILogsFailed && flagCILogsJob == ""
-	if interactive {
-		if ttyErr := requireInteractiveTTY("use --failed, --all, or --job to select logs non-interactively"); ttyErr != nil {
-			return ttyErr
-		}
-	}
 
 	if flagCILogsPick {
 		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
@@ -1095,6 +1094,18 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	return renderCILogs(ownerRepo, targetJobs, lines)
+}
+
+// requireCILogsTTY fails fast, before any network calls, when ci logs would
+// need an interactive picker but stdin is not a terminal.
+func requireCILogsTTY() error {
+	if flagCILogsPick {
+		return requireInteractiveTTY("pass a PR number, branch, or ref instead of --pick")
+	}
+	if !flagCILogsAll && !flagCILogsFailed && flagCILogsJob == "" {
+		return requireInteractiveTTY("use --failed, --all, or --job to select logs non-interactively")
+	}
+	return nil
 }
 
 // pickCILogs presents an interactive picker for which jobs to view and how
