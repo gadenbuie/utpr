@@ -26,8 +26,9 @@ experience for the full pull request round-trip:
 - **Review others' PRs** with `utpr fetch`, which configures remotes
   and tracking branches automatically — even for fork-based PRs.
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
-- **Monitor CI** with `utpr ci`, which shows GitHub Actions check status
-  and streams failed-job logs right in your terminal.
+- **Monitor CI** with `utpr ci`, which shows GitHub Actions check status,
+  surfaces a one-line failure reason for each failed check, and streams
+  failed-job logs right in your terminal.
 - **Clean up** with `utpr finish` after a merge, or `utpr forget`
   to abandon work. Use `utpr clean` to sweep the entire repo in one
   pass: finish merged PRs, prune stale remote-tracking refs, and remove
@@ -117,7 +118,7 @@ to force styled output when piping.
 | `utpr push [--edit=...]` | Push branch and create/update PR; plain results when piped or with `--agent` |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status; plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output |
+| `utpr ci [<ref>]` | Show GitHub Actions status with a one-line failure reason for each failed check (`--no-reasons` skips it); plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -207,6 +208,21 @@ utpr ci --wait failed
 
 # Open checks in the browser
 utpr ci --web
+```
+
+Failed checks include a one-line failure reason, shown under the check
+name. utpr uses the first informative GitHub annotation, and only when the
+annotations are generic (like "Process completed with exit code 1") does it
+fetch the failed job's log to pull out the error line. Pass `--no-reasons`
+to skip the reason lookup entirely:
+
+```text
+● CI
+  ✓  lint
+  ✗  build
+      ↳ Error: object 'foo' not found
+
+1 passing · 1 failing
 ```
 
 When checks fail, `utpr ci logs` streams the output of failed jobs so

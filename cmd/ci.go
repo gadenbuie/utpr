@@ -27,6 +27,9 @@ var ciCmd = &cobra.Command{
 	Short: "View CI check status",
 	Long: `Show CI check run status for the current branch or a specific PR, branch, or ref.
 
+Failed checks include a one-line failure reason, taken from GitHub
+annotations or the failed job's log (--no-reasons skips it).
+
   utpr ci           current branch
   utpr ci 123       PR #123
   utpr ci #123      PR #123 (explicit)
