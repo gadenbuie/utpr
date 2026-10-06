@@ -356,7 +356,11 @@ func runCI(cmd *cobra.Command, args []string) error {
 		if grepErr != nil {
 			return grepErr
 		}
-		if logErr := showCILogsFailed(ownerRepo, sha, gf); logErr != nil && !errors.Is(logErr, errNoCIRuns) {
+		if logErr := showCILogsFailed(ownerRepo, sha, gf); logErr != nil {
+			if errors.Is(logErr, errNoCIRuns) {
+				printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
+				return nil
+			}
 			return logErr
 		}
 	}
@@ -1142,28 +1146,28 @@ func workflowJobIcon(job gh.WorkflowJob) string {
 // for the SHA.
 var errNoCIRuns = errors.New("no CI runs found")
 
-// cilogsJobEntries fetches the completed jobs for the latest runs of sha.
-// When includeAll is false, jobs are only fetched from failed runs. It
-// returns all collected jobs and the subset of failed jobs.
-func cilogsJobEntries(ownerRepo, sha string, includeAll bool) (allJobs, failedJobs []jobEntry, err error) {
+// cilogsJobEntries fetches the completed jobs for the latest runs of sha
+// selected by includeRun. It returns all collected jobs, the subset of
+// failed jobs, and the number of selected runs still in progress.
+func cilogsJobEntries(ownerRepo, sha string, includeRun func(gh.WorkflowRun) bool) (allJobs, failedJobs []jobEntry, pendingRuns int, err error) {
 	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
 		return ghListWorkflowRunsForSHA(ownerRepo, sha)
 	})
 	if err != nil {
-		return nil, nil, ui.Dief("Could not fetch CI runs: %v", err)
+		return nil, nil, 0, ui.Dief("Could not fetch CI runs: %v", err)
 	}
 	if len(runs) == 0 {
-		return nil, nil, errNoCIRuns
+		return nil, nil, 0, errNoCIRuns
 	}
 
 	runs = latestRunsPerWorkflow(runs)
 
 	for _, run := range runs {
-		if run.Status != "completed" {
+		if !includeRun(run) {
 			continue
 		}
-		if !includeAll && !isFailedConclusion(run.Conclusion) {
-			continue
+		if run.Status != "completed" {
+			pendingRuns++
 		}
 		jobs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
@@ -1186,18 +1190,27 @@ func cilogsJobEntries(ownerRepo, sha string, includeAll bool) (allJobs, failedJo
 			}
 		}
 	}
-	return allJobs, failedJobs, nil
+	return allJobs, failedJobs, pendingRuns, nil
 }
 
 // showCILogsFailed renders the failure-relevant log windows for every
 // failed job of sha: the non-interactive behavior of 'utpr ci logs --failed'.
+// Unlike 'ci logs --failed', runs still in progress are also considered, so
+// completed failed jobs in pending runs are shown (or reported) instead of
+// a misleading "No failed jobs." while the status lists failures.
 func showCILogsFailed(ownerRepo, sha string, gf *grepFilter) error {
-	_, failedJobs, err := cilogsJobEntries(ownerRepo, sha, false)
+	_, failedJobs, pendingRuns, err := cilogsJobEntries(ownerRepo, sha, func(r gh.WorkflowRun) bool {
+		return r.Status != "completed" || isFailedConclusion(r.Conclusion)
+	})
 	if err != nil {
 		return err
 	}
 	if len(failedJobs) == 0 {
-		printCISuccess(ciAgentMode(), "No failed jobs.")
+		if pendingRuns > 0 {
+			printCIInfo(ciAgentMode(), "Failed jobs are in runs still in progress; rerun with --logs after they complete")
+		} else {
+			printCISuccess(ciAgentMode(), "No failed jobs.")
+		}
 		return nil
 	}
 	return renderCILogs(ownerRepo, failedJobs, ciLogsLineCount(), gf, flagCILogsMaxBytes)
@@ -1240,7 +1253,10 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 
 	// Collect completed jobs. In interactive mode (or --all) we want all jobs
 	// so the picker can offer them; otherwise only fetch from failed runs.
-	allJobs, failedJobs, err := cilogsJobEntries(ownerRepo, sha, interactive || flagCILogsAll)
+	// Unlike the one-shot --logs path, runs still in progress are skipped.
+	allJobs, failedJobs, _, err := cilogsJobEntries(ownerRepo, sha, func(r gh.WorkflowRun) bool {
+		return r.Status == "completed" && (interactive || flagCILogsAll || isFailedConclusion(r.Conclusion))
+	})
 	if errors.Is(err, errNoCIRuns) {
 		printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
 		return nil

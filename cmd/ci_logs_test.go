@@ -185,3 +185,45 @@ func TestShowCIChecksHint(t *testing.T) {
 		}
 	})
 }
+
+func TestShowCILogsFailedInProgressRuns(t *testing.T) {
+	t.Run("failed job in in-progress run is shown", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""}}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {{ID: 11, Name: "test", Status: "completed", Conclusion: "failure"}},
+		}
+		s.logs = map[int64]string{11: "Error: boom\n"}
+
+		out := captureStdout(t, func() {
+			if err := showCILogsFailed("o/r", "sha", nil); err != nil {
+				t.Errorf("showCILogsFailed() = %v", err)
+			}
+		})
+		if !strings.Contains(out, "## test / test") || !strings.Contains(out, "Error: boom") {
+			t.Errorf("showCILogsFailed() missing failed job from in-progress run:\n%s", out)
+		}
+	})
+
+	t.Run("only in-progress failures get a pending message", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""}}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {{ID: 11, Name: "test", Status: "in_progress", Conclusion: ""}},
+		}
+
+		out := captureStdout(t, func() {
+			if err := showCILogsFailed("o/r", "sha", nil); err != nil {
+				t.Errorf("showCILogsFailed() = %v", err)
+			}
+		})
+		if !strings.Contains(out, "still in progress") {
+			t.Errorf("showCILogsFailed() missing in-progress message:\n%s", out)
+		}
+		if len(s.calls.getJobLogs) != 0 {
+			t.Errorf("getJobLogs called for %v, want none", s.calls.getJobLogs)
+		}
+	})
+}
