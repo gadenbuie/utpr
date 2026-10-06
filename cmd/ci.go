@@ -1149,6 +1149,9 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 // by default.
 func parseCILogsGrep() (*grepFilter, error) {
 	if flagCILogsGrep == "" {
+		if flagCILogsAfter != 0 || flagCILogsBefore != 0 {
+			return nil, ui.Dief("--after and --before require --grep")
+		}
 		return nil, nil
 	}
 	re, err := regexp.Compile("(?i)" + flagCILogsGrep)
@@ -1174,9 +1177,9 @@ func ciLogsNote(result processedLog, grep bool) string {
 	case grep:
 		note := fmt.Sprintf("(%d matching lines", result.GrepMatches)
 		if result.GrepTotal > len(result.Lines) {
-			note += fmt.Sprintf(", showing last %d", len(result.Lines))
+			note += fmt.Sprintf(", showing last %d; use --full for all matches", len(result.Lines))
 		}
-		return note + "; use --full for all matches)"
+		return note + ")"
 	case result.Mode == cilog.ModeTail:
 		return fmt.Sprintf("(last %d lines)", len(result.Lines))
 	case result.Mode == cilog.ModeLandmark:

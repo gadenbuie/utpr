@@ -97,10 +97,17 @@ func Grep(lines []string, re *regexp.Regexp, before, after int) ([]string, int) 
 	}
 
 	out := make([]string, 0, len(lines))
+	prev := -1
 	for i, line := range lines {
-		if keep[i] {
-			out = append(out, line)
+		if !keep[i] {
+			continue
 		}
+		if prev >= 0 && i > prev+1 {
+			// Separate non-contiguous match groups, like grep's "--".
+			out = append(out, "--")
+		}
+		out = append(out, line)
+		prev = i
 	}
 	return out, matched
 }

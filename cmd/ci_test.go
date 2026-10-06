@@ -278,7 +278,7 @@ func TestCILogsNote(t *testing.T) {
 		{"landmark", processedLog{Lines: make([]string, 80), Mode: cilog.ModeLandmark}, false, "(80 lines around the failure; use --full for the complete log)"},
 		{"full with dropped steps", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull, Dropped: true}, false, "(post-job steps omitted; use --full for the complete log)"},
 		{"full complete", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull}, false, ""},
-		{"grep", processedLog{Lines: make([]string, 10), GrepMatches: 8, GrepTotal: 10}, true, "(8 matching lines; use --full for all matches)"},
+		{"grep", processedLog{Lines: make([]string, 10), GrepMatches: 8, GrepTotal: 10}, true, "(8 matching lines)"},
 		{"grep capped", processedLog{Lines: make([]string, 5), GrepMatches: 8, GrepTotal: 12}, true, "(8 matching lines, showing last 5; use --full for all matches)"},
 	}
 	for _, tt := range tests {
@@ -379,5 +379,20 @@ func TestCILogsGrepFlags(t *testing.T) {
 	}
 	if !strings.Contains(ciLogsCmd.Long, "--grep") {
 		t.Errorf("ci logs long help should document --grep")
+	}
+}
+
+func TestParseCILogsGrepRequiresGrepForContext(t *testing.T) {
+	oldGrep, oldAfter := flagCILogsGrep, flagCILogsAfter
+	t.Cleanup(func() { flagCILogsGrep, flagCILogsAfter = oldGrep, oldAfter })
+
+	flagCILogsGrep, flagCILogsAfter = "", 5
+	if _, err := parseCILogsGrep(); err == nil {
+		t.Error("parseCILogsGrep() = nil error with --after but no --grep, want error")
+	}
+
+	flagCILogsAfter = 0
+	if _, err := parseCILogsGrep(); err != nil {
+		t.Errorf("parseCILogsGrep() = %v without flags, want nil", err)
 	}
 }
