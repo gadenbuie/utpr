@@ -976,6 +976,14 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 	ownerRepo, sha := target.ownerRepo, target.sha
 
+	// interactive = no explicit job filter; show picker instead of dumping all failed
+	interactive := !flagCILogsAll && !flagCILogsFailed && flagCILogsJob == ""
+	if interactive {
+		if ttyErr := requireInteractiveTTY("use --failed, --all, or --job to select logs non-interactively"); ttyErr != nil {
+			return ttyErr
+		}
+	}
+
 	if flagCILogsPick {
 		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
 		if pickErr != nil {
@@ -1000,9 +1008,6 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	runs = latestRunsPerWorkflow(runs)
-
-	// interactive = no explicit job filter; show picker instead of dumping all failed
-	interactive := !flagCILogsAll && !flagCILogsFailed && flagCILogsJob == ""
 
 	// Collect completed jobs. In interactive mode (or --all) we want all jobs
 	// so the picker can offer them; otherwise only fetch from failed runs.

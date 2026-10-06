@@ -86,6 +86,20 @@ func TestCIPrettyFlagRegistered(t *testing.T) {
 	}
 }
 
+func TestPickersRequireTTY(t *testing.T) {
+	withCITTYFlags(t, true, false, false, false)
+
+	if _, err := pickRunForBranch("o/r", "b", 5); err == nil {
+		t.Error("pickRunForBranch() = nil error with non-TTY stdin, want error")
+	}
+	if _, _, err := pickCILogs(nil, nil, nil, 100); err == nil {
+		t.Error("pickCILogs() = nil error with non-TTY stdin, want error")
+	}
+	if _, err := pickCIRerunJobs(nil, nil); err == nil {
+		t.Error("pickCIRerunJobs() = nil error with non-TTY stdin, want error")
+	}
+}
+
 func TestRequireInteractiveTTY(t *testing.T) {
 	withCITTYFlags(t, true, false, false, false)
 	if err := requireInteractiveTTY("some guidance"); err == nil {
