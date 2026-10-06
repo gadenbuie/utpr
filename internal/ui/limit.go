@@ -3,13 +3,14 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // DefaultMaxOutputBytes is the default output cap applied when --max-bytes
 // is omitted.
 const DefaultMaxOutputBytes = 256 * 1024
 
-const truncationMarkerFmt = "… truncated, %d bytes hidden — use --max-bytes 0 for full output"
+const truncationMarkerFmt = "… truncated, %d bytes hidden — use --max-bytes 0 for full output\n"
 
 // ByteLimiter caps accumulated output at a total byte budget. Multiple
 // outputs (e.g. several jobs) can share one limiter so the budget spans the
@@ -49,9 +50,10 @@ func (l *ByteLimiter) Limit(s string) string {
 	return keep
 }
 
-// cutAtLineBoundary returns the longest prefix of s that is at most max bytes
-// long and ends at a line boundary. A single line longer than max yields an
-// empty result.
+// cutAtLineBoundary returns the longest prefix of s that is at most max
+// bytes long and ends at a line boundary. When no line boundary falls
+// inside the window (e.g. a single minified line), it cuts mid-line at a
+// rune boundary instead of returning nothing.
 func cutAtLineBoundary(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -64,5 +66,10 @@ func cutAtLineBoundary(s string, max int) string {
 	if i := strings.LastIndexByte(window, '\n'); i >= 0 {
 		return s[:i+1]
 	}
-	return ""
+	// Back off to a rune boundary so a multi-byte rune is never split.
+	end := max
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
 }

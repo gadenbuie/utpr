@@ -127,7 +127,7 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
-	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", -1, "Maximum output bytes for the check list (default 262144, 0 disables)")
+	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes for the check list (0 disables)")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job")
@@ -142,7 +142,7 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
 	ciLogsCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
-	ciLogsCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", -1, "Maximum output bytes across all jobs (default 262144, 0 disables)")
+	ciLogsCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes across all jobs (0 disables)")
 
 	ciRerunCmd.Flags().StringArrayVarP(&flagCIRerunJob, "job", "j", nil, "Re-run specific jobs by name (substring match); use 'failed' or 'all' for failed or all jobs")
 	ciRerunCmd.Flags().BoolVar(&flagCIRerunPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
@@ -1104,12 +1104,8 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Resolve target jobs and line count. --full (or -n 0) shows the
-	// complete log; otherwise the window is anchored on failures.
-	lines := flagCILogsLines
-	if flagCILogsFull {
-		lines = 0
-	}
+	// Resolve target jobs and line count.
+	lines := ciLogsLineCount()
 
 	var targetJobs []jobEntry
 
@@ -1160,6 +1156,35 @@ func parseCILogsGrep() (*grepFilter, error) {
 		return nil, ui.Dief("Invalid --grep pattern: %v", err)
 	}
 	return &grepFilter{re: re, before: flagCILogsBefore, after: flagCILogsAfter}, nil
+}
+
+// ciLogsLineCount resolves the per-job line budget: --full (or -n 0)
+// shows the complete log; otherwise the window is anchored on failures.
+func ciLogsLineCount() int {
+	if flagCILogsFull {
+		return 0
+	}
+	return flagCILogsLines
+}
+
+// ciLogsNote describes how the displayed lines were selected; "" means
+// the log is shown complete and no note is needed.
+func ciLogsNote(result processedLog, grep bool) string {
+	switch {
+	case grep:
+		note := fmt.Sprintf("(%d matching lines", result.GrepMatches)
+		if result.GrepTotal > len(result.Lines) {
+			note += fmt.Sprintf(", showing last %d", len(result.Lines))
+		}
+		return note + "; use --full for all matches)"
+	case result.Mode == cilog.ModeTail:
+		return fmt.Sprintf("(last %d lines)", len(result.Lines))
+	case result.Mode == cilog.ModeLandmark:
+		return fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(result.Lines))
+	case result.Mode == cilog.ModeFull && result.Dropped:
+		return "(post-job steps omitted; use --full for the complete log)"
+	}
+	return ""
 }
 
 // requireCILogsTTY fails fast, before any network calls, when ci logs would
@@ -1287,22 +1312,7 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, gf *grepFi
 				result.Lines[i] = ui.StripANSI(result.Lines[i])
 			}
 		}
-		var note string
-		switch {
-		case gf != nil:
-			note = fmt.Sprintf("(%d matching lines", result.GrepMatches)
-			if result.GrepTotal > len(result.Lines) {
-				note += fmt.Sprintf(", showing last %d", len(result.Lines))
-			}
-			note += "; use --full for all matches)"
-		case result.Mode == cilog.ModeTail:
-			note = fmt.Sprintf("(last %d lines)", len(result.Lines))
-		case result.Mode == cilog.ModeLandmark:
-			note = fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(result.Lines))
-		case result.Mode == cilog.ModeFull && result.Dropped:
-			note = "(post-job steps omitted; use --full for the complete log)"
-		}
-		if note != "" {
+		if note := ciLogsNote(result, gf != nil); note != "" {
 			if ciAgentMode() {
 				_, _ = fmt.Fprintln(os.Stdout, note)
 			} else {
@@ -1310,9 +1320,9 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, gf *grepFi
 			}
 		}
 		if ciAgentMode() {
-			_, _ = fmt.Fprintln(os.Stdout, limiter.Limit(strings.Join(result.Lines, "\n")))
+			_, _ = fmt.Fprint(os.Stdout, limiter.Limit(strings.Join(result.Lines, "\n")+"\n"))
 		} else {
-			fmt.Fprintln(os.Stderr, limiter.Limit(strings.Join(result.Lines, "\n")))
+			fmt.Fprint(os.Stderr, limiter.Limit(strings.Join(result.Lines, "\n")+"\n"))
 		}
 
 		if !ciAgentMode() && i < len(targetJobs)-1 {

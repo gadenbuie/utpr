@@ -254,8 +254,40 @@ func TestCILogsFullFlag(t *testing.T) {
 		t.Fatal("ci logs command is missing the --full flag")
 	}
 
-	// Behavior is covered by TestProcessLogLinesFullWindow: -n 0 and
-	// --full both select the complete log.
+	oldFull, oldLines := flagCILogsFull, flagCILogsLines
+	t.Cleanup(func() { flagCILogsFull, flagCILogsLines = oldFull, oldLines })
+
+	flagCILogsFull, flagCILogsLines = false, 100
+	if got := ciLogsLineCount(); got != 100 {
+		t.Errorf("ciLogsLineCount() = %d without --full, want 100", got)
+	}
+	flagCILogsFull = true
+	if got := ciLogsLineCount(); got != 0 {
+		t.Errorf("ciLogsLineCount() = %d with --full, want 0 (complete log)", got)
+	}
+}
+
+func TestCILogsNote(t *testing.T) {
+	tests := []struct {
+		name   string
+		result processedLog
+		grep   bool
+		want   string
+	}{
+		{"tail", processedLog{Lines: make([]string, 50), Mode: cilog.ModeTail}, false, "(last 50 lines)"},
+		{"landmark", processedLog{Lines: make([]string, 80), Mode: cilog.ModeLandmark}, false, "(80 lines around the failure; use --full for the complete log)"},
+		{"full with dropped steps", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull, Dropped: true}, false, "(post-job steps omitted; use --full for the complete log)"},
+		{"full complete", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull}, false, ""},
+		{"grep", processedLog{Lines: make([]string, 10), GrepMatches: 8, GrepTotal: 10}, true, "(8 matching lines; use --full for all matches)"},
+		{"grep capped", processedLog{Lines: make([]string, 5), GrepMatches: 8, GrepTotal: 12}, true, "(8 matching lines, showing last 5; use --full for all matches)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ciLogsNote(tt.result, tt.grep); got != tt.want {
+				t.Errorf("ciLogsNote() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestCIMaxBytesFlagDefaults(t *testing.T) {
@@ -270,8 +302,8 @@ func TestCIMaxBytesFlagDefaults(t *testing.T) {
 			t.Errorf("%s command is missing the --max-bytes flag", tc.name)
 			continue
 		}
-		if tc.flag.DefValue != "-1" {
-			t.Errorf("%s --max-bytes default = %s, want -1 (use default cap)", tc.name, tc.flag.DefValue)
+		if tc.flag.DefValue != "262144" {
+			t.Errorf("%s --max-bytes default = %s, want 262144 (ui.DefaultMaxOutputBytes)", tc.name, tc.flag.DefValue)
 		}
 	}
 }

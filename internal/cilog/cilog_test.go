@@ -316,9 +316,17 @@ func TestSelectReportsDroppedPostSteps(t *testing.T) {
 		t.Error("Select() includes post-job lines")
 	}
 
-	sel = Select(testthatFailureLog(3), 200)
+	// A log longer than n with no post-job groups after the last landmark:
+	// filtering runs but removes nothing.
+	plain := []string{ts("##[group]Run go test"), ts("##[endgroup]")}
+	for i := 0; i < 198; i++ {
+		plain = append(plain, ts(fmt.Sprintf("test output %d", i)))
+	}
+	plain = append(plain, ts("##[error]Process completed with exit code 1."))
+
+	sel = Select(plain, 100)
 	if sel.Dropped {
-		t.Error("Select() Dropped = true for a log that fits without filtering, want false")
+		t.Error("Select() Dropped = true for a log without post-job steps, want false")
 	}
 }
 
