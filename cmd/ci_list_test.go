@@ -839,3 +839,106 @@ func TestCIListAgentAndPrettyFlags(t *testing.T) {
 		}
 	})
 }
+
+func TestWatchCIListStaleRunMarkedUnknown(t *testing.T) {
+	// Right after the queue drains, the per-SHA fetch may still report a
+	// watched run as in-flight; the final frame must not show it as
+	// still running.
+	sha := "abcdef1234567890"
+	runA := ciListTestRun(5, "ci/main", "main", sha, "in_progress", "", "2020-01-02T14:00:00Z", "")
+	stale := runA // still in_progress in the fetched group
+
+	withCIListFlags(t, false, true, 10)
+	withCIListSeams(t, ciListSeamOpts{
+		defaultBranch: "main",
+		branch:        "main",
+		running: func(call int) ([]gh.WorkflowRun, error) {
+			if call == 1 {
+				return []gh.WorkflowRun{runA}, nil
+			}
+			return nil, nil
+		},
+		perSHA: map[string][]gh.WorkflowRun{sha: {stale}},
+	})
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "main") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	parts := strings.Split(out, "\n\n")
+	final := parts[len(parts)-1]
+	if strings.Contains(final, "…") {
+		t.Errorf("final frame shows a running icon for a stale run:\n%s", out)
+	}
+	if !strings.Contains(final, "?") {
+		t.Errorf("final frame missing unknown-conclusion icon:\n%s", out)
+	}
+}
+
+func TestRunCIListBranchFilterExcludesOtherBranchRuns(t *testing.T) {
+	// The same commit can have runs on other branches (e.g. after a merge
+	// to main); branch mode must not mix them into the branch's groups.
+	sha := "abcdef1234567890"
+	own := ciListTestRun(1, "wf-own", "feat", sha, "completed", "success", "2020-01-02T14:00:00Z", "2020-01-02T14:01:00Z")
+	foreign := ciListTestRun(2, "wf-foreign", "main", sha, "completed", "success", "2020-01-02T14:00:00Z", "2020-01-02T14:02:00Z")
+
+	withCIListFlags(t, false, false, 10)
+	withCIListSeams(t, ciListSeamOpts{
+		defaultBranch: "main",
+		branch:        "feat",
+		recent: func(call int) ([]gh.WorkflowRun, int, error) {
+			return []gh.WorkflowRun{own}, 3, nil
+		},
+		perSHA: map[string][]gh.WorkflowRun{sha: {foreign, own}},
+		prs:    func() ([]gh.PRInfo, error) { return nil, nil },
+	})
+
+	out := captureStdout(t, func() {
+		if err := runCIList(nil, nil); err != nil {
+			t.Errorf("runCIList: %v", err)
+		}
+	})
+	if !strings.Contains(out, "wf-own") {
+		t.Errorf("output missing the branch's own run in:\n%s", out)
+	}
+	if strings.Contains(out, "wf-foreign") {
+		t.Errorf("output includes a run from another branch in:\n%s", out)
+	}
+	if strings.Contains(out, "showing latest 2") {
+		t.Errorf("shown count includes foreign runs in:\n%s", out)
+	}
+}
+
+func TestWatchCIListBranchFilterExcludesOtherBranchRuns(t *testing.T) {
+	sha := "abcdef1234567890"
+	runA := ciListTestRun(5, "wf-own", "feat", sha, "in_progress", "", "2020-01-02T14:00:00Z", "")
+	foreign := ciListTestRun(6, "wf-foreign", "main", sha, "completed", "success", "2020-01-02T14:00:00Z", "2020-01-02T14:02:00Z")
+
+	withCIListFlags(t, false, true, 10)
+	withCIListSeams(t, ciListSeamOpts{
+		defaultBranch: "main",
+		branch:        "feat",
+		running: func(call int) ([]gh.WorkflowRun, error) {
+			if call == 1 {
+				return []gh.WorkflowRun{runA}, nil
+			}
+			return nil, nil
+		},
+		perSHA: map[string][]gh.WorkflowRun{sha: {foreign}},
+	})
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "feat") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	parts := strings.Split(out, "\n\n")
+	final := parts[len(parts)-1]
+	if !strings.Contains(final, "wf-own") {
+		t.Errorf("final frame missing the watched run:\n%s", out)
+	}
+	if strings.Contains(final, "wf-foreign") {
+		t.Errorf("final frame includes a run from another branch:\n%s", out)
+	}
+}

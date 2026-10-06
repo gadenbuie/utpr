@@ -118,7 +118,7 @@ func runCIList(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return ciListData{}, err
 		}
-		return ciListData{groups: completeCIListGroups(ownerRepo, window), total: total}, nil
+		return ciListData{groups: completeCIListGroups(ownerRepo, branch, window), total: total}, nil
 	})
 	if derr != nil {
 		return ui.Dief("Could not fetch CI runs: %v", derr)
@@ -247,16 +247,38 @@ func groupRunsBySHA(runs []gh.WorkflowRun) []ciListGroup {
 }
 
 // completeCIListGroups completes each touched group with all runs for its
-// commit, fetched per-SHA; fetch failures keep the window's runs for that
-// group (best-effort).
-func completeCIListGroups(ownerRepo string, window []gh.WorkflowRun) []ciListGroup {
+// commit, fetched per-SHA; in branch mode fetched runs from other branches
+// sharing the commit are excluded. Fetch failures keep the window's runs
+// for that group (best-effort).
+func completeCIListGroups(ownerRepo, branch string, window []gh.WorkflowRun) []ciListGroup {
 	groups := groupRunsBySHA(window)
 	for i, g := range groups {
-		if all, err := ghListWorkflowRunsForSHA(ownerRepo, g.sha); err == nil && len(all) > 0 {
-			groups[i].runs = all
+		all, err := ghListWorkflowRunsForSHA(ownerRepo, g.sha)
+		if err != nil || len(all) == 0 {
+			continue
 		}
+		if branch != "" {
+			if kept := filterRunsByBranch(all, branch); len(kept) > 0 {
+				all = kept
+			} else {
+				continue
+			}
+		}
+		groups[i].runs = all
 	}
 	return groups
+}
+
+// filterRunsByBranch keeps only runs whose head branch matches, so groups
+// don't pick up runs that other branches share with the same commit.
+func filterRunsByBranch(runs []gh.WorkflowRun, branch string) []gh.WorkflowRun {
+	kept := make([]gh.WorkflowRun, 0, len(runs))
+	for _, r := range runs {
+		if r.HeadBranch == branch {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
 
 // renderCIListGroups renders the grouped listing. topHeading, when
@@ -329,7 +351,7 @@ func ciListGroupHeading(g ciListGroup, prBySHA map[string]gh.PRInfo, includeBran
 	first := lipgloss.NewStyle().Bold(true).Render(shortSHA(g.sha))
 	if includeBranch {
 		if b := g.branch(); b != "" {
-			first += " " + ui.StyleMuted.Render("on " + b)
+			first += " " + ui.StyleMuted.Render("on "+b)
 		}
 	}
 	parts := []string{first}
@@ -543,7 +565,7 @@ func watchCIList(ownerRepo, branch string) error {
 				printCIInfo(agent, ciWatchEmptyMessage(ownerRepo, branch))
 				return nil
 			}
-			finalGroups := completeWatchedGroups(ownerRepo, seenOrder, seenBySHA)
+			finalGroups := completeWatchedGroups(ownerRepo, branch, seenOrder, seenBySHA)
 			frame := renderCIListGroups(finalGroups, prBySHA, true, "", time.Now())
 			printFrame(frame, lastState != "")
 			return nil
@@ -563,49 +585,53 @@ func watchCIList(ownerRepo, branch string) error {
 }
 
 // completeWatchedGroups returns the complete groups for the watched SHAs
-// in first-seen order, fetched per-SHA at drain; watched runs missing
-// from a fetch are marked completed with an unknown conclusion, and a
-// failed or empty fetch marks the last-seen in-flight runs unknown
-// instead of showing them as still running.
-func completeWatchedGroups(ownerRepo string, seenOrder []string, seenBySHA map[string][]gh.WorkflowRun) []ciListGroup {
+// in first-seen order, fetched per-SHA at drain; in branch mode fetched
+// runs from other branches sharing the commit are excluded. Every watched
+// run appears in the result, and no run is left in a non-completed state.
+func completeWatchedGroups(ownerRepo, branch string, seenOrder []string, seenBySHA map[string][]gh.WorkflowRun) []ciListGroup {
 	groups := make([]ciListGroup, 0, len(seenOrder))
 	for _, sha := range seenOrder {
-		runs := seenBySHA[sha]
+		seen := seenBySHA[sha]
+		var runs []gh.WorkflowRun
 		if all, err := ghListWorkflowRunsForSHA(ownerRepo, sha); err == nil && len(all) > 0 {
-			runs = appendUnknownWatchedRuns(all, seenBySHA[sha])
+			if branch != "" {
+				all = filterRunsByBranch(all, branch)
+			}
+			runs = finalizeWatchedRuns(all, seen)
 		} else {
-			runs = markUnknownWatchedRuns(runs)
+			runs = finalizeWatchedRuns(nil, seen)
 		}
 		groups = append(groups, ciListGroup{sha: sha, runs: runs})
 	}
 	return groups
 }
 
-// markUnknownWatchedRuns marks runs completed with an unknown conclusion.
-func markUnknownWatchedRuns(runs []gh.WorkflowRun) []gh.WorkflowRun {
-	for i := range runs {
-		runs[i].Status = "completed"
-		runs[i].Conclusion = ""
-		runs[i].UpdatedAt = ""
-	}
-	return runs
-}
-
-// appendUnknownWatchedRuns marks watched runs missing from the fetched
-// group as completed with an unknown conclusion.
-func appendUnknownWatchedRuns(all, seen []gh.WorkflowRun) []gh.WorkflowRun {
+// finalizeWatchedRuns normalizes a drained group for the final frame:
+// watched runs missing from the fetch are added back completed with an
+// unknown conclusion, and every run still in a non-completed state —
+// stale in-flight copies returned by eventual consistency — is marked
+// the same way. The queue has drained, so nothing can legitimately be
+// still running here.
+func finalizeWatchedRuns(all, seen []gh.WorkflowRun) []gh.WorkflowRun {
 	known := map[int64]bool{}
-	for _, r := range all {
-		known[r.ID] = true
+	for i := range all {
+		known[all[i].ID] = true
 	}
 	for _, r := range seen {
-		if known[r.ID] {
-			continue
+		if !known[r.ID] {
+			r.Status = "completed"
+			r.Conclusion = ""
+			r.UpdatedAt = ""
+			all = append(all, r)
+			known[r.ID] = true
 		}
-		r.Status = "completed"
-		r.Conclusion = ""
-		r.UpdatedAt = ""
-		all = append(all, r)
+	}
+	for i := range all {
+		if all[i].Status != "completed" {
+			all[i].Status = "completed"
+			all[i].Conclusion = ""
+			all[i].UpdatedAt = ""
+		}
 	}
 	return all
 }
