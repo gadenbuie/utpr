@@ -3,22 +3,22 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 func withCITTYFlags(t *testing.T, stdoutTTY, stdinTTY bool, agent, pretty bool) {
 	t.Helper()
 
-	oldStdout, oldStdin := ciStdoutIsTTY, ciStdinIsTTY
+	restoreTTY := ui.SetTTYFuncs(func() bool { return stdoutTTY }, func() bool { return stdinTTY })
 	oldAgent, oldLogsAgent, oldRerunAgent := flagCIAgent, flagCILogsAgent, flagCIRerunAgent
 	oldPretty := flagCIPretty
 
-	ciStdoutIsTTY = func() bool { return stdoutTTY }
-	ciStdinIsTTY = func() bool { return stdinTTY }
 	flagCIAgent, flagCILogsAgent, flagCIRerunAgent = agent, false, false
 	flagCIPretty = pretty
 
 	t.Cleanup(func() {
-		ciStdoutIsTTY, ciStdinIsTTY = oldStdout, oldStdin
+		restoreTTY()
 		flagCIAgent, flagCILogsAgent, flagCIRerunAgent = oldAgent, oldLogsAgent, oldRerunAgent
 		flagCIPretty = oldPretty
 	})

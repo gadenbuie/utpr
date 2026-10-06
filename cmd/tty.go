@@ -38,3 +38,9 @@ func boolFlagSet(cmd *cobra.Command, name string) (bool, bool) {
 	}
 	return v, true
 }
+
+// requireInteractiveTTY returns an error explaining how to avoid an
+// interactive prompt when stdin is not attached to a terminal.
+func requireInteractiveTTY(guidance string) error {
+	return ui.RequireInteractiveTTY(guidance)
+}
