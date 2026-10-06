@@ -184,26 +184,30 @@ func workflowRunIDForSuite(wfRuns []gh.WorkflowRun, checkSuiteID int64) int64 {
 	return 0
 }
 
-// matchFailedJob finds the failed job backing check run r: a job whose
-// name matches, or the run's only failed job.
+// matchFailedJob finds the failed job backing check run r: the job whose
+// name matches, or the run's only failed job. When several failed jobs
+// match none of them is used, to avoid misattribution.
 func matchFailedJob(r gh.CheckRun, jobs []gh.WorkflowJob) *gh.WorkflowJob {
 	name := jobNameFromCheckRun(r.Name)
-	var fallback *gh.WorkflowJob
+	var unmatched *gh.WorkflowJob
+	failed := 0
 	for i := range jobs {
 		j := &jobs[i]
 		if j.Status != "completed" || !isFailedConclusion(j.Conclusion) {
 			continue
 		}
+		failed++
 		if j.Name == name {
 			return j
 		}
-		if fallback != nil {
-			fallback = nil // ambiguous: more than one failed job
-			break
+		if unmatched == nil {
+			unmatched = j
 		}
-		fallback = j
 	}
-	return fallback
+	if failed == 1 {
+		return unmatched
+	}
+	return nil
 }
 
 // needsSuiteMapping reports whether any failed GitHub Actions check run

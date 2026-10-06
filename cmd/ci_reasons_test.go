@@ -499,3 +499,35 @@ func TestNoReasonsFlagRegistered(t *testing.T) {
 		t.Error("ci command is missing the --no-reasons flag")
 	}
 }
+
+func TestMatchFailedJob(t *testing.T) {
+	failed := func(id int64, name string) gh.WorkflowJob {
+		return gh.WorkflowJob{ID: id, RunID: 500, Name: name, Status: "completed", Conclusion: "failure"}
+	}
+	success := gh.WorkflowJob{ID: 4, RunID: 500, Name: "ok", Status: "completed", Conclusion: "success"}
+
+	t.Run("match beyond the second failed job", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build-c", "failure")
+		jobs := []gh.WorkflowJob{success, failed(1, "build-a"), failed(2, "build-b"), failed(3, "build-c")}
+		got := matchFailedJob(run, jobs)
+		if got == nil || got.ID != 3 {
+			t.Errorf("matchFailedJob() = %+v, want the third failed job (ID 3)", got)
+		}
+	})
+
+	t.Run("single failed job without name match", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build", "failure")
+		got := matchFailedJob(run, []gh.WorkflowJob{success, failed(1, "other")})
+		if got == nil || got.ID != 1 {
+			t.Errorf("matchFailedJob() = %+v, want the only failed job (ID 1)", got)
+		}
+	})
+
+	t.Run("several failed jobs without name match", func(t *testing.T) {
+		run := reasonCheckRun(7, "CI / build", "failure")
+		got := matchFailedJob(run, []gh.WorkflowJob{failed(1, "other-a"), failed(2, "other-b")})
+		if got != nil {
+			t.Errorf("matchFailedJob() = %+v, want nil when several failed jobs match none", got)
+		}
+	})
+}
