@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -45,8 +46,8 @@ var ciLogsCmd = &cobra.Command{
 By default, post-job steps (artifact upload, cleanup) are excluded and the
 shown window is anchored on errors (##[error] markers, test failures).
 Use --full to show the complete log.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runCILogs,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCILogs,
 }
 
 var ciRerunCmd = &cobra.Command{
@@ -100,6 +101,7 @@ var (
 	flagCILogsJob        string
 	flagCILogsPick       bool
 	flagCILogsAgent      bool
+	flagCILogsMaxBytes   int
 )
 
 var (
@@ -117,6 +119,7 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
+	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", -1, "Maximum output bytes for the check list (default 262144, 0 disables)")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job")
@@ -128,6 +131,7 @@ func init() {
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
 	ciLogsCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
+	ciLogsCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", -1, "Maximum output bytes across all jobs (default 262144, 0 disables)")
 
 	ciRerunCmd.Flags().StringArrayVarP(&flagCIRerunJob, "job", "j", nil, "Re-run specific jobs by name (substring match); use 'failed' or 'all' for failed or all jobs")
 	ciRerunCmd.Flags().BoolVar(&flagCIRerunPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
@@ -440,10 +444,13 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		runs = failed
 	}
 
+	limiter := ui.NewByteLimiter(flagCILogsMaxBytes)
 	if ciAgentMode() {
-		_, _ = fmt.Fprint(os.Stdout, renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false))
+		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false)))
 	} else {
-		renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
+		var buf bytes.Buffer
+		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false)
+		_, _ = fmt.Fprint(os.Stderr, limiter.Limit(buf.String()))
 	}
 	return nil
 }
@@ -1089,7 +1096,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return openURL(targetJobs[0].Job.HTMLURL)
 	}
 
-	return renderCILogs(ownerRepo, targetJobs, lines)
+	return renderCILogs(ownerRepo, targetJobs, lines, flagCILogsMaxBytes)
 }
 
 // requireCILogsTTY fails fast, before any network calls, when ci logs would
@@ -1183,7 +1190,8 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 	return target, linesChoice, nil
 }
 
-func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
+func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, maxBytes int) error {
+	limiter := ui.NewByteLimiter(maxBytes)
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
 		if ciAgentMode() {
@@ -1228,9 +1236,9 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 			}
 		}
 		if ciAgentMode() {
-			_, _ = fmt.Fprintln(os.Stdout, strings.Join(processed, "\n"))
+			_, _ = fmt.Fprintln(os.Stdout, limiter.Limit(strings.Join(processed, "\n")))
 		} else {
-			fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
+			fmt.Fprintln(os.Stderr, limiter.Limit(strings.Join(processed, "\n")))
 		}
 
 		if !ciAgentMode() && i < len(targetJobs)-1 {
