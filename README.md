@@ -111,7 +111,7 @@ utpr <command> [options]
 | `utpr push [--edit=...]` | Push branch and create/update PR; `--agent` emits plain results |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status; `--agent` emits plain output; `--wait` blocks until done; `utpr ci logs` streams failed-job output |
+| `utpr ci [<ref>]` | Show GitHub Actions status; plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `utpr ci logs` streams failed-job output |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -189,7 +189,7 @@ utpr ci @some-branch
 # Poll until all checks finish (live status display)
 utpr ci --watch
 
-# Show unstyled check output for an agent
+# Unstyled output is automatic when piping; --agent forces it, --pretty overrides
 utpr ci --agent
 
 # Wait for all checks, then exit 0 (pass) or 1 (fail) — useful in scripts
@@ -212,7 +212,7 @@ utpr ci logs
 # Show logs for all failed jobs at once
 utpr ci logs --failed
 
-# Show unstyled logs for an agent
+# Unstyled logs (also automatic when piping; --pretty overrides)
 utpr ci logs --failed --agent
 
 # Filter to a specific job by name
