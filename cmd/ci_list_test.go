@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 // ciListSeamCalls records activity of the fakes installed by withCIListSeams.
@@ -17,15 +19,16 @@ type ciListSeamCalls struct {
 	recentCalls  int
 	prsCalls     int
 	lastBranch   string
+	lastLimit    int
 }
 
 // withCIListFlags resets the ci list flags around a test.
-func withCIListFlags(t *testing.T, all, watch bool) {
+func withCIListFlags(t *testing.T, all, watch bool, limit int) {
 	t.Helper()
-	oldAll, oldWatch := flagCIListAll, flagCIListWatch
-	flagCIListAll, flagCIListWatch = all, watch
+	oldAll, oldWatch, oldLimit := flagCIListAll, flagCIListWatch, flagCIListLimit
+	flagCIListAll, flagCIListWatch, flagCIListLimit = all, watch, limit
 	t.Cleanup(func() {
-		flagCIListAll, flagCIListWatch = oldAll, oldWatch
+		flagCIListAll, flagCIListWatch, flagCIListLimit = oldAll, oldWatch, oldLimit
 	})
 }
 
@@ -51,6 +54,8 @@ func withCIListSeams(t *testing.T, branch string, running func(call int) []gh.Wo
 	}
 	ghListRecentWorkflowRuns = func(ownerRepo, b string, limit int) ([]gh.WorkflowRun, error) {
 		calls.recentCalls++
+		calls.lastBranch = b
+		calls.lastLimit = limit
 		return recent(), nil
 	}
 	ghListOpenPRs = func(ownerRepo, state string) ([]gh.PRInfo, error) {
@@ -121,7 +126,7 @@ func TestRenderCIListFrame(t *testing.T) {
 	}
 
 	t.Run("branch mode omits the branch column", func(t *testing.T) {
-		frame := renderCIListFrame([]gh.WorkflowRun{running}, prBySHA, false, now, false)
+		frame := renderCIListFrame([]gh.WorkflowRun{running}, prBySHA, false, now)
 		out := ui.StripANSI(frame.content)
 		for _, want := range []string{"ci/main", "abcdef1", "#123 Fix login", "4m", "…"} {
 			if !strings.Contains(out, want) {
@@ -137,7 +142,7 @@ func TestRenderCIListFrame(t *testing.T) {
 	})
 
 	t.Run("repo-wide mode shows the branch column and unassociated PRs", func(t *testing.T) {
-		frame := renderCIListFrame([]gh.WorkflowRun{running, queued}, prBySHA, true, now, false)
+		frame := renderCIListFrame([]gh.WorkflowRun{running, queued}, prBySHA, true, now)
 		out := ui.StripANSI(frame.content)
 		for _, want := range []string{"feature-branch", "other-branch", "ci/lint", "fedcba0", "—", "○", "…"} {
 			if !strings.Contains(out, want) {
@@ -148,7 +153,7 @@ func TestRenderCIListFrame(t *testing.T) {
 
 	t.Run("completed frame shows the conclusion icon and total duration", func(t *testing.T) {
 		done := ciListTestRun(5, "ci/main", "feature-branch", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
-		frame := renderCIListFrame([]gh.WorkflowRun{done}, prBySHA, false, now, true)
+		frame := renderCIListFrame([]gh.WorkflowRun{done}, prBySHA, false, now)
 		out := ui.StripANSI(frame.content)
 		for _, want := range []string{"✓", "2m"} {
 			if !strings.Contains(out, want) {
@@ -164,7 +169,7 @@ func TestRenderCIListFrame(t *testing.T) {
 		long := running
 		long.HeadSHA = "1111111111111111"
 		prBySHA["1111111111111111"] = ciListTestPR(9, strings.Repeat("x", 45), "1111111111111111")
-		frame := renderCIListFrame([]gh.WorkflowRun{long}, prBySHA, false, now, false)
+		frame := renderCIListFrame([]gh.WorkflowRun{long}, prBySHA, false, now)
 		out := ui.StripANSI(frame.content)
 		if want := "#9 " + strings.Repeat("x", 39) + "…"; !strings.Contains(out, want) {
 			t.Errorf("frame missing truncated title %q in:\n%s", want, out)
@@ -173,7 +178,7 @@ func TestRenderCIListFrame(t *testing.T) {
 
 	t.Run("runs without timestamps show an em dash", func(t *testing.T) {
 		none := ciListTestRun(7, "ci/main", "b", "sha", "in_progress", "", "", "")
-		frame := renderCIListFrame([]gh.WorkflowRun{none}, nil, false, now, false)
+		frame := renderCIListFrame([]gh.WorkflowRun{none}, nil, false, now)
 		if out := ui.StripANSI(frame.content); !strings.Contains(out, "—") {
 			t.Errorf("frame missing elapsed placeholder:\n%s", out)
 		}
@@ -182,11 +187,12 @@ func TestRenderCIListFrame(t *testing.T) {
 
 func TestRunCIListBranchMode(t *testing.T) {
 	started := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+	completed := ciListTestRun(4, "ci/lint", "ci-list", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:05:00Z")
 	running := ciListTestRun(5, "ci/main", "ci-list", "abcdef1234567890", "in_progress", "", started, "")
-	withCIListFlags(t, false, false)
+	withCIListFlags(t, false, false, 10)
 	calls := withCIListSeams(t, "ci-list",
-		func(call int) []gh.WorkflowRun { return []gh.WorkflowRun{running} },
-		func() []gh.WorkflowRun { return nil },
+		func(call int) []gh.WorkflowRun { return nil },
+		func() []gh.WorkflowRun { return []gh.WorkflowRun{running, completed} },
 		func() ([]gh.PRInfo, error) {
 			return []gh.PRInfo{ciListTestPR(42, "Add ci list", "abcdef1234567890")}, nil
 		})
@@ -197,7 +203,7 @@ func TestRunCIListBranchMode(t *testing.T) {
 		}
 	})
 
-	for _, want := range []string{"ci/main", "abcdef1", "#42 Add ci list", "2m", "…"} {
+	for _, want := range []string{"ci/main", "ci/lint", "abcdef1", "#42 Add ci list", "2m", "…", "✓", "5m"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q in:\n%s", want, out)
 		}
@@ -205,8 +211,14 @@ func TestRunCIListBranchMode(t *testing.T) {
 	if calls.lastBranch != "ci-list" {
 		t.Errorf("runs queried with branch %q, want %q", calls.lastBranch, "ci-list")
 	}
-	if calls.recentCalls != 0 {
-		t.Errorf("recent runs fetched %d times in one-shot mode, want 0", calls.recentCalls)
+	if calls.lastLimit != 10 {
+		t.Errorf("runs queried with limit %d, want 10", calls.lastLimit)
+	}
+	if calls.runningCalls != 0 {
+		t.Errorf("running runs fetched %d times in one-shot mode, want 0", calls.runningCalls)
+	}
+	if calls.recentCalls != 1 {
+		t.Errorf("recent runs fetched %d times in one-shot mode, want 1", calls.recentCalls)
 	}
 	if strings.Contains(out, "ci-list") {
 		t.Errorf("branch column shown in branch mode:\n%s", out)
@@ -214,7 +226,7 @@ func TestRunCIListBranchMode(t *testing.T) {
 }
 
 func TestRunCIListAllMode(t *testing.T) {
-	withCIListFlags(t, true, false)
+	withCIListFlags(t, true, false, 10)
 	calls := withCIListSeams(t, "ci-list",
 		func(call int) []gh.WorkflowRun { return nil },
 		func() []gh.WorkflowRun { return nil },
@@ -229,13 +241,16 @@ func TestRunCIListAllMode(t *testing.T) {
 	if calls.lastBranch != "" {
 		t.Errorf("runs queried with branch %q in --all mode, want empty", calls.lastBranch)
 	}
-	if want := "No running CI runs in gadenbuie/utpr."; !strings.Contains(out, want) {
+	if want := "No CI runs found in gadenbuie/utpr."; !strings.Contains(out, want) {
 		t.Errorf("output missing %q in:\n%s", want, out)
+	}
+	if calls.lastLimit != 10 {
+		t.Errorf("runs queried with limit %d, want 10", calls.lastLimit)
 	}
 }
 
 func TestRunCIListEmptyBranchMode(t *testing.T) {
-	withCIListFlags(t, false, false)
+	withCIListFlags(t, false, false, 10)
 	withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun { return nil },
 		func() []gh.WorkflowRun { return nil },
@@ -247,22 +262,22 @@ func TestRunCIListEmptyBranchMode(t *testing.T) {
 		}
 	})
 
-	if want := "No running CI runs on branch 'main'."; !strings.Contains(out, want) {
+	if want := "No CI runs found on branch 'main'."; !strings.Contains(out, want) {
 		t.Errorf("output missing %q in:\n%s", want, out)
 	}
 }
 
 func TestRunCIListFetchError(t *testing.T) {
-	withCIListFlags(t, false, false)
+	withCIListFlags(t, false, false, 10)
 	withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun { return nil },
 		func() []gh.WorkflowRun { return nil },
 		func() ([]gh.PRInfo, error) { return nil, nil })
-	oldRunning := ghListRunningWorkflowRuns
-	ghListRunningWorkflowRuns = func(ownerRepo, branch string) ([]gh.WorkflowRun, error) {
+	oldRecent := ghListRecentWorkflowRuns
+	ghListRecentWorkflowRuns = func(ownerRepo, branch string, limit int) ([]gh.WorkflowRun, error) {
 		return nil, errors.New("boom")
 	}
-	t.Cleanup(func() { ghListRunningWorkflowRuns = oldRunning })
+	t.Cleanup(func() { ghListRecentWorkflowRuns = oldRecent })
 
 	captureStdout(t, func() {
 		err := runCIList(nil, nil)
@@ -279,7 +294,7 @@ func TestWatchCIListStateChangePrinting(t *testing.T) {
 	same := runA
 	completed := ciListTestRun(5, "ci/main", "ci-list", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	withCIListSeams(t, "ci-list",
 		func(call int) []gh.WorkflowRun {
 			switch call {
@@ -320,7 +335,7 @@ func TestWatchCIListNewRunAppearsMidWatch(t *testing.T) {
 	doneA := ciListTestRun(5, "ci/main", "ci-list", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
 	doneB := ciListTestRun(6, "ci/lint", "ci-list", "fedcba0987654321", "completed", "failure", "2026-10-06T11:00:00Z", "2026-10-06T11:01:00Z")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	withCIListSeams(t, "ci-list",
 		func(call int) []gh.WorkflowRun {
 			switch call {
@@ -357,7 +372,7 @@ func TestWatchCIListNewRunAppearsMidWatch(t *testing.T) {
 }
 
 func TestWatchCIListEmptyAtStart(t *testing.T) {
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	calls := withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun { return nil },
 		func() []gh.WorkflowRun { return nil },
@@ -380,7 +395,7 @@ func TestWatchCIListPRsFetchedOncePerSHA(t *testing.T) {
 	runA := ciListTestRun(5, "ci/main", "ci-list", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
 	doneA := ciListTestRun(5, "ci/main", "ci-list", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	calls := withCIListSeams(t, "ci-list",
 		func(call int) []gh.WorkflowRun {
 			if call <= 3 {
@@ -447,7 +462,7 @@ func TestWatchCIListNegativePRCache(t *testing.T) {
 	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
 	doneA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	calls := withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun {
 			if call <= 3 {
@@ -476,7 +491,7 @@ func TestWatchCIListUnknownConclusionMarked(t *testing.T) {
 	// unknown, not as still running.
 	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun {
 			if call == 1 {
@@ -513,7 +528,7 @@ func TestWatchCIListFramesSeparatedWhenPiped(t *testing.T) {
 	doneA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
 	doneB := ciListTestRun(6, "ci/lint", "main", "fedcba0987654321", "completed", "failure", "2026-10-06T11:00:00Z", "2026-10-06T11:01:00Z")
 
-	withCIListFlags(t, false, true)
+	withCIListFlags(t, false, true, 10)
 	withCIListSeams(t, "main",
 		func(call int) []gh.WorkflowRun {
 			switch call {
@@ -538,4 +553,61 @@ func TestWatchCIListFramesSeparatedWhenPiped(t *testing.T) {
 	if got := strings.Count(out, "\n\n"); got < 2 {
 		t.Errorf("found %d blank-line separators, want 2, in:\n%s", got, out)
 	}
+}
+
+func TestRunCIListLimitFlag(t *testing.T) {
+	started := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+	running := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", started, "")
+	withCIListFlags(t, false, false, 3)
+	calls := withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun { return nil },
+		func() []gh.WorkflowRun { return []gh.WorkflowRun{running} },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	captureStdout(t, func() {
+		if err := runCIList(nil, nil); err != nil {
+			t.Errorf("runCIList: %v", err)
+		}
+	})
+	if calls.lastLimit != 3 {
+		t.Errorf("runs queried with limit %d, want 3", calls.lastLimit)
+	}
+}
+
+func TestRunCIListLimitValidation(t *testing.T) {
+	withCIListFlags(t, false, false, 0)
+	withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun { return nil },
+		func() []gh.WorkflowRun { return nil },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	captureStdout(t, func() {
+		err := runCIList(nil, nil)
+		if err == nil {
+			t.Error("runCIList with --limit 0 = nil error, want error")
+		}
+	})
+}
+
+func TestRunCIListLimitWatchConflict(t *testing.T) {
+	withCIListFlags(t, false, true, 5)
+	withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun { return nil },
+		func() []gh.WorkflowRun { return nil },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	// The conflict check needs the flag's Changed state, which only a
+	// cobra-parsed command provides.
+	cmd := &cobra.Command{Use: "list"}
+	cmd.Flags().IntVar(&flagCIListLimit, "limit", 10, "")
+	if err := cmd.Flags().Set("limit", "5"); err != nil {
+		t.Fatalf("set limit flag: %v", err)
+	}
+
+	captureStdout(t, func() {
+		err := runCIList(cmd, nil)
+		if err == nil || !strings.Contains(fmt.Sprint(err), "--limit cannot be combined with --watch") {
+			t.Errorf("runCIList with --watch --limit = %v, want --watch conflict error", err)
+		}
+	})
 }

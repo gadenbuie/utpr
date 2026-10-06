@@ -21,13 +21,16 @@ var ciListCmd = &cobra.Command{
 	Short: "List running GitHub Actions runs",
 	Long: `List currently running and queued GitHub Actions runs.
 
-By default only runs for the current branch are shown; --all lists
-running runs for the whole repository. Each row shows the workflow,
-branch (--all only), short commit SHA, associated PR, and elapsed time.
+Shows the most recent workflow runs (any status) for the current
+branch, up to --limit (default 10); --all lists recent runs for the
+whole repository. Each row shows the workflow, branch (--all only),
+short commit SHA, associated PR, and either elapsed time (in-flight)
+or total duration (completed).
 
 Use --watch to poll until no runs are running or queued; the final view
 shows each run's conclusion. --watch is a status view and exits 0 when
-the queue drains ('utpr ci --wait' remains the pass/fail gate).`,
+the queue drains ('utpr ci --wait' remains the pass/fail gate); --limit
+does not apply to --watch.`,
 	Args: cobra.NoArgs,
 	RunE: runCIList,
 }
@@ -36,6 +39,7 @@ var (
 	flagCIListAll   bool
 	flagCIListWatch bool
 	flagCIListAgent bool
+	flagCIListLimit int
 )
 
 // GitHub API and git seams for the list view, kept as package-level vars
@@ -49,8 +53,9 @@ var (
 )
 
 func init() {
-	ciListCmd.Flags().BoolVar(&flagCIListAll, "all", false, "List running runs for the whole repository, not just the current branch")
+	ciListCmd.Flags().BoolVar(&flagCIListAll, "all", false, "List recent runs for the whole repository, not just the current branch")
 	ciListCmd.Flags().BoolVar(&flagCIListWatch, "watch", false, "Poll until no runs are running or queued; the final view shows each conclusion")
+	ciListCmd.Flags().IntVar(&flagCIListLimit, "limit", 10, "Number of recent runs to show (not used with --watch)")
 	ciListCmd.Flags().BoolVar(&flagCIListAgent, "agent", false, "Show unstyled output for agent consumption")
 	ciListCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 	ciCmd.AddCommand(ciListCmd)
@@ -90,11 +95,18 @@ func runCIList(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagCIListWatch {
+		if cmd != nil && cmd.Flags().Changed("limit") {
+			return ui.Dief("--limit cannot be combined with --watch")
+		}
 		return watchCIList(ownerRepo, branch)
 	}
 
+	if flagCIListLimit < 1 {
+		return ui.Dief("--limit must be at least 1")
+	}
+
 	runs, rerr := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
-		return ghListRunningWorkflowRuns(ownerRepo, branch)
+		return ghListRecentWorkflowRuns(ownerRepo, branch, flagCIListLimit)
 	})
 	if rerr != nil {
 		return ui.Dief("Could not fetch CI runs: %v", rerr)
@@ -104,13 +116,22 @@ func runCIList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	prBySHA, _ := ciListFetchPRs(ownerRepo) // best-effort
-	frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now(), false)
+	frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now())
 	ciListPrintFrame(frame)
 	return nil
 }
 
-// ciListEmptyMessage describes the empty state for the active mode.
+// ciListEmptyMessage describes the empty state for the one-shot list in
+// the active mode.
 func ciListEmptyMessage(ownerRepo, branch string) string {
+	if branch == "" {
+		return fmt.Sprintf("No CI runs found in %s.", ownerRepo)
+	}
+	return fmt.Sprintf("No CI runs found on branch '%s'.", branch)
+}
+
+// ciWatchEmptyMessage describes the watch empty state (no in-flight runs).
+func ciWatchEmptyMessage(ownerRepo, branch string) string {
 	if branch == "" {
 		return fmt.Sprintf("No running CI runs in %s.", ownerRepo)
 	}
@@ -139,9 +160,9 @@ type ciListFrame struct {
 }
 
 // renderCIListFrame renders the table for runs. includeBranch adds the
-// branch column (repo-wide --all mode). completed marks a final frame, in
-// which elapsed time is the run's total duration rather than time elapsed.
-func renderCIListFrame(runs []gh.WorkflowRun, prBySHA map[string]gh.PRInfo, includeBranch bool, now time.Time, completed bool) ciListFrame {
+// branch column (repo-wide --all mode). Completed rows show their total
+// duration; in-flight rows show elapsed time as of now.
+func renderCIListFrame(runs []gh.WorkflowRun, prBySHA map[string]gh.PRInfo, includeBranch bool, now time.Time) ciListFrame {
 	type row struct {
 		icon      string
 		workflow  string
@@ -158,7 +179,7 @@ func renderCIListFrame(runs []gh.WorkflowRun, prBySHA map[string]gh.PRInfo, incl
 			prLabel = fmt.Sprintf("#%d %s", pr.Number, truncateRunes(pr.Title, 40))
 		}
 		var elapsed string
-		if completed {
+		if r.Status == "completed" {
 			elapsed = ciListRunDuration(r)
 		} else {
 			elapsed = ciListRunElapsed(r, now)
@@ -390,16 +411,16 @@ func watchCIList(ownerRepo, branch string) error {
 		if len(runs) == 0 {
 			// Queue drained: render the final frame with conclusions.
 			if len(seenOrder) == 0 {
-				printCIInfo(agent, ciListEmptyMessage(ownerRepo, branch))
+				printCIInfo(agent, ciWatchEmptyMessage(ownerRepo, branch))
 				return nil
 			}
 			finalRuns := ciListConcludedRuns(ownerRepo, branch, seenOrder, seen)
-			frame := renderCIListFrame(finalRuns, prBySHA, flagCIListAll, time.Now(), true)
+			frame := renderCIListFrame(finalRuns, prBySHA, flagCIListAll, time.Now())
 			printFrame(frame, lastState != "")
 			return nil
 		}
 
-		frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now(), false)
+		frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now())
 		if agent || !interactive {
 			if frame.state != lastState {
 				printFrame(frame, lastState != "")
