@@ -1307,11 +1307,6 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if len(allJobs) == 0 {
-		printCIInfo(ciAgentMode(), "No completed CI jobs found for this commit.")
-		return nil
-	}
-
 	// Resolve target jobs and line count.
 	lines := ciLogsLineCount()
 
