@@ -227,3 +227,55 @@ func TestShowCILogsFailedInProgressRuns(t *testing.T) {
 		}
 	})
 }
+
+// resetCIFlags restores the ci flags runCI reads to their defaults.
+func resetCIFlags(t *testing.T) {
+	t.Helper()
+	old := map[string]any{
+		"logs": flagCILogs, "web": flagCIWeb, "watch": flagCIWatch,
+		"wait": flagCIWait, "pick": flagCIPick, "agent": flagCIAgent,
+		"pretty": flagCIPretty, "noReasons": flagCINoReasons,
+		"full": flagCILogsFull, "grep": flagCILogsGrep,
+		"after": flagCILogsAfter, "before": flagCILogsBefore,
+		"lines": flagCILogsLines,
+	}
+	t.Cleanup(func() {
+		flagCILogs, flagCIWeb, flagCIWatch = old["logs"].(bool), old["web"].(bool), old["watch"].(bool)
+		flagCIWait, flagCIPick, flagCIAgent = old["wait"].(string), old["pick"].(bool), old["agent"].(bool)
+		flagCIPretty, flagCINoReasons = old["pretty"].(bool), old["noReasons"].(bool)
+		flagCILogsFull, flagCILogsGrep = old["full"].(bool), old["grep"].(string)
+		flagCILogsAfter, flagCILogsBefore = old["after"].(int), old["before"].(int)
+		flagCILogsLines = old["lines"].(int)
+	})
+}
+
+func TestRunCILogsFlagConflicts(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogs = true
+	for _, conflict := range []struct {
+		name  string
+		setup func()
+	}{
+		{"web", func() { flagCIWeb = true }},
+		{"watch", func() { flagCIWatch = true }},
+		{"wait", func() { flagCIWait = "all" }},
+	} {
+		t.Run(conflict.name, func(t *testing.T) {
+			flagCIWeb, flagCIWatch, flagCIWait = false, false, ""
+			conflict.setup()
+			err := runCI(nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+				t.Errorf("runCI() error = %v, want --logs conflict", err)
+			}
+		})
+	}
+}
+
+func TestRunCIRejectsLogFlagsWithoutLogs(t *testing.T) {
+	resetCIFlags(t)
+	flagCILogsGrep = "Error"
+	err := runCI(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "require --logs") {
+		t.Errorf("runCI() error = %v, want rejection of --grep without --logs", err)
+	}
+}

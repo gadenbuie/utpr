@@ -284,19 +284,31 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return ui.Dief("--logs cannot be combined with --web, --watch, or --wait")
 	}
 
-	cfg, err := remote.Detect()
+	// Validate log flags up front, before any network calls or output.
+	var gf *grepFilter
+	if flagCILogs {
+		var err error
+		gf, err = parseCILogsGrep()
+		if err != nil {
+			return err
+		}
+	} else if ignored := unusedLogFlags(cmd); len(ignored) > 0 {
+		return ui.Dief("%s require --logs", strings.Join(ignored, ", "))
+	}
+
+	cfg, err := ciRemoteDetect()
 	if err != nil {
 		return ui.Die(err.Error())
 	}
 
-	target, err := resolveCITarget(cfg, args, flagCIPick)
+	target, err := ciResolveCITarget(cfg, args, flagCIPick)
 	if err != nil {
 		return err
 	}
 	ownerRepo, sha, prURL := target.ownerRepo, target.sha, target.prURL
 
 	if flagCIPick {
-		picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
+		picked, pickErr := ciPickRunForBranch(target.pickOwnerRepo, target.pickBranch, pickRunsLimit)
 		if pickErr != nil {
 			return pickErr
 		}
@@ -330,7 +342,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 		// Only offer the automatic picker fallback when the user didn't
 		// already pick a specific target (no args, no explicit --pick).
 		if len(args) == 0 && !flagCIPick && ui.StdinIsTTY() {
-			picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, autoPickRunsLimit)
+			picked, pickErr := ciPickRunForBranch(target.pickOwnerRepo, target.pickBranch, autoPickRunsLimit)
 			if pickErr != nil {
 				return pickErr
 			}
@@ -352,10 +364,6 @@ func runCI(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagCILogs && failed > 0 {
-		gf, grepErr := parseCILogsGrep()
-		if grepErr != nil {
-			return grepErr
-		}
 		if logErr := showCILogsFailed(ownerRepo, sha, gf); logErr != nil {
 			if errors.Is(logErr, errNoCIRuns) {
 				printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
@@ -366,6 +374,35 @@ func runCI(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
+
+// unusedLogFlags returns the log-only flags that were set explicitly
+// without --logs; they would otherwise be silently ignored.
+func unusedLogFlags(cmd *cobra.Command) []string {
+	var ignored []string
+	if flagCILogsGrep != "" {
+		ignored = append(ignored, "--grep")
+	}
+	if flagCILogsAfter != 0 {
+		ignored = append(ignored, "-A/--after")
+	}
+	if flagCILogsBefore != 0 {
+		ignored = append(ignored, "-B/--before")
+	}
+	if flagCILogsFull {
+		ignored = append(ignored, "--full")
+	}
+	if cmd != nil && cmd.Flags().Lookup("lines") != nil && cmd.Flags().Changed("lines") {
+		ignored = append(ignored, "-n/--lines")
+	}
+	return ignored
+}
+
+// Seams for testing runCI without touching git remotes or the picker.
+var (
+	ciRemoteDetect     = remote.Detect
+	ciResolveCITarget  = resolveCITarget
+	ciPickRunForBranch = pickRunForBranch
+)
 
 func printCIInfo(agent bool, msg string) {
 	if agent {
