@@ -665,6 +665,35 @@ func TestWaitCICompletionSummaryOnce(t *testing.T) {
 		}
 	})
 
+	t.Run("watch failure with reasons: one summary per frame", func(t *testing.T) {
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withNoReasonsFlag(t, false)
+
+		passed := reasonCheckRun(8, "CI / lint", "success")
+		failed := reasonCheckRun(7, "CI / build", "failure")
+		s.checkRuns = [][]gh.CheckRun{{passed, failed}}
+		s.annotations[7] = []gh.CheckRunAnnotation{
+			{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
+		}
+		s.logs[7] = "Error: object 'foo' not found\n"
+
+		var err error
+		out := captureStdout(t, func() { err = waitCI("o/r", "sha", "all", true) })
+		if err == nil {
+			t.Fatal("waitCI() = nil, want CI checks failed")
+		}
+		frames := strings.Count(out, "Checking CI...")
+		if frames != 2 {
+			t.Errorf("rendered %d frames, want 2 (poll + final with reasons):\n%s", frames, out)
+		}
+		// Each frame ends with the summary; the completion block must add
+		// no standalone copy on the re-render path.
+		if n := strings.Count(out, "\n1 passing · 1 failing\n"); n != frames {
+			t.Errorf("summary printed %d times for %d frames, want one per frame:\n%s", n, frames, out)
+		}
+	})
+
 	t.Run("compact success prints final summary", func(t *testing.T) {
 		s := &reasonSeam{}
 		withReasonSeam(t, s)
