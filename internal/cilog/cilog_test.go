@@ -410,3 +410,79 @@ func TestGrepSeparatesNonContiguousGroups(t *testing.T) {
 		t.Errorf("Grep() = %q, want no separator for contiguous groups", got)
 	}
 }
+
+func TestReason(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name: "r error",
+			lines: []string{
+				ts("##[group]Run tests"),
+				ts("##[endgroup]"),
+				ts("Error: object 'foo' not found"),
+				ts("Execution halted"),
+				ts("##[error]Process completed with exit code 1."),
+			},
+			want: "Error: object 'foo' not found",
+		},
+		{
+			name: "informative error annotation",
+			lines: []string{
+				ts("##[error]File not found: 'wrong.yml'"),
+				ts("##[error]Process completed with exit code 1."),
+			},
+			want: "File not found: 'wrong.yml'",
+		},
+		{
+			name: "testthat failure block",
+			lines: []string{
+				ts("Failed tests:"),
+				ts("── Failure (test-x:12) ───────────────"),
+				ts("expect_equal(x, 2) is not TRUE"),
+				ts("##[error]── Failure (test-x:12) ───────────────"),
+				ts("Execution halted"),
+				ts("##[error]Process completed with exit code 1."),
+			},
+			want: "Failure (test-x:12): expect_equal(x, 2) is not TRUE",
+		},
+		{
+			name: "testthat header with error marker only",
+			lines: []string{
+				ts("##[error]── Failure (test-x:12) ──"),
+				ts("expect_true(ok) is not TRUE"),
+			},
+			want: "Failure (test-x:12): expect_true(ok) is not TRUE",
+		},
+		{
+			name: "only generic exit code",
+			lines: []string{
+				ts("##[error]Process completed with exit code 1."),
+			},
+			want: "",
+		},
+		{
+			name: "no landmarks",
+			lines: []string{
+				ts("##[group]Run tests"),
+				ts("##[endgroup]"),
+				ts("All tests passed"),
+			},
+			want: "",
+		},
+		{
+			name: "empty log",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Reason(tt.lines); got != tt.want {
+				t.Errorf("Reason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

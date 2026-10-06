@@ -715,6 +715,47 @@ type CheckRun struct {
 	} `json:"check_suite"`
 }
 
+// CheckRunAnnotation represents an annotation attached to a check run.
+type CheckRunAnnotation struct {
+	AnnotationLevel string `json:"annotation_level"` // notice, warning, failure
+	Title          string `json:"title"`
+	Message        string `json:"message"`
+}
+
+// ListCheckRunAnnotations returns the annotations attached to a check
+// run, following pagination. GitHub lists at most 100 per check run.
+func ListCheckRunAnnotations(ownerRepo string, checkRunID int64) ([]CheckRunAnnotation, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	var all []CheckRunAnnotation
+	path := fmt.Sprintf("repos/%s/%s/check-runs/%d/annotations?per_page=100",
+		url.PathEscape(owner), url.PathEscape(repo), checkRunID)
+	for path != "" {
+		var anns []CheckRunAnnotation
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get annotations for check run %d: %w", checkRunID, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &anns); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, anns...)
+		path = parseNextLink(resp.Header.Get("Link"))
+	}
+	return all, nil
+}
+
 // GetBranchSHA returns the HEAD commit SHA of a remote branch.
 // Branch names may contain slashes and must not be path-escaped.
 func GetBranchSHA(ownerRepo, branch string) (string, error) {
