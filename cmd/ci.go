@@ -58,7 +58,7 @@ By default, re-runs failed jobs. Use --job to control which jobs are re-run:
   utpr ci rerun --job test   re-run jobs matching "test" (substring)
   utpr ci rerun --job test --job lint  re-run jobs matching "test" or "lint"`,
 	Args: cobra.MaximumNArgs(1),
-	RunE:  runCIRerun,
+	RunE: runCIRerun,
 }
 
 var (
@@ -68,6 +68,14 @@ var (
 	flagCIWait   string
 	flagCIPick   bool
 	flagCIAgent  bool
+	flagCIPretty bool
+)
+
+// ciStdoutIsTTY and ciStdinIsTTY report terminal attachment. They are
+// package-level so tests can stub them without a real terminal.
+var (
+	ciStdoutIsTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+	ciStdinIsTTY  = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 )
 
 // pickRunsLimit is the number of runs fetched for --pick.
@@ -102,6 +110,7 @@ func init() {
 	ciCmd.Flags().Lookup("wait").NoOptDefVal = "all"
 	ciCmd.Flags().BoolVar(&flagCIPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
+	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
@@ -111,10 +120,12 @@ func init() {
 	ciLogsCmd.Flags().StringVar(&flagCILogsJob, "job", "", "Show logs for a specific job by name (substring match)")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAgent, "agent", false, "Show unstyled logs for agent consumption")
+	ciLogsCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 
 	ciRerunCmd.Flags().StringArrayVarP(&flagCIRerunJob, "job", "j", nil, "Re-run specific jobs by name (substring match); use 'failed' or 'all' for failed or all jobs")
 	ciRerunCmd.Flags().BoolVar(&flagCIRerunPick, "pick", false, fmt.Sprintf("Pick from the last %d CI runs on the branch", pickRunsLimit))
 	ciRerunCmd.Flags().BoolVar(&flagCIRerunAgent, "agent", false, "Show unstyled output for agent consumption")
+	ciRerunCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 
 	ciCmd.AddCommand(ciLogsCmd)
 	ciCmd.AddCommand(ciRerunCmd)
@@ -282,7 +293,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 		if mode == "" {
 			mode = "all"
 		}
-		printCIHeader(flagCIAgent, target.pickBranch, sha)
+		printCIHeader(ciAgentMode(), target.pickBranch, sha)
 		return waitCI(ownerRepo, sha, mode, flagCIWatch)
 	}
 
@@ -299,7 +310,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 				return showCIChecks(target.pickOwnerRepo, target.pickBranch, picked.HeadSHA)
 			}
 		}
-		printCIInfo(flagCIAgent, "No checks found for this commit.")
+		printCIInfo(ciAgentMode(), "No checks found for this commit.")
 		return nil
 	}
 	return err
@@ -314,7 +325,22 @@ func printCIInfo(agent bool, msg string) {
 }
 
 func ciAgentMode() bool {
-	return flagCIAgent || flagCILogsAgent || flagCIRerunAgent
+	if flagCIPretty {
+		return false
+	}
+	if flagCIAgent || flagCILogsAgent || flagCIRerunAgent {
+		return true
+	}
+	return !ciStdoutIsTTY()
+}
+
+// requireInteractiveTTY returns an error explaining how to avoid the
+// interactive prompt when stdin is not attached to a terminal.
+func requireInteractiveTTY(guidance string) error {
+	if ciStdinIsTTY() {
+		return nil
+	}
+	return ui.Die("This prompt requires an interactive terminal; " + guidance)
 }
 
 func spinCIWithResult[T any](title string, fn func() (T, error)) (T, error) {
@@ -370,7 +396,7 @@ func printCIHeader(agent bool, branch, sha string) {
 // showCIChecks fetches and renders check runs for a commit SHA. Returns
 // errNoChecksFound (wrapped) if no check runs exist for the commit.
 func showCIChecks(ownerRepo, branch, sha string) error {
-	printCIHeader(flagCIAgent, branch, sha)
+	printCIHeader(ciAgentMode(), branch, sha)
 
 	type ciStatus struct {
 		checkRuns    []gh.CheckRun
@@ -401,13 +427,13 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 			}
 		}
 		if len(failed) == 0 {
-			printCISuccess(flagCIAgent, "No failed checks.")
+			printCISuccess(ciAgentMode(), "No failed checks.")
 			return nil
 		}
 		runs = failed
 	}
 
-	if flagCIAgent {
+	if ciAgentMode() {
 		_, _ = fmt.Fprint(os.Stdout, renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false))
 	} else {
 		renderCheckRuns(os.Stderr, runs, buildSuiteNameMap(data.workflowRuns), false)
@@ -535,7 +561,7 @@ func countTerminalRows(output string, termWidth int) int {
 }
 
 func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
-	isInteractive := !flagCIAgent && term.IsTerminal(int(os.Stderr.Fd()))
+	isInteractive := !ciAgentMode() && term.IsTerminal(int(os.Stderr.Fd()))
 	var prevLines int       // for fullDisplay mode
 	var lastRendered string // for compact interactive: last full rendered msg (with ANSI)
 	var lastStatus string   // for compact non-interactive: last stripped status (without timestamp)
@@ -582,7 +608,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			var buf strings.Builder
 			renderCheckRuns(&buf, checkRuns, buildSuiteNameMap(wfRuns), true)
 			output := buf.String()
-			if flagCIAgent {
+			if ciAgentMode() {
 				_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
 			} else {
 				if prevLines > 0 {
@@ -616,7 +642,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			} else {
 				stripped := ui.StripANSI(statusMsg)
 				if stripped != lastStatus {
-					if flagCIAgent {
+					if ciAgentMode() {
 						_, _ = fmt.Fprintf(os.Stdout, "[%s] %s\n", ts, stripped)
 					} else {
 						fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
@@ -635,14 +661,14 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		clearLine()
 		summary := checkRunSummary(checkRuns)
 		if anyFailed {
-			if flagCIAgent {
+			if ciAgentMode() {
 				_, _ = fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
 			} else {
 				ui.Error(summary)
 			}
 			return fmt.Errorf("CI checks failed")
 		}
-		if flagCIAgent {
+		if ciAgentMode() {
 			_, _ = fmt.Fprintln(os.Stdout, ui.StripANSI(summary))
 		} else {
 			ui.Success(summary)
@@ -966,7 +992,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(runs) == 0 {
-		printCIInfo(flagCILogsAgent, "No CI runs found for this commit.")
+		printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
 		return nil
 	}
 
@@ -1010,7 +1036,7 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(allJobs) == 0 {
-		printCIInfo(flagCILogsAgent, "No completed CI jobs found for this commit.")
+		printCIInfo(ciAgentMode(), "No completed CI jobs found for this commit.")
 		return nil
 	}
 
@@ -1041,9 +1067,9 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 
 	if len(targetJobs) == 0 {
 		if flagCILogsJob != "" {
-			printCIInfof(flagCILogsAgent, "No jobs matching '%s'.", flagCILogsJob)
+			printCIInfof(ciAgentMode(), "No jobs matching '%s'.", flagCILogsJob)
 		} else {
-			printCISuccess(flagCILogsAgent, "No failed jobs.")
+			printCISuccess(ciAgentMode(), "No failed jobs.")
 		}
 		return nil
 	}
@@ -1134,7 +1160,7 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 	for i, entry := range targetJobs {
 		label := entry.RunName + " / " + entry.Job.Name
-		if flagCILogsAgent {
+		if ciAgentMode() {
 			_, _ = fmt.Fprintf(os.Stdout, "## %s\n", label)
 		} else {
 			fmt.Fprintln(os.Stderr, logSeparator(label))
@@ -1152,30 +1178,30 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 		}
 
 		processed := processLogLines(logs, flagCILogsTimestamps, lines)
-		if flagCILogsAgent {
+		if ciAgentMode() {
 			for i := range processed {
 				processed[i] = ui.StripANSI(processed[i])
 			}
 		}
 		if lines > 0 && len(processed) == lines {
-			if flagCILogsAgent {
+			if ciAgentMode() {
 				_, _ = fmt.Fprintf(os.Stdout, "(last %d lines)\n", lines)
 			} else {
 				fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
 			}
 		}
-		if flagCILogsAgent {
+		if ciAgentMode() {
 			_, _ = fmt.Fprintln(os.Stdout, strings.Join(processed, "\n"))
 		} else {
 			fmt.Fprintln(os.Stderr, strings.Join(processed, "\n"))
 		}
 
-		if !flagCILogsAgent && i < len(targetJobs)-1 {
+		if !ciAgentMode() && i < len(targetJobs)-1 {
 			fmt.Fprintln(os.Stderr)
 		}
 	}
 
-	if flagCILogsAgent {
+	if ciAgentMode() {
 		return nil
 	}
 
@@ -1273,7 +1299,7 @@ func runCIRerun(cmd *cobra.Command, args []string) error {
 		runs = fetched
 	}
 	if len(runs) == 0 {
-		printCIInfo(flagCIRerunAgent, "No CI runs found for this commit.")
+		printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
 		return nil
 	}
 	runs = latestRunsPerWorkflow(runs)
@@ -1286,11 +1312,11 @@ func runCIRerun(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(completedRuns) == 0 {
-		printCIInfo(flagCIRerunAgent, "No completed CI runs to re-run.")
+		printCIInfo(ciAgentMode(), "No completed CI runs to re-run.")
 		return nil
 	}
 
-	agent := flagCIRerunAgent
+	agent := ciAgentMode()
 
 	// Interactive mode: --pick without --job shows a job picker, analogous
 	// to 'utpr ci logs' interactive mode.
@@ -1383,7 +1409,7 @@ func runCIRerunInteractive(ownerRepo string, runs []gh.WorkflowRun, agent bool) 
 
 // rerunSelection holds the result of the interactive job picker.
 type rerunSelection struct {
-	mode    string    // "failed", "all", or "specific"
+	mode    string     // "failed", "all", or "specific"
 	targets []jobEntry // for "specific" mode
 }
 
