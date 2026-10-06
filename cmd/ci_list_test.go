@@ -414,15 +414,128 @@ func TestCIListFlagsRegistered(t *testing.T) {
 	}
 }
 
-func TestCIListAgentFlagTriggersAgentMode(t *testing.T) {
-	restoreTTY := ui.SetTTYFuncs(func() bool { return true }, func() bool { return true })
-	oldAgent, oldPretty := flagCIListAgent, flagCIListPretty
-	flagCIListAgent, flagCIListPretty = true, false
-	t.Cleanup(func() {
-		restoreTTY()
-		flagCIListAgent, flagCIListPretty = oldAgent, oldPretty
+func TestCIListAgentAndPrettyFlags(t *testing.T) {
+	t.Run("--agent forces agent mode on a TTY", func(t *testing.T) {
+		restoreTTY := ui.SetTTYFuncs(func() bool { return true }, func() bool { return true })
+		oldAgent, oldPretty := flagCIListAgent, flagCIPretty
+		flagCIListAgent, flagCIPretty = true, false
+		t.Cleanup(func() {
+			restoreTTY()
+			flagCIListAgent, flagCIPretty = oldAgent, oldPretty
+		})
+		if !ciAgentMode() {
+			t.Error("ciAgentMode() = false with flagCIListAgent set, want true")
+		}
 	})
-	if !ciAgentMode() {
-		t.Error("ciAgentMode() = false with flagCIListAgent set, want true")
+
+	t.Run("--pretty forces styled output when piped", func(t *testing.T) {
+		restoreTTY := ui.SetTTYFuncs(func() bool { return false }, func() bool { return false })
+		oldAgent, oldPretty := flagCIListAgent, flagCIPretty
+		flagCIListAgent, flagCIPretty = false, true
+		t.Cleanup(func() {
+			restoreTTY()
+			flagCIListAgent, flagCIPretty = oldAgent, oldPretty
+		})
+		if ciAgentMode() {
+			t.Error("ciAgentMode() = true with --pretty on piped stdout, want false")
+		}
+	})
+}
+
+func TestWatchCIListNegativePRCache(t *testing.T) {
+	// A run whose SHA has no open PR must not trigger a refetch on every poll.
+	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
+	doneA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
+
+	withCIListFlags(t, false, true)
+	calls := withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun {
+			if call <= 3 {
+				return []gh.WorkflowRun{runA}
+			}
+			return nil
+		},
+		func() []gh.WorkflowRun { return []gh.WorkflowRun{doneA} },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "main") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	if calls.prsCalls != 1 {
+		t.Errorf("PRs fetched %d times for a PR-less run, want 1", calls.prsCalls)
+	}
+	if !strings.Contains(out, "—") {
+		t.Errorf("frame missing unassociated PR placeholder in:\n%s", out)
+	}
+}
+
+func TestWatchCIListUnknownConclusionMarked(t *testing.T) {
+	// A watched run missing from the final recent-runs page renders as
+	// unknown, not as still running.
+	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
+
+	withCIListFlags(t, false, true)
+	withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun {
+			if call == 1 {
+				return []gh.WorkflowRun{runA}
+			}
+			return nil
+		},
+		func() []gh.WorkflowRun { return nil },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "main") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	// Only the final frame (after the last blank-line separator) must be
+	// free of running icons; the initial frame legitimately shows one.
+	parts := strings.Split(out, "\n\n")
+	final := parts[len(parts)-1]
+	if strings.Contains(final, "…") {
+		t.Errorf("final frame shows a running icon for an unknown conclusion:\n%s", out)
+	}
+	if !strings.Contains(final, "?") {
+		t.Errorf("final frame missing unknown-conclusion icon:\n%s", out)
+	}
+	if !strings.Contains(final, "—") {
+		t.Errorf("final frame missing unknown-duration placeholder:\n%s", out)
+	}
+}
+
+func TestWatchCIListFramesSeparatedWhenPiped(t *testing.T) {
+	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
+	runB := ciListTestRun(6, "ci/lint", "main", "fedcba0987654321", "in_progress", "", "2026-10-06T11:57:00Z", "")
+	doneA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "completed", "success", "2026-10-06T11:00:00Z", "2026-10-06T11:02:00Z")
+	doneB := ciListTestRun(6, "ci/lint", "main", "fedcba0987654321", "completed", "failure", "2026-10-06T11:00:00Z", "2026-10-06T11:01:00Z")
+
+	withCIListFlags(t, false, true)
+	withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun {
+			switch call {
+			case 1:
+				return []gh.WorkflowRun{runA}
+			case 2:
+				return []gh.WorkflowRun{runA, runB}
+			default:
+				return nil
+			}
+		},
+		func() []gh.WorkflowRun { return []gh.WorkflowRun{doneA, doneB} },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "main") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	// Three frames (initial, after ci/lint appears, final) need two
+	// blank-line separators between them.
+	if got := strings.Count(out, "\n\n"); got < 2 {
+		t.Errorf("found %d blank-line separators, want 2, in:\n%s", got, out)
 	}
 }

@@ -932,16 +932,30 @@ func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun,
 
 // ListRunningWorkflowRuns returns the in-progress and queued workflow runs,
 // in-progress runs first. An empty branch lists runs for the whole repository.
-// Each status is fetched with a separate paginated server-side filter, so the
-// result cannot be truncated by a single page.
+// Queued runs are queried first, so a run that starts mid-fetch is seen at
+// least once instead of falling between the two responses. Each status is
+// fetched with a separate paginated server-side filter, so the result cannot
+// be truncated by a single page.
 func ListRunningWorkflowRuns(ownerRepo, branch string) ([]WorkflowRun, error) {
-	var all []WorkflowRun
-	for _, status := range []string{"in_progress", "queued"} {
-		runs, err := listWorkflowRunsByStatus(ownerRepo, branch, status)
-		if err != nil {
-			return nil, err
+	queued, err := listWorkflowRunsByStatus(ownerRepo, branch, "queued")
+	if err != nil {
+		return nil, err
+	}
+	inProgress, err := listWorkflowRunsByStatus(ownerRepo, branch, "in_progress")
+	if err != nil {
+		return nil, err
+	}
+	// A run that moved queued -> in_progress between the two queries can
+	// appear in both responses; dedupe by ID, in-progress view wins.
+	all := inProgress
+	ids := make(map[int64]bool, len(inProgress))
+	for _, r := range inProgress {
+		ids[r.ID] = true
+	}
+	for _, r := range queued {
+		if !ids[r.ID] {
+			all = append(all, r)
 		}
-		all = append(all, runs...)
 	}
 	return all, nil
 }

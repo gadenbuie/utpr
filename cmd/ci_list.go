@@ -33,10 +33,9 @@ the queue drains ('utpr ci --wait' remains the pass/fail gate).`,
 }
 
 var (
-	flagCIListAll    bool
-	flagCIListWatch  bool
-	flagCIListAgent  bool
-	flagCIListPretty bool
+	flagCIListAll   bool
+	flagCIListWatch bool
+	flagCIListAgent bool
 )
 
 // GitHub API and git seams for the list view, kept as package-level vars
@@ -53,7 +52,7 @@ func init() {
 	ciListCmd.Flags().BoolVar(&flagCIListAll, "all", false, "List running runs for the whole repository, not just the current branch")
 	ciListCmd.Flags().BoolVar(&flagCIListWatch, "watch", false, "Poll until no runs are running or queued; the final view shows each conclusion")
 	ciListCmd.Flags().BoolVar(&flagCIListAgent, "agent", false, "Show unstyled output for agent consumption")
-	ciListCmd.Flags().BoolVar(&flagCIListPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
+	ciListCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 	ciCmd.AddCommand(ciListCmd)
 }
 
@@ -328,11 +327,15 @@ func watchCIList(ownerRepo, branch string) error {
 	var prevLines int    // interactive: rows of the previous frame
 	var lastState string // piped: state key of the last printed frame
 	prBySHA := map[string]gh.PRInfo{}
+	prKnown := map[string]bool{} // SHAs already looked up, with or without a PR
 	seenOrder := []int64{}
 	seen := map[int64]gh.WorkflowRun{}
 
-	printFrame := func(frame ciListFrame) {
+	printFrame := func(frame ciListFrame, leadingBlank bool) {
 		if agent {
+			if leadingBlank {
+				_, _ = fmt.Fprintln(os.Stdout)
+			}
 			_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(frame.content))
 			return
 		}
@@ -343,6 +346,9 @@ func watchCIList(ownerRepo, branch string) error {
 			_, _ = fmt.Fprint(os.Stderr, frame.content)
 			prevLines = countTerminalRows(frame.content, ui.GetTermWidth())
 			return
+		}
+		if leadingBlank {
+			_, _ = fmt.Fprintln(os.Stderr)
 		}
 		_, _ = fmt.Fprint(os.Stderr, frame.content)
 	}
@@ -359,17 +365,25 @@ func watchCIList(ownerRepo, branch string) error {
 			seen[r.ID] = r
 		}
 
-		// Refresh the PR cache only when a run's SHA is not covered yet.
+		// Refresh the PR cache only when a run's SHA has never been looked
+		// up; SHAs covered by a previous fetch keep their answer (including
+		// "no PR") across polls.
 		missing := false
 		for _, r := range runs {
-			if _, ok := prBySHA[r.HeadSHA]; !ok {
+			if !prKnown[r.HeadSHA] {
 				missing = true
 				break
 			}
 		}
 		if missing {
 			if fetched, ferr := ciListFetchPRs(ownerRepo); ferr == nil {
-				prBySHA = fetched
+				for sha, pr := range fetched {
+					prBySHA[sha] = pr
+					prKnown[sha] = true
+				}
+				for _, r := range runs {
+					prKnown[r.HeadSHA] = true
+				}
 			}
 		}
 
@@ -381,18 +395,18 @@ func watchCIList(ownerRepo, branch string) error {
 			}
 			finalRuns := ciListConcludedRuns(ownerRepo, branch, seenOrder, seen)
 			frame := renderCIListFrame(finalRuns, prBySHA, flagCIListAll, time.Now(), true)
-			printFrame(frame)
+			printFrame(frame, lastState != "")
 			return nil
 		}
 
 		frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now(), false)
 		if agent || !interactive {
 			if frame.state != lastState {
-				printFrame(frame)
+				printFrame(frame, lastState != "")
 				lastState = frame.state
 			}
 		} else {
-			printFrame(frame)
+			printFrame(frame, false)
 		}
 		time.Sleep(ciPollInterval)
 	}
@@ -400,7 +414,8 @@ func watchCIList(ownerRepo, branch string) error {
 
 // ciListConcludedRuns returns the watched runs, ordered first appearance,
 // with their final status and conclusion. Conclusions come from one recent
-// runs fetch; a watched run missing from it keeps its last seen state.
+// runs fetch; a watched run missing from it is marked completed with an
+// unknown conclusion rather than shown as still running.
 func ciListConcludedRuns(ownerRepo, branch string, seenOrder []int64, seen map[int64]gh.WorkflowRun) []gh.WorkflowRun {
 	concluded := seen
 	if recent, err := ghListRecentWorkflowRuns(ownerRepo, branch, 100); err == nil {
@@ -412,11 +427,16 @@ func ciListConcludedRuns(ownerRepo, branch string, seenOrder []int64, seen map[i
 	}
 	runs := make([]gh.WorkflowRun, 0, len(seenOrder))
 	for _, id := range seenOrder {
-		r := seen[id]
-		if final, ok := concluded[id]; ok {
-			r = final
+		final, ok := concluded[id]
+		if !ok {
+			// The run finished but its conclusion is unavailable;
+			// render it as unknown, not as still running.
+			final = seen[id]
+			final.Status = "completed"
+			final.Conclusion = ""
+			final.UpdatedAt = ""
 		}
-		runs = append(runs, r)
+		runs = append(runs, final)
 	}
 	return runs
 }
