@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/spf13/pflag"
 	"strings"
 	"testing"
 	"time"
@@ -256,5 +257,23 @@ func TestCILogsFullFlag(t *testing.T) {
 	}
 	if !strings.Contains(ciLogsCmd.Long, "--full") {
 		t.Errorf("ci logs long help should document --full, got %q", ciLogsCmd.Long)
+	}
+}
+
+func TestCIMaxBytesFlagDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag *pflag.Flag
+	}{
+		{name: "ci", flag: ciCmd.Flags().Lookup("max-bytes")},
+		{name: "ci logs", flag: ciLogsCmd.Flags().Lookup("max-bytes")},
+	} {
+		if tc.flag == nil {
+			t.Errorf("%s command is missing the --max-bytes flag", tc.name)
+			continue
+		}
+		if tc.flag.DefValue != "-1" {
+			t.Errorf("%s --max-bytes default = %s, want -1 (use default cap)", tc.name, tc.flag.DefValue)
+		}
 	}
 }
