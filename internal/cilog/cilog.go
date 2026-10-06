@@ -25,6 +25,8 @@ const (
 type Selection struct {
 	Lines []string
 	Mode  Mode
+	// Dropped reports that post-job steps were omitted from Lines.
+	Dropped bool
 }
 
 var timestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
@@ -52,13 +54,13 @@ func Select(lines []string, n int) Selection {
 		return Selection{Lines: lines[len(lines)-n:], Mode: ModeTail}
 	}
 
-	kept := dropPostSteps(lines, landmarks)
+	kept, dropped := dropPostSteps(lines, landmarks)
 	if len(kept) <= n {
-		return Selection{Lines: kept, Mode: ModeFull}
+		return Selection{Lines: kept, Mode: ModeFull, Dropped: dropped}
 	}
 
 	window := windowAround(kept, findLandmarks(kept), n)
-	return Selection{Lines: window, Mode: ModeLandmark}
+	return Selection{Lines: window, Mode: ModeLandmark, Dropped: dropped}
 }
 
 // findLandmarks returns the sorted indices of lines that mark failures:
@@ -75,7 +77,23 @@ func findLandmarks(lines []string) []int {
 }
 
 func content(line string) string {
-	return timestampRe.ReplaceAllString(line, "")
+	return StripTimestamp(line)
+}
+
+// SplitTimestamp splits the GitHub Actions RFC3339 timestamp prefix from
+// the line content. ok is false when the line has no timestamp prefix.
+func SplitTimestamp(line string) (ts, rest string, ok bool) {
+	loc := timestampRe.FindStringIndex(line)
+	if loc == nil {
+		return "", line, false
+	}
+	return line[:loc[1]-1], line[loc[1]:], true
+}
+
+// StripTimestamp removes the GitHub Actions timestamp prefix from line.
+func StripTimestamp(line string) string {
+	_, rest, _ := SplitTimestamp(line)
+	return rest
 }
 
 type stepGroup struct {
@@ -119,7 +137,7 @@ func isPostStepName(name string) bool {
 
 // dropPostSteps removes post-job step groups that start after the last
 // landmark. Groups that might still hold failure context are kept.
-func dropPostSteps(lines []string, landmarks []int) []string {
+func dropPostSteps(lines []string, landmarks []int) ([]string, bool) {
 	last := landmarks[len(landmarks)-1]
 	keep := make([]bool, len(lines))
 	for i := range keep {
@@ -135,7 +153,7 @@ func dropPostSteps(lines []string, landmarks []int) []string {
 		}
 	}
 	if !dropped {
-		return lines
+		return lines, false
 	}
 	out := make([]string, 0, len(lines))
 	for i, line := range lines {
@@ -143,7 +161,7 @@ func dropPostSteps(lines []string, landmarks []int) []string {
 			out = append(out, line)
 		}
 	}
-	return out
+	return out, true
 }
 
 // windowAround picks at most n consecutive lines anchored on landmarks:
@@ -168,7 +186,12 @@ func windowAround(lines []string, landmarks []int, n int) []string {
 		}
 	}
 	if len(spans) == 1 && spans[0].end-spans[0].start <= n {
-		return lines[spans[0].start:spans[0].end]
+		// A span cut short by either end of the log would show far fewer
+		// than n lines; shift it to use the full budget.
+		s := min(spans[0].start, len(lines)-n)
+		s = max(s, spans[0].end-n)
+		s = max(s, 0)
+		return lines[s : s+n]
 	}
 
 	// Landmarks span more than n lines: keep the densest window.

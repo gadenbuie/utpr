@@ -275,3 +275,47 @@ func TestWindowAroundGivesLeadingContext(t *testing.T) {
 		t.Errorf("windowAround() window missing the landmark line")
 	}
 }
+
+func TestSelectWindowUsesFullBudgetAtLogEnd(t *testing.T) {
+	// A Go/JS-style failure: the only landmark is the trailing ##[error]
+	// annotation, so the window must extend backwards to fill the budget
+	// instead of stopping at the end of the log.
+	lines := []string{ts("##[group]Run go test"), ts("##[endgroup]")}
+	for i := 0; i < 198; i++ {
+		lines = append(lines, ts(fmt.Sprintf("test output %d", i)))
+	}
+	lines = append(lines, ts("##[error]Process completed with exit code 1."))
+
+	sel := Select(lines, 100)
+	if sel.Mode != ModeLandmark {
+		t.Fatalf("Select() mode = %v, want ModeLandmark", sel.Mode)
+	}
+	if len(sel.Lines) != 100 {
+		t.Errorf("Select() returned %d lines, want the full 100-line budget", len(sel.Lines))
+	}
+	if !containsLine(sel.Lines, "test output 105") {
+		t.Errorf("Select() window missing failure context above the annotation")
+	}
+}
+
+func TestSelectReportsDroppedPostSteps(t *testing.T) {
+	// Dropping post-job steps brings this log within n lines: the caller
+	// must be told lines were omitted even though the mode is ModeFull.
+	lines := testthatFailureLog(60)
+
+	sel := Select(lines, 200)
+	if sel.Mode != ModeFull {
+		t.Fatalf("Select() mode = %v, want ModeFull", sel.Mode)
+	}
+	if !sel.Dropped {
+		t.Error("Select() Dropped = false, want true after post-job steps were omitted")
+	}
+	if containsLine(sel.Lines, "Cleaning up") {
+		t.Error("Select() includes post-job lines")
+	}
+
+	sel = Select(testthatFailureLog(3), 200)
+	if sel.Dropped {
+		t.Error("Select() Dropped = true for a log that fits without filtering, want false")
+	}
+}

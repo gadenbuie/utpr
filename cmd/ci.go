@@ -901,27 +901,23 @@ func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showT
 
 // --- ci logs ---
 
-var actionsTimestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
-
-func processLogLines(raw string, showTimestamps bool, n int) ([]string, cilog.Mode) {
+func processLogLines(raw string, showTimestamps bool, n int) ([]string, cilog.Selection) {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 	sel := cilog.Select(lines, n)
 
 	processed := make([]string, 0, len(sel.Lines))
 	for _, line := range sel.Lines {
 		if showTimestamps {
-			loc := actionsTimestampRe.FindStringIndex(line)
-			if loc != nil {
-				ts := ui.StyleMuted.Render(line[:loc[1]-1])
-				processed = append(processed, ts+" "+line[loc[1]:])
+			if ts, rest, ok := cilog.SplitTimestamp(line); ok {
+				processed = append(processed, ui.StyleMuted.Render(ts)+" "+rest)
 			} else {
 				processed = append(processed, line)
 			}
 		} else {
-			processed = append(processed, actionsTimestampRe.ReplaceAllString(line, ""))
+			processed = append(processed, cilog.StripTimestamp(line))
 		}
 	}
-	return processed, sel.Mode
+	return processed, sel
 }
 
 func logSeparator(label string) string {
@@ -1154,9 +1150,9 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 	linesSelect := huh.NewSelect[int]().
 		Title("How many lines to show per job?").
 		Options(
-			huh.NewOption("Last 50 lines", 50),
-			huh.NewOption("Last 100 lines", 100),
-			huh.NewOption("Last 200 lines", 200),
+			huh.NewOption("50 lines", 50),
+			huh.NewOption("100 lines", 100),
+			huh.NewOption("200 lines", 200),
 			huh.NewOption("All lines", 0),
 		).
 		Value(&linesChoice).
@@ -1207,18 +1203,22 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 			continue
 		}
 
-		processed, mode := processLogLines(logs, flagCILogsTimestamps, lines)
+		processed, sel := processLogLines(logs, flagCILogsTimestamps, lines)
 		if ciAgentMode() {
 			for i := range processed {
 				processed[i] = ui.StripANSI(processed[i])
 			}
 		}
 		var note string
-		switch mode {
+		switch sel.Mode {
 		case cilog.ModeTail:
 			note = fmt.Sprintf("(last %d lines)", len(processed))
 		case cilog.ModeLandmark:
 			note = fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(processed))
+		case cilog.ModeFull:
+			if sel.Dropped {
+				note = "(post-job steps omitted; use --full for the complete log)"
+			}
 		}
 		if note != "" {
 			if ciAgentMode() {
