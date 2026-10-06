@@ -222,6 +222,16 @@ utpr ci logs --job "test"
 
 # Show the complete log, including post-job steps
 utpr ci logs --full
+
+# Extract only lines matching a pattern (case-insensitive), with context
+utpr ci logs --failed --grep "Failed tests" -B 5
+
+# Wider context around each match; -A/--after adds trailing context
+utpr ci logs --grep "Error:" -B 3 -A 3
+
+# Grep runs on the complete log, then the line cap applies to the result
+# (--full removes the cap)
+utpr ci logs --grep "Failed tests" --full
 ```
 
 ### Keeping a clean repo

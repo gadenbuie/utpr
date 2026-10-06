@@ -2,6 +2,8 @@ package cilog
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -273,5 +275,62 @@ func TestWindowAroundGivesLeadingContext(t *testing.T) {
 	}
 	if !containsLine(got, "##[error]boom") {
 		t.Errorf("windowAround() window missing the landmark line")
+	}
+}
+
+func TestGrepMatchesOnContent(t *testing.T) {
+	lines := []string{
+		ts("line one"),
+		ts("Failed tests: something"),
+		ts("line three"),
+	}
+
+	got, matched := Grep(lines, regexp.MustCompile(`(?i)failed`), 0, 0)
+	if matched != 1 {
+		t.Fatalf("Grep() matched %d lines, want 1", matched)
+	}
+	if len(got) != 1 || got[0] != lines[1] {
+		t.Errorf("Grep() = %q, want the original line %q", got, lines[1])
+	}
+}
+
+func TestGrepContextAndOverlap(t *testing.T) {
+	lines := []string{"a", "b", "c", "hit1", "e", "f", "hit2", "h", "i"}
+	got, matched := Grep(lines, regexp.MustCompile(`hit`), 2, 1)
+	if matched != 2 {
+		t.Fatalf("Grep() matched %d lines, want 2", matched)
+	}
+	want := []string{"b", "c", "hit1", "e", "f", "hit2", "h"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Grep() = %q, want %q", got, want)
+	}
+}
+
+func TestGrepContextClampedAtEdges(t *testing.T) {
+	lines := []string{"hit", "b", "c"}
+	got, matched := Grep(lines, regexp.MustCompile(`hit`), 5, 5)
+	if matched != 1 {
+		t.Fatalf("Grep() matched %d lines, want 1", matched)
+	}
+	if len(got) != 3 {
+		t.Errorf("Grep() returned %d lines, want all 3", len(got))
+	}
+}
+
+func TestGrepNoMatch(t *testing.T) {
+	got, matched := Grep([]string{"a", "b"}, regexp.MustCompile(`zzz`), 1, 1)
+	if matched != 0 || got != nil {
+		t.Errorf("Grep() = (%q, %d), want (nil, 0)", got, matched)
+	}
+	if got, matched := Grep(nil, regexp.MustCompile(`x`), 0, 0); got != nil || matched != 0 {
+		t.Errorf("Grep(nil) = (%q, %d), want (nil, 0)", got, matched)
+	}
+}
+
+func TestGrepNegativeContext(t *testing.T) {
+	lines := []string{"a", "hit", "b"}
+	got, _ := Grep(lines, regexp.MustCompile(`hit`), -1, -1)
+	if len(got) != 1 {
+		t.Errorf("Grep() with negative context returned %d lines, want 1", len(got))
 	}
 }
