@@ -842,9 +842,12 @@ type WorkflowRun struct {
 	Conclusion   string `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, startup_failure
 	HTMLURL      string `json:"html_url"`
 	HeadSHA      string `json:"head_sha"`
+	HeadBranch   string `json:"head_branch"`
 	Event        string `json:"event"`
 	RunNumber    int    `json:"run_number"`
 	CreatedAt    string `json:"created_at"`
+	RunStartedAt string `json:"run_started_at"`
+	UpdatedAt    string `json:"updated_at"`
 	CheckSuiteID int64  `json:"check_suite_id"`
 }
 
@@ -896,8 +899,95 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 }
 
 // ListWorkflowRunsForBranch returns the most recent workflow runs for a branch,
-// newest first, up to limit. Fetches a single page (no pagination).
+// newest first, up to limit.
 func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
+	runs, _, err := ListRecentWorkflowRuns(ownerRepo, branch, limit)
+	return runs, err
+}
+
+// ListRecentWorkflowRuns returns the most recent workflow runs, newest first,
+// up to limit, following pagination so limits above GitHub's 100-per-page cap
+// still return the full count; total is the number of runs matching the query
+// regardless of limit. An empty branch lists runs for the whole repository.
+func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun, int, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, 0, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?per_page=%d",
+		url.PathEscape(owner), url.PathEscape(repo), min(limit, 100))
+	if branch != "" {
+		path += "&branch=" + url.QueryEscape(branch)
+	}
+	var all []WorkflowRun
+	total := 0
+	for path != "" {
+		var response struct {
+			TotalCount   int            `json:"total_count"`
+			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, 0, fmt.Errorf("failed to get workflow runs: %w", reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, 0, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, 0, jsonErr
+		}
+		if response.TotalCount > 0 {
+			total = response.TotalCount
+		}
+		all = append(all, response.WorkflowRuns...)
+		if len(all) >= limit {
+			break
+		}
+		path = parseNextLink(resp.Header.Get("Link"))
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
+// ListRunningWorkflowRuns returns the in-progress and queued workflow runs,
+// in-progress runs first. An empty branch lists runs for the whole repository.
+// Queued runs are queried first, so a run that starts mid-fetch is seen at
+// least once instead of falling between the two responses. Each status is
+// fetched with a separate paginated server-side filter, so the result cannot
+// be truncated by a single page.
+func ListRunningWorkflowRuns(ownerRepo, branch string) ([]WorkflowRun, error) {
+	queued, err := listWorkflowRunsByStatus(ownerRepo, branch, "queued")
+	if err != nil {
+		return nil, err
+	}
+	inProgress, err := listWorkflowRunsByStatus(ownerRepo, branch, "in_progress")
+	if err != nil {
+		return nil, err
+	}
+	// A run that moved queued -> in_progress between the two queries can
+	// appear in both responses; dedupe by ID, in-progress view wins.
+	all := inProgress
+	ids := make(map[int64]bool, len(inProgress))
+	for _, r := range inProgress {
+		ids[r.ID] = true
+	}
+	for _, r := range queued {
+		if !ids[r.ID] {
+			all = append(all, r)
+		}
+	}
+	return all, nil
+}
+
+func listWorkflowRunsByStatus(ownerRepo, branch, status string) ([]WorkflowRun, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
 		return nil, err
@@ -906,15 +996,32 @@ func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowR
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var response struct {
-		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+	var all []WorkflowRun
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?per_page=100&status=%s",
+		url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(status))
+	if branch != "" {
+		path += "&branch=" + url.QueryEscape(branch)
 	}
-	path := fmt.Sprintf("repos/%s/%s/actions/runs?branch=%s&per_page=%d",
-		url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(branch), limit)
-	if err := client.Get(path, &response); err != nil {
-		return nil, fmt.Errorf("failed to get workflow runs for branch %s: %w", branch, err)
+	for path != "" {
+		var response struct {
+			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get workflow runs with status %s: %w", status, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.WorkflowRuns...)
+		path = parseNextLink(resp.Header.Get("Link"))
 	}
-	return response.WorkflowRuns, nil
+	return all, nil
 }
 
 // ListWorkflowRunJobs returns the jobs for a workflow run, following pagination.
