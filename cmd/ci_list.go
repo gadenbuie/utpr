@@ -19,13 +19,16 @@ import (
 var ciListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List recent GitHub Actions runs",
-	Long: `List the most recent GitHub Actions runs, any status.
+	Long: `List the most recent GitHub Actions runs, any status, grouped by
+commit so jobs from the same push appear together.
 
-Shows the most recent workflow runs (any status) for the current
-branch, up to --limit (default 10); --all lists recent runs for the
-whole repository. Each row shows the workflow, branch (--all only),
-short commit SHA, associated PR, and either elapsed time (in-flight)
-or total duration (completed).
+By default runs for the current branch are shown, up to --limit
+(default 10); --all lists recent runs for the whole repository. Groups
+touched by the limit window are always shown complete. Each group
+heading shows the short SHA, the branch (unless a status heading
+already states it), the associated PR, and when the group started;
+each row shows the workflow and either elapsed time (in-flight) or
+total duration (completed).
 
 Use --watch to poll until no runs are running or queued; the final view
 shows each run's conclusion. --watch is a status view and exits 0 when
@@ -43,7 +46,8 @@ var (
 )
 
 // GitHub API and git seams for the list view, kept as package-level vars
-// so tests can swap in fakes.
+// so tests can swap in fakes. Group completion reuses the per-SHA seam
+// from ci_reasons.go (ghListWorkflowRunsForSHA).
 var (
 	ghListRunningWorkflowRuns = gh.ListRunningWorkflowRuns
 	ghListRecentWorkflowRuns  = gh.ListRecentWorkflowRuns
@@ -105,18 +109,35 @@ func runCIList(cmd *cobra.Command, args []string) error {
 		return ui.Dief("--limit must be at least 1")
 	}
 
-	runs, rerr := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
-		return ghListRecentWorkflowRuns(ownerRepo, branch, flagCIListLimit)
-	})
-	if rerr != nil {
-		return ui.Dief("Could not fetch CI runs: %v", rerr)
+	type ciListData struct {
+		groups []ciListGroup
+		total  int
 	}
-	if len(runs) == 0 {
+	data, derr := spinCIWithResult("Fetching CI runs...", func() (ciListData, error) {
+		window, total, err := ghListRecentWorkflowRuns(ownerRepo, branch, flagCIListLimit)
+		if err != nil {
+			return ciListData{}, err
+		}
+		return ciListData{groups: completeCIListGroups(ownerRepo, window), total: total}, nil
+	})
+	if derr != nil {
+		return ui.Dief("Could not fetch CI runs: %v", derr)
+	}
+	if len(data.groups) == 0 {
 		printCIInfo(ciAgentMode(), ciListEmptyMessage(ownerRepo, branch))
 		return nil
 	}
 	prBySHA, _ := ciListFetchPRs(ownerRepo) // best-effort
-	frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now())
+
+	shown := 0
+	for _, g := range data.groups {
+		shown += len(g.runs)
+	}
+
+	// The status heading appears on feature branches only; on the default
+	// branch and with --all the group headings carry the branch instead.
+	topHeading := ciListTopHeading(cfg, branch, data.total, shown)
+	frame := renderCIListGroups(data.groups, prBySHA, topHeading == "", topHeading, time.Now())
 	ciListPrintFrame(frame)
 	return nil
 }
@@ -136,6 +157,28 @@ func ciWatchEmptyMessage(ownerRepo, branch string) string {
 		return fmt.Sprintf("No running CI runs in %s.", ownerRepo)
 	}
 	return fmt.Sprintf("No running CI runs on branch '%s'.", branch)
+}
+
+// ciListTopHeading returns the feature-branch status heading stating the
+// branch and the total number of its runs; empty on the default branch
+// and with --all, where group headings carry the branch instead.
+func ciListTopHeading(cfg *remote.Config, branch string, total, shown int) string {
+	if branch == "" || branch == cfg.DefaultBranch {
+		return ""
+	}
+	label := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("branch '%s'", branch))
+	count := fmt.Sprintf("%d %s", total, pluralRuns(total))
+	if total == shown {
+		return label + " " + ui.StyleMuted.Render("— "+count)
+	}
+	return label + " " + ui.StyleMuted.Render(fmt.Sprintf("— %s, showing latest %d", count, shown))
+}
+
+func pluralRuns(n int) string {
+	if n == 1 {
+		return "run"
+	}
+	return "runs"
 }
 
 // ciListFetchPRs fetches open PRs once and indexes them by head SHA, so
@@ -159,83 +202,154 @@ type ciListFrame struct {
 	state   string
 }
 
-// renderCIListFrame renders the table for runs. includeBranch adds the
-// branch column (repo-wide --all mode). Completed rows show their total
-// duration; in-flight rows show elapsed time as of now.
-func renderCIListFrame(runs []gh.WorkflowRun, prBySHA map[string]gh.PRInfo, includeBranch bool, now time.Time) ciListFrame {
-	type row struct {
-		icon      string
-		workflow  string
-		branch    string
-		sha       string
-		pr        string
-		elapsed   string
-		statePart string
+// ciListGroup is the set of workflow runs for one commit, newest first.
+type ciListGroup struct {
+	sha  string
+	runs []gh.WorkflowRun
+}
+
+// branch returns the group's branch name from its newest run.
+func (g ciListGroup) branch() string {
+	for _, r := range g.runs {
+		if r.HeadBranch != "" {
+			return r.HeadBranch
+		}
 	}
-	rows := make([]row, 0, len(runs))
+	return ""
+}
+
+// startedAt returns the group's earliest run start time.
+func (g ciListGroup) startedAt() (time.Time, bool) {
+	var best time.Time
+	found := false
+	for _, r := range g.runs {
+		if t, ok := ciListRunStart(r); ok && (!found || t.Before(best)) {
+			best = t
+			found = true
+		}
+	}
+	return best, found
+}
+
+// groupRunsBySHA groups runs by head SHA in order of first appearance.
+func groupRunsBySHA(runs []gh.WorkflowRun) []ciListGroup {
+	var groups []ciListGroup
+	idx := map[string]int{}
 	for _, r := range runs {
-		prLabel := "—"
-		if pr, ok := prBySHA[r.HeadSHA]; ok {
-			prLabel = fmt.Sprintf("#%d %s", pr.Number, truncateRunes(pr.Title, 40))
+		if i, ok := idx[r.HeadSHA]; ok {
+			groups[i].runs = append(groups[i].runs, r)
+			continue
 		}
-		var elapsed string
-		if r.Status == "completed" {
-			elapsed = ciListRunDuration(r)
-		} else {
-			elapsed = ciListRunElapsed(r, now)
+		idx[r.HeadSHA] = len(groups)
+		groups = append(groups, ciListGroup{sha: r.HeadSHA, runs: []gh.WorkflowRun{r}})
+	}
+	return groups
+}
+
+// completeCIListGroups completes each touched group with all runs for its
+// commit, fetched per-SHA; fetch failures keep the window's runs for that
+// group (best-effort).
+func completeCIListGroups(ownerRepo string, window []gh.WorkflowRun) []ciListGroup {
+	groups := groupRunsBySHA(window)
+	for i, g := range groups {
+		if all, err := ghListWorkflowRunsForSHA(ownerRepo, g.sha); err == nil && len(all) > 0 {
+			groups[i].runs = all
 		}
-		icon := ciListRunIcon(r.Status, r.Conclusion)
-		rows = append(rows, row{
-			icon:      icon,
-			workflow:  r.Name,
-			branch:    r.HeadBranch,
-			sha:       shortSHA(r.HeadSHA),
-			pr:        prLabel,
-			elapsed:   elapsed,
-			statePart: fmt.Sprintf("%d:%s:%s", r.ID, r.Status, r.Conclusion),
-		})
+	}
+	return groups
+}
+
+// renderCIListGroups renders the grouped listing. topHeading, when
+// non-empty, is a status line above the groups; group headings include
+// the branch when includeBranchHeading. Completed rows show their total
+// duration, in-flight rows elapsed time as of now.
+func renderCIListGroups(groups []ciListGroup, prBySHA map[string]gh.PRInfo, includeBranchHeading bool, topHeading string, now time.Time) ciListFrame {
+	type row struct {
+		icon     string
+		workflow string
+		elapsed  string
+	}
+	type renderedGroup struct {
+		heading string
+		rows    []row
 	}
 
-	widths := make([]int, 6)
-	for _, r := range rows {
-		widths[0] = max(widths[0], lipgloss.Width(r.icon))
-		widths[1] = max(widths[1], lipgloss.Width(r.workflow))
-		if includeBranch {
-			widths[2] = max(widths[2], lipgloss.Width(r.branch))
-		}
-		widths[3] = max(widths[3], lipgloss.Width(r.sha))
-		widths[4] = max(widths[4], lipgloss.Width(r.pr))
-		widths[5] = max(widths[5], lipgloss.Width(r.elapsed))
-	}
-
+	widths := [3]int{}
+	rendered := make([]renderedGroup, len(groups))
 	var state strings.Builder
-	for _, r := range rows {
-		state.WriteString(r.statePart)
-		state.WriteByte(';')
+	for i, g := range groups {
+		rows := make([]row, 0, len(g.runs))
+		for _, r := range g.runs {
+			var elapsed string
+			if r.Status == "completed" {
+				elapsed = ciListRunDuration(r)
+			} else {
+				elapsed = ciListRunElapsed(r, now)
+			}
+			rw := row{icon: ciListRunIcon(r.Status, r.Conclusion), workflow: r.Name, elapsed: elapsed}
+			rows = append(rows, rw)
+			widths[0] = max(widths[0], lipgloss.Width(rw.icon))
+			widths[1] = max(widths[1], lipgloss.Width(rw.workflow))
+			widths[2] = max(widths[2], lipgloss.Width(rw.elapsed))
+			fmt.Fprintf(&state, "%s/%d:%s:%s;", g.sha, r.ID, r.Status, r.Conclusion)
+		}
+		rendered[i] = renderedGroup{
+			heading: ciListGroupHeading(g, prBySHA, includeBranchHeading),
+			rows:    rows,
+		}
 	}
 
-	var lines []string
-	for _, r := range rows {
-		pad := func(s string, w int) string {
-			if s == "" {
-				return s
-			}
-			return s + strings.Repeat(" ", w-lipgloss.Width(s))
-		}
-		cells := []string{pad(r.icon, widths[0]), pad(r.workflow, widths[1])}
-		if includeBranch {
-			cells = append(cells, pad(r.branch, widths[2]))
-		}
-		cells = append(cells, pad(r.sha, widths[3]), pad(r.pr, widths[4]), r.elapsed)
-		lines = append(lines, strings.Join(cells, "  "))
+	pad := func(s string, w int) string {
+		return s + strings.Repeat(" ", max(w-lipgloss.Width(s), 0))
 	}
 
 	var b strings.Builder
-	for _, line := range lines {
-		b.WriteString(line)
+	if topHeading != "" {
+		b.WriteString(topHeading)
+		b.WriteString("\n\n")
+	}
+	for i, g := range rendered {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(g.heading)
 		b.WriteByte('\n')
+		for _, r := range g.rows {
+			b.WriteString(pad(r.icon, widths[0]) + "  " + pad(r.workflow, widths[1]) + "  " + r.elapsed)
+			b.WriteByte('\n')
+		}
 	}
 	return ciListFrame{content: b.String(), state: state.String()}
+}
+
+// ciListGroupHeading renders a group heading: short SHA with "on <branch>"
+// when includeBranch, then the associated PR title and the group's start
+// time as a local clock time, separated by " · ".
+func ciListGroupHeading(g ciListGroup, prBySHA map[string]gh.PRInfo, includeBranch bool) string {
+	first := lipgloss.NewStyle().Bold(true).Render(shortSHA(g.sha))
+	if includeBranch {
+		if b := g.branch(); b != "" {
+			first += " " + ui.StyleMuted.Render("on " + b)
+		}
+	}
+	parts := []string{first}
+	if pr, ok := prBySHA[g.sha]; ok {
+		parts = append(parts, fmt.Sprintf("#%d %s", pr.Number, truncateRunes(pr.Title, 40)))
+	}
+	if started, ok := g.startedAt(); ok {
+		parts = append(parts, ui.StyleMuted.Render("started "+ciListStartClock(started)))
+	}
+	return strings.Join(parts, ui.StyleMuted.Render(" · "))
+}
+
+// ciListStartClock renders a start time as a local clock time, including
+// the date when it is not from today.
+func ciListStartClock(t time.Time) string {
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2 15:04")
 }
 
 // ciListRunIcon returns the row icon: … for in_progress, ○ for queued,
@@ -337,10 +451,11 @@ func ciListPrintFrame(frame ciListFrame) {
 }
 
 // watchCIList polls running runs until the queue drains, re-rendering the
-// list. Styled interactive frames overwrite in place; piped/agent frames
-// print only when the run set or a run's status/conclusion changes. The
-// final frame shows each watched run's conclusion. Exits nil when the
-// queue drains.
+// grouped view. Frames show the groups containing in-flight runs; the
+// final frame shows the complete watched groups with their conclusions.
+// Styled interactive frames overwrite in place; piped/agent frames print
+// only when the group set or a run's status/conclusion changes, separated
+// by blank lines. Exits nil when the queue drains.
 func watchCIList(ownerRepo, branch string) error {
 	agent := ciAgentMode()
 	interactive := !agent && term.IsTerminal(int(os.Stderr.Fd()))
@@ -349,8 +464,8 @@ func watchCIList(ownerRepo, branch string) error {
 	var lastState string // piped: state key of the last printed frame
 	prBySHA := map[string]gh.PRInfo{}
 	prKnown := map[string]bool{} // SHAs already looked up, with or without a PR
-	seenOrder := []int64{}
-	seen := map[int64]gh.WorkflowRun{}
+	seenOrder := []string{}      // SHA order of first appearance
+	seenBySHA := map[string][]gh.WorkflowRun{}
 
 	printFrame := func(frame ciListFrame, leadingBlank bool) {
 		if agent {
@@ -379,11 +494,25 @@ func watchCIList(ownerRepo, branch string) error {
 		if err != nil {
 			return ui.Dief("Could not fetch CI runs: %v", err)
 		}
+
+		// Remember every in-flight run seen per SHA, in first-seen order,
+		// so the final frame can show each watched run even if a per-SHA
+		// fetch misses it.
 		for _, r := range runs {
-			if _, ok := seen[r.ID]; !ok {
-				seenOrder = append(seenOrder, r.ID)
+			if _, ok := seenBySHA[r.HeadSHA]; !ok {
+				seenOrder = append(seenOrder, r.HeadSHA)
+				seenBySHA[r.HeadSHA] = nil
 			}
-			seen[r.ID] = r
+			known := false
+			for _, s := range seenBySHA[r.HeadSHA] {
+				if s.ID == r.ID {
+					known = true
+					break
+				}
+			}
+			if !known {
+				seenBySHA[r.HeadSHA] = append(seenBySHA[r.HeadSHA], r)
+			}
 		}
 
 		// Refresh the PR cache only when a run's SHA has never been looked
@@ -414,13 +543,13 @@ func watchCIList(ownerRepo, branch string) error {
 				printCIInfo(agent, ciWatchEmptyMessage(ownerRepo, branch))
 				return nil
 			}
-			finalRuns := ciListConcludedRuns(ownerRepo, branch, seenOrder, seen)
-			frame := renderCIListFrame(finalRuns, prBySHA, flagCIListAll, time.Now())
+			finalGroups := completeWatchedGroups(ownerRepo, seenOrder, seenBySHA)
+			frame := renderCIListGroups(finalGroups, prBySHA, true, "", time.Now())
 			printFrame(frame, lastState != "")
 			return nil
 		}
 
-		frame := renderCIListFrame(runs, prBySHA, flagCIListAll, time.Now())
+		frame := renderCIListGroups(groupRunsBySHA(runs), prBySHA, true, "", time.Now())
 		if agent || !interactive {
 			if frame.state != lastState {
 				printFrame(frame, lastState != "")
@@ -433,32 +562,50 @@ func watchCIList(ownerRepo, branch string) error {
 	}
 }
 
-// ciListConcludedRuns returns the watched runs, ordered first appearance,
-// with their final status and conclusion. Conclusions come from one recent
-// runs fetch; a watched run missing from it is marked completed with an
-// unknown conclusion rather than shown as still running.
-func ciListConcludedRuns(ownerRepo, branch string, seenOrder []int64, seen map[int64]gh.WorkflowRun) []gh.WorkflowRun {
-	concluded := seen
-	if recent, err := ghListRecentWorkflowRuns(ownerRepo, branch, 100); err == nil {
-		byID := make(map[int64]gh.WorkflowRun, len(recent))
-		for _, r := range recent {
-			byID[r.ID] = r
+// completeWatchedGroups returns the complete groups for the watched SHAs
+// in first-seen order, fetched per-SHA at drain; watched runs missing
+// from a fetch are marked completed with an unknown conclusion, and a
+// failed or empty fetch marks the last-seen in-flight runs unknown
+// instead of showing them as still running.
+func completeWatchedGroups(ownerRepo string, seenOrder []string, seenBySHA map[string][]gh.WorkflowRun) []ciListGroup {
+	groups := make([]ciListGroup, 0, len(seenOrder))
+	for _, sha := range seenOrder {
+		runs := seenBySHA[sha]
+		if all, err := ghListWorkflowRunsForSHA(ownerRepo, sha); err == nil && len(all) > 0 {
+			runs = appendUnknownWatchedRuns(all, seenBySHA[sha])
+		} else {
+			runs = markUnknownWatchedRuns(runs)
 		}
-		concluded = byID
+		groups = append(groups, ciListGroup{sha: sha, runs: runs})
 	}
-	runs := make([]gh.WorkflowRun, 0, len(seenOrder))
-	for _, id := range seenOrder {
-		final, ok := concluded[id]
-		if !ok || final.Status != "completed" {
-			// The run finished but its conclusion is unavailable (missing
-			// from the recent page, or still listed in-flight by eventual
-			// consistency); render it as unknown, not as still running.
-			final = seen[id]
-			final.Status = "completed"
-			final.Conclusion = ""
-			final.UpdatedAt = ""
-		}
-		runs = append(runs, final)
+	return groups
+}
+
+// markUnknownWatchedRuns marks runs completed with an unknown conclusion.
+func markUnknownWatchedRuns(runs []gh.WorkflowRun) []gh.WorkflowRun {
+	for i := range runs {
+		runs[i].Status = "completed"
+		runs[i].Conclusion = ""
+		runs[i].UpdatedAt = ""
 	}
 	return runs
+}
+
+// appendUnknownWatchedRuns marks watched runs missing from the fetched
+// group as completed with an unknown conclusion.
+func appendUnknownWatchedRuns(all, seen []gh.WorkflowRun) []gh.WorkflowRun {
+	known := map[int64]bool{}
+	for _, r := range all {
+		known[r.ID] = true
+	}
+	for _, r := range seen {
+		if known[r.ID] {
+			continue
+		}
+		r.Status = "completed"
+		r.Conclusion = ""
+		r.UpdatedAt = ""
+		all = append(all, r)
+	}
+	return all
 }

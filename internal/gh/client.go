@@ -901,21 +901,22 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 // ListWorkflowRunsForBranch returns the most recent workflow runs for a branch,
 // newest first, up to limit.
 func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
-	return ListRecentWorkflowRuns(ownerRepo, branch, limit)
+	runs, _, err := ListRecentWorkflowRuns(ownerRepo, branch, limit)
+	return runs, err
 }
 
 // ListRecentWorkflowRuns returns the most recent workflow runs, newest first,
 // up to limit, following pagination so limits above GitHub's 100-per-page cap
-// still return the full count. An empty branch lists runs for the whole
-// repository.
-func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
+// still return the full count; total is the number of runs matching the query
+// regardless of limit. An empty branch lists runs for the whole repository.
+func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun, int, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	client, err := RESTClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+		return nil, 0, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 	path := fmt.Sprintf("repos/%s/%s/actions/runs?per_page=%d",
 		url.PathEscape(owner), url.PathEscape(repo), min(limit, 100))
@@ -923,21 +924,26 @@ func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun,
 		path += "&branch=" + url.QueryEscape(branch)
 	}
 	var all []WorkflowRun
+	total := 0
 	for path != "" {
 		var response struct {
+			TotalCount   int            `json:"total_count"`
 			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
 		}
 		resp, reqErr := client.Request("GET", path, nil)
 		if reqErr != nil {
-			return nil, fmt.Errorf("failed to get workflow runs: %w", reqErr)
+			return nil, 0, fmt.Errorf("failed to get workflow runs: %w", reqErr)
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return nil, readErr
+			return nil, 0, readErr
 		}
 		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
-			return nil, jsonErr
+			return nil, 0, jsonErr
+		}
+		if response.TotalCount > 0 {
+			total = response.TotalCount
 		}
 		all = append(all, response.WorkflowRuns...)
 		if len(all) >= limit {
@@ -948,7 +954,7 @@ func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun,
 	if len(all) > limit {
 		all = all[:limit]
 	}
-	return all, nil
+	return all, total, nil
 }
 
 // ListRunningWorkflowRuns returns the in-progress and queued workflow runs,
