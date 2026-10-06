@@ -330,7 +330,7 @@ func TestShowCIChecksNoReasonsNoExtraCalls(t *testing.T) {
 		{AnnotationLevel: "failure", Message: "Process completed with exit code 1."},
 	}
 
-	if err := showCIChecks("o/r", "b", "sha"); err != nil {
+	if _, err := showCIChecks("o/r", "b", "sha"); err != nil {
 		t.Fatalf("showCIChecks() = %v", err)
 	}
 	if s.calls.listCheckRunAnnotations != 0 {
@@ -362,7 +362,7 @@ func TestShowCIChecksReasonsBoundedToFailedJobs(t *testing.T) {
 	}
 	s.logs[99] = "Error: object 'foo' not found\n"
 
-	if err := showCIChecks("o/r", "b", "sha"); err != nil {
+	if _, err := showCIChecks("o/r", "b", "sha"); err != nil {
 		t.Fatalf("showCIChecks() = %v", err)
 	}
 	if s.calls.listCheckRunAnnotations != 1 {

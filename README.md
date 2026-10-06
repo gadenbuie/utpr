@@ -117,7 +117,7 @@ to force styled output when piping.
 | `utpr push [--edit=...]` | Push branch and create/update PR; plain results when piped or with `--agent` |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status; plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `utpr ci logs` streams failed-job output |
+| `utpr ci [<ref>]` | Show GitHub Actions status; plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
@@ -215,6 +215,15 @@ you can debug without leaving the terminal. By default, post-job steps
 the errors, so the failure isn't buried in teardown noise:
 
 ```bash
+# One shot: status plus logs for all failed jobs when the commit fails
+utpr ci <ref> --logs
+
+# Same, with the complete log for each failed job
+utpr ci <ref> --logs --full
+
+# When checks fail, a hint names the follow-up command, e.g.
+#   2 failing — run 'utpr ci logs <ref> --failed'
+
 # Interactive picker — choose which failed job to inspect
 utpr ci logs
 

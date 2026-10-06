@@ -92,6 +92,7 @@ const autoPickRunsLimit = 10
 
 var (
 	flagCILogsWeb        bool
+	flagCILogs           bool
 	flagCILogsLines      int
 	flagCILogsFull       bool
 	flagCILogsTimestamps bool
@@ -123,6 +124,12 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIPretty, "pretty", false, "Force styled output even when stdout is not a terminal")
 	ciCmd.Flags().BoolVar(&flagCINoReasons, "no-reasons", false, "Skip the inline failure reason shown for each failed check")
 	ciCmd.Flags().IntVar(&flagCILogsMaxBytes, "max-bytes", ui.DefaultMaxOutputBytes, "Maximum output bytes for the check list (0 disables)")
+	ciCmd.Flags().BoolVar(&flagCILogs, "logs", false, "After a failing status, show logs for all failed jobs (like 'ci logs --failed')")
+	ciCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per failed job (with --logs)")
+	ciCmd.Flags().BoolVar(&flagCILogsFull, "full", false, "Show the complete log for each failed job (with --logs)")
+	ciCmd.Flags().StringVar(&flagCILogsGrep, "grep", "", "Show only log lines matching this pattern, with context (with --logs)")
+	ciCmd.Flags().IntVarP(&flagCILogsAfter, "after", "A", 0, "Lines of context after each --grep match (with --logs)")
+	ciCmd.Flags().IntVarP(&flagCILogsBefore, "before", "B", 0, "Lines of context before each --grep match (with --logs)")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
 	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job")
@@ -273,6 +280,10 @@ func resolveCITarget(cfg *remote.Config, args []string, pick bool) (ciTarget, er
 var errNoChecksFound = errors.New("no checks found")
 
 func runCI(cmd *cobra.Command, args []string) error {
+	if flagCILogs && (flagCIWeb || flagCIWatch || flagCIWait != "") {
+		return ui.Dief("--logs cannot be combined with --web, --watch, or --wait")
+	}
+
 	cfg, err := remote.Detect()
 	if err != nil {
 		return ui.Die(err.Error())
@@ -314,7 +325,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 		return waitCI(ownerRepo, sha, mode, flagCIWatch)
 	}
 
-	err = showCIChecks(ownerRepo, target.pickBranch, sha)
+	failed, err := showCIChecks(ownerRepo, target.pickBranch, sha)
 	if errors.Is(err, errNoChecksFound) {
 		// Only offer the automatic picker fallback when the user didn't
 		// already pick a specific target (no args, no explicit --pick).
@@ -324,13 +335,32 @@ func runCI(cmd *cobra.Command, args []string) error {
 				return pickErr
 			}
 			if picked != nil {
-				return showCIChecks(target.pickOwnerRepo, target.pickBranch, picked.HeadSHA)
+				failed, err = showCIChecks(target.pickOwnerRepo, target.pickBranch, picked.HeadSHA)
+				if err != nil {
+					return err
+				}
+				ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
 			}
 		}
-		printCIInfo(ciAgentMode(), "No checks found for this commit.")
-		return nil
+		if err != nil {
+			printCIInfo(ciAgentMode(), "No checks found for this commit.")
+			return nil
+		}
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	if flagCILogs && failed > 0 {
+		gf, grepErr := parseCILogsGrep()
+		if grepErr != nil {
+			return grepErr
+		}
+		if logErr := showCILogsFailed(ownerRepo, sha, gf); logErr != nil && !errors.Is(logErr, errNoCIRuns) {
+			return logErr
+		}
+	}
+	return nil
 }
 
 func printCIInfo(agent bool, msg string) {
@@ -398,9 +428,10 @@ func printCIHeader(agent bool, branch, sha string) {
 	renderCIHeader(os.Stderr, branch, sha, true)
 }
 
-// showCIChecks fetches and renders check runs for a commit SHA. Returns
-// errNoChecksFound (wrapped) if no check runs exist for the commit.
-func showCIChecks(ownerRepo, branch, sha string) error {
+// showCIChecks fetches and renders check runs for a commit SHA. It returns
+// the number of failed check runs and errNoChecksFound (wrapped) if no
+// check runs exist for the commit.
+func showCIChecks(ownerRepo, branch, sha string) (int, error) {
 	printCIHeader(ciAgentMode(), branch, sha)
 
 	type ciStatus struct {
@@ -416,11 +447,18 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		return ciStatus{checkRuns: checkRuns, workflowRuns: wfRuns}, nil
 	})
 	if err != nil {
-		return ui.Dief("Could not fetch CI status: %v", err)
+		return 0, ui.Dief("Could not fetch CI status: %v", err)
 	}
 
 	if len(data.checkRuns) == 0 {
-		return errNoChecksFound
+		return 0, errNoChecksFound
+	}
+
+	failedCount := 0
+	for _, r := range data.checkRuns {
+		if isFailedCheckRun(r) {
+			failedCount++
+		}
 	}
 
 	runs := data.checkRuns
@@ -433,7 +471,7 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		}
 		if len(failed) == 0 {
 			printCISuccess(ciAgentMode(), "No failed checks.")
-			return nil
+			return 0, nil
 		}
 		runs = failed
 	}
@@ -453,7 +491,39 @@ func showCIChecks(ownerRepo, branch, sha string) error {
 		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false, reasons)
 		_, _ = fmt.Fprint(os.Stderr, limiter.Limit(buf.String()))
 	}
-	return nil
+	if failedCount > 0 {
+		printCINextStepHint(ciAgentMode(), failedCount, !flagCILogs)
+	}
+	return failedCount, nil
+}
+
+// ciHintRef is the placeholder for the commit ref in next-step hints; the
+// hint is printed without echoing the resolved ref back.
+const ciHintRef = "<ref>"
+
+// ciNextStepHints returns the follow-up hint lines shown after a failing
+// status. The logs hint is skipped when --logs already fetched the logs;
+// the reasons hint appears only when reasons were suppressed with
+// --no-reasons (there is no --reasons flag to point at).
+func ciNextStepHints(failed int, showLogsHint bool) []string {
+	if failed <= 0 {
+		return nil
+	}
+	var hints []string
+	if showLogsHint {
+		hints = append(hints, fmt.Sprintf("%d failing — run 'utpr ci logs %s --failed'", failed, ciHintRef))
+	}
+	if flagCINoReasons {
+		hints = append(hints, "failure reasons skipped (--no-reasons); rerun without it to show inline reasons")
+	}
+	return hints
+}
+
+// printCINextStepHint prints the next-step hints after a failing status.
+func printCINextStepHint(agent bool, failed int, showLogsHint bool) {
+	for _, hint := range ciNextStepHints(failed, showLogsHint) {
+		printCIInfof(agent, "%s", hint)
+	}
 }
 
 // pickRunForBranch fetches the most recent workflow runs for a branch and
@@ -1068,6 +1138,71 @@ func workflowJobIcon(job gh.WorkflowJob) string {
 	return statusIcon(job.Status, job.Conclusion)
 }
 
+// errNoCIRuns is returned by cilogsJobEntries when no workflow runs exist
+// for the SHA.
+var errNoCIRuns = errors.New("no CI runs found")
+
+// cilogsJobEntries fetches the completed jobs for the latest runs of sha.
+// When includeAll is false, jobs are only fetched from failed runs. It
+// returns all collected jobs and the subset of failed jobs.
+func cilogsJobEntries(ownerRepo, sha string, includeAll bool) (allJobs, failedJobs []jobEntry, err error) {
+	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
+		return ghListWorkflowRunsForSHA(ownerRepo, sha)
+	})
+	if err != nil {
+		return nil, nil, ui.Dief("Could not fetch CI runs: %v", err)
+	}
+	if len(runs) == 0 {
+		return nil, nil, errNoCIRuns
+	}
+
+	runs = latestRunsPerWorkflow(runs)
+
+	for _, run := range runs {
+		if run.Status != "completed" {
+			continue
+		}
+		if !includeAll && !isFailedConclusion(run.Conclusion) {
+			continue
+		}
+		jobs, fetchErr := spinCIWithResult(
+			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
+			func() ([]gh.WorkflowJob, error) {
+				return ghListWorkflowRunJobs(ownerRepo, run.ID)
+			},
+		)
+		if fetchErr != nil {
+			ui.Warnf("Could not fetch jobs for run '%s': %v", run.Name, fetchErr)
+			continue
+		}
+		for _, job := range jobs {
+			if job.Status != "completed" {
+				continue
+			}
+			entry := jobEntry{RunName: run.Name, Job: job}
+			allJobs = append(allJobs, entry)
+			if isFailedConclusion(job.Conclusion) {
+				failedJobs = append(failedJobs, entry)
+			}
+		}
+	}
+	return allJobs, failedJobs, nil
+}
+
+// showCILogsFailed renders the failure-relevant log windows for every
+// failed job of sha: the non-interactive behavior of 'utpr ci logs --failed'.
+func showCILogsFailed(ownerRepo, sha string, gf *grepFilter) error {
+	_, failedJobs, err := cilogsJobEntries(ownerRepo, sha, false)
+	if err != nil {
+		return err
+	}
+	if len(failedJobs) == 0 {
+		printCISuccess(ciAgentMode(), "No failed jobs.")
+		return nil
+	}
+	return renderCILogs(ownerRepo, failedJobs, ciLogsLineCount(), gf, flagCILogsMaxBytes)
+}
+
 func runCILogs(cmd *cobra.Command, args []string) error {
 	if err := requireCILogsTTY(); err != nil {
 		return err
@@ -1103,52 +1238,20 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
 	}
 
-	runs, err := spinCIWithResult("Fetching CI runs...", func() ([]gh.WorkflowRun, error) {
-		return gh.ListWorkflowRunsForSHA(ownerRepo, sha)
-	})
-	if err != nil {
-		return ui.Dief("Could not fetch CI runs: %v", err)
-	}
-
-	if len(runs) == 0 {
+	// Collect completed jobs. In interactive mode (or --all) we want all jobs
+	// so the picker can offer them; otherwise only fetch from failed runs.
+	allJobs, failedJobs, err := cilogsJobEntries(ownerRepo, sha, interactive || flagCILogsAll)
+	if errors.Is(err, errNoCIRuns) {
 		printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
 		return nil
 	}
+	if err != nil {
+		return err
+	}
 
-	runs = latestRunsPerWorkflow(runs)
-
-	// Collect completed jobs. In interactive mode (or --all) we want all jobs
-	// so the picker can offer them; otherwise only fetch from failed runs.
-	var allJobs []jobEntry
-	var failedJobs []jobEntry
-
-	for _, run := range runs {
-		if run.Status != "completed" {
-			continue
-		}
-		if !interactive && !flagCILogsAll && !isFailedConclusion(run.Conclusion) {
-			continue
-		}
-		jobs, fetchErr := spinCIWithResult(
-			fmt.Sprintf("Fetching jobs for '%s'...", run.Name),
-			func() ([]gh.WorkflowJob, error) {
-				return gh.ListWorkflowRunJobs(ownerRepo, run.ID)
-			},
-		)
-		if fetchErr != nil {
-			ui.Warnf("Could not fetch jobs for run '%s': %v", run.Name, fetchErr)
-			continue
-		}
-		for _, job := range jobs {
-			if job.Status != "completed" {
-				continue
-			}
-			entry := jobEntry{RunName: run.Name, Job: job}
-			allJobs = append(allJobs, entry)
-			if isFailedConclusion(job.Conclusion) {
-				failedJobs = append(failedJobs, entry)
-			}
-		}
+	if len(allJobs) == 0 {
+		printCIInfo(ciAgentMode(), "No completed CI jobs found for this commit.")
+		return nil
 	}
 
 	if len(allJobs) == 0 {
@@ -1346,7 +1449,7 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int, gf *grepFi
 		logs, fetchErr := spinCIWithResult(
 			fmt.Sprintf("Fetching logs for '%s'...", entry.Job.Name),
 			func() (string, error) {
-				return gh.GetJobLogs(ownerRepo, entry.Job.ID)
+				return ghGetJobLogs(ownerRepo, entry.Job.ID)
 			},
 		)
 		if fetchErr != nil {
