@@ -40,6 +40,10 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	cmd.PersistentFlags().BoolVar(&flagRootAgent, "agent", false,
+		"Show unstyled plain output for agent consumption (automatic when stdout is not a terminal)")
+	cmd.PersistentFlags().BoolVar(&flagRootPretty, "pretty", false,
+		"Force styled output even when stdout is not a terminal")
 	return cmd
 }
 
@@ -54,6 +58,7 @@ func init() {
 	})
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		initPlainMode(cmd)
 		if cmd.Name() == "help" || cmd.CalledAs() == "help" {
 			return nil
 		}

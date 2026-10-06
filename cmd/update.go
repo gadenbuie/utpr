@@ -27,6 +27,7 @@ var updateCmd = &cobra.Command{
 	Long:  "Check for the latest release of utpr and update in place.",
 	// Override root's PersistentPreRunE: update doesn't need a git repo.
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		initPlainMode(cmd)
 		if !gh.IsAuthenticated() {
 			return ui.Die("GitHub authentication not found. Run 'gh auth login' or set GITHUB_TOKEN.")
 		}
