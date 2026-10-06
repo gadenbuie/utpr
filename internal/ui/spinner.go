@@ -23,7 +23,11 @@ func defaultSpin(title string, fn func() error) error {
 
 // Spin shows a spinner with a title while running the given function.
 // If the function returns an error, the spinner stops and the error is returned.
+// The spinner is skipped in plain mode.
 func Spin(title string, fn func() error) error {
+	if plainMode {
+		return fn()
+	}
 	return spinFunc(title, fn)
 }
 

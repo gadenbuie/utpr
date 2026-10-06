@@ -250,6 +250,10 @@ func runWorktreeOpen(cmd *cobra.Command, args []string) error {
 
 // pickWorktreeBranch shows an interactive picker of branches that have a worktree.
 func pickWorktreeBranch(header string) (string, error) {
+	if err := requireInteractiveTTY("pass a branch name as an argument"); err != nil {
+		return "", err
+	}
+
 	worktrees, err := git.WorktreeList()
 	if err != nil {
 		return "", ui.Die(err.Error())

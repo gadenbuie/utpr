@@ -21,6 +21,10 @@ var cleanCmd = &cobra.Command{
 }
 
 func runClean(cmd *cobra.Command, args []string) error {
+	if err := requireInteractiveTTY("use 'utpr finish <pr>' and 'utpr forget <branch>' instead"); err != nil {
+		return err
+	}
+
 	if git.IsInWorktree() {
 		mainRoot, _ := git.GetMainRepoRoot()
 		ui.Warn("Navigate to the main repo first:")

@@ -34,6 +34,10 @@ func init() {
 }
 
 func runBisect(cmd *cobra.Command, args []string) error {
+	if err := requireInteractiveTTY("utpr bisect is interactive; run it in a terminal"); err != nil {
+		return err
+	}
+
 	badRef := "HEAD"
 
 	// Handle -- separator for run command

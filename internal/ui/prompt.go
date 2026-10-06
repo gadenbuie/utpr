@@ -16,6 +16,9 @@ var ErrCancelled = errors.New("cancelled")
 var confirmFunc = defaultConfirm
 
 func defaultConfirm(title string, defaultVal bool) (bool, error) {
+	if err := requireTTY(); err != nil {
+		return false, err
+	}
 	confirmed := defaultVal
 	err := huh.NewConfirm().
 		Title(title).
@@ -62,6 +65,9 @@ func MustConfirm(title string, defaultVal bool) error {
 var inputFunc = defaultInput
 
 func defaultInput(header, value, placeholder string) (string, error) {
+	if err := requireTTY(); err != nil {
+		return "", err
+	}
 	result := value
 	err := huh.NewInput().
 		Title(header).
@@ -92,6 +98,9 @@ func SetInputFunc(fn func(string, string, string) (string, error)) func() {
 var chooseFunc = defaultChoose
 
 func defaultChoose(header string, options []string) (string, error) {
+	if err := requireTTY(); err != nil {
+		return "", err
+	}
 	if len(options) == 0 {
 		return "", errors.New("no options provided")
 	}
@@ -135,6 +144,9 @@ func SetChooseFunc(fn func(string, []string) (string, error)) func() {
 // returned cleanly.
 func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T, error) {
 	var zero T
+	if err := requireTTY(); err != nil {
+		return zero, err
+	}
 	if len(options) == 0 {
 		return zero, errors.New("no options provided")
 	}
@@ -158,6 +170,9 @@ func ChooseWithOptions[T comparable](header string, options []huh.Option[T]) (T,
 // ChooseMultiWithOptions shows a multi-select picker with pre-built options
 // and filtering enabled. Returns the selected values.
 func ChooseMultiWithOptions[T comparable](header string, options []huh.Option[T]) ([]T, error) {
+	if err := requireTTY(); err != nil {
+		return nil, err
+	}
 	if len(options) == 0 {
 		return nil, errors.New("no options provided")
 	}

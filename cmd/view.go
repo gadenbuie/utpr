@@ -270,6 +270,12 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	return renderPRWithComments(pr, reviews, comments, reviewComments)
 }
 
+// viewAgentMode reports whether view should emit raw agent output,
+// including when stdout is piped or the global --agent flag is set.
+func viewAgentMode() bool {
+	return ui.AgentMode(flagViewAgent || flagRootAgent, flagRootPretty)
+}
+
 // pickForView lists issues or PRs and lets the user pick one.
 // entity is "issue" or "pr".
 func pickForView(ownerRepo, entity string) (int, error) {
@@ -310,7 +316,7 @@ func pickForView(ownerRepo, entity string) (int, error) {
 	} else {
 		var prs []gh.PRInfo
 		var err error
-		if flagViewAgent {
+		if viewAgentMode() {
 			prs, err = gh.ListPRs(ownerRepo, apiState)
 		} else {
 			prs, err = ui.SpinWithResult(fmt.Sprintf("Getting %s %s...", flagViewState, label), func() ([]gh.PRInfo, error) {
@@ -333,7 +339,7 @@ func pickForView(ownerRepo, entity string) (int, error) {
 		if len(prs) == 0 {
 			return 0, ui.Dief("No %s %s found.", flagViewState, label)
 		}
-		if flagViewAgent {
+		if viewAgentMode() {
 			_, _ = fmt.Fprint(os.Stdout, formatViewAgentPRChoices(prs))
 			return 0, fmt.Errorf("a PR number is required")
 		}
@@ -423,7 +429,7 @@ func commentOnlyMode() string {
 // renderViewMarkdown returns raw Markdown for agent consumers and terminal-
 // formatted Markdown for interactive users.
 func renderViewMarkdown(content string) (string, error) {
-	if flagViewAgent {
+	if viewAgentMode() {
 		if content != "" && !strings.HasSuffix(content, "\n") {
 			content += "\n"
 		}

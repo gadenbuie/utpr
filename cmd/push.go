@@ -36,10 +36,16 @@ func init() {
 }
 
 func spinPush(title string, fn func() error) error {
-	if pushAgent {
+	if pushAgentMode() {
 		return fn()
 	}
 	return ui.Spin(title, fn)
+}
+
+// pushAgentMode reports whether push should emit plain agent output,
+// including when stdout is piped or the global --agent flag is set.
+func pushAgentMode() bool {
+	return ui.AgentMode(pushAgent || flagRootAgent, flagRootPretty)
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
@@ -131,6 +137,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// No PR exists — offer to create one
+	if err := requireInteractiveTTY("pass --edit browser to create the PR without a prompt"); err != nil {
+		return err
+	}
 	createPR, err := ui.Confirm("No PR found for this branch. Create one?", true)
 	if err != nil || !createPR {
 		return nil
@@ -186,6 +195,10 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 
 	ready := true
 
+	if err := requireInteractiveTTY("pass --edit browser to create the PR without a prompt"); err != nil {
+		return err
+	}
+
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("PR Title").Value(&title),
@@ -220,7 +233,7 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 	if err := git.SetBranchPRURL(current, pr.HTMLURL); err != nil {
 		ui.Warnf("Could not store PR URL in git config: %v", err)
 	}
-	if pushAgent {
+	if pushAgentMode() {
 		_, _ = fmt.Fprintln(os.Stdout, pr.HTMLURL)
 	} else {
 		ui.Successf("PR created: %s", pr.HTMLURL)
@@ -229,7 +242,7 @@ func promptCreatePR(cfg *remote.Config, current string) error {
 }
 
 func pushSuccessf(format string, args ...any) {
-	if pushAgent {
+	if pushAgentMode() {
 		_, _ = fmt.Fprintf(os.Stdout, format+"\n", args...)
 		return
 	}
@@ -237,7 +250,7 @@ func pushSuccessf(format string, args ...any) {
 }
 
 func printPushAgentURL(url string) {
-	if pushAgent {
+	if pushAgentMode() {
 		_, _ = fmt.Fprintln(os.Stdout, url)
 	}
 }

@@ -159,6 +159,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func pickIssue() (int, error) {
+	if err := requireInteractiveTTY("pass an issue number or branch name as an argument"); err != nil {
+		return 0, err
+	}
+
 	cfg := remote.Require()
 	sourceURL, err := git.Run("remote", "get-url", cfg.SourceRemote)
 	if err != nil {

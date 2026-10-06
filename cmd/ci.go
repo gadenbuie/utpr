@@ -83,13 +83,6 @@ var (
 	flagCINoReasons bool
 )
 
-// ciStdoutIsTTY and ciStdinIsTTY report terminal attachment. They are
-// package-level so tests can stub them without a real terminal.
-var (
-	ciStdoutIsTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
-	ciStdinIsTTY  = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
-)
-
 // pickRunsLimit is the number of runs fetched for --pick.
 const pickRunsLimit = 20
 
@@ -325,7 +318,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 	if errors.Is(err, errNoChecksFound) {
 		// Only offer the automatic picker fallback when the user didn't
 		// already pick a specific target (no args, no explicit --pick).
-		if len(args) == 0 && !flagCIPick && ciStdinIsTTY() {
+		if len(args) == 0 && !flagCIPick && ui.StdinIsTTY() {
 			picked, pickErr := pickRunForBranch(target.pickOwnerRepo, target.pickBranch, autoPickRunsLimit)
 			if pickErr != nil {
 				return pickErr
@@ -349,22 +342,10 @@ func printCIInfo(agent bool, msg string) {
 }
 
 func ciAgentMode() bool {
-	if flagCIPretty {
-		return false
-	}
-	if flagCIAgent || flagCILogsAgent || flagCIRerunAgent {
-		return true
-	}
-	return !ciStdoutIsTTY()
-}
-
-// requireInteractiveTTY returns an error explaining how to avoid the
-// interactive prompt when stdin is not attached to a terminal.
-func requireInteractiveTTY(guidance string) error {
-	if ciStdinIsTTY() {
-		return nil
-	}
-	return ui.Die("This prompt requires an interactive terminal; " + guidance)
+	return ui.AgentMode(
+		flagCIAgent || flagCILogsAgent || flagCIRerunAgent || flagRootAgent,
+		flagCIPretty || flagRootPretty,
+	)
 }
 
 func spinCIWithResult[T any](title string, fn func() (T, error)) (T, error) {

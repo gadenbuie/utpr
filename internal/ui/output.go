@@ -16,10 +16,18 @@ var (
 )
 
 func Info(msg string) {
+	if plainMode {
+		fmt.Fprintln(os.Stdout, msg)
+		return
+	}
 	fmt.Fprintln(os.Stderr, infoPrefix.Render("ℹ "+msg))
 }
 
 func Warn(msg string) {
+	if plainMode {
+		fmt.Fprintln(os.Stdout, msg)
+		return
+	}
 	fmt.Fprintln(os.Stderr, warnPrefix.Render("⚠ "+msg))
 }
 
@@ -28,6 +36,10 @@ func Error(msg string) {
 }
 
 func Success(msg string) {
+	if plainMode {
+		fmt.Fprintln(os.Stdout, msg)
+		return
+	}
 	fmt.Fprintln(os.Stderr, successPrefix.Render("✔ "+msg))
 }
 

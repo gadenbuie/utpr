@@ -176,6 +176,10 @@ func resolveMergeArg(arg, sourceRepo string) (int, error) {
 // pickOpenPRForMerge shows a picker of open PRs and returns the selected number.
 // Returns 0 if the user cancels.
 func pickOpenPRForMerge(sourceRepo string) (int, error) {
+	if err := requireInteractiveTTY("pass a PR number or branch name as an argument"); err != nil {
+		return 0, err
+	}
+
 	prs, err := ui.SpinWithResult("Getting open PRs...", func() ([]gh.PRInfo, error) {
 		return gh.ListPRs(sourceRepo, "open")
 	})
