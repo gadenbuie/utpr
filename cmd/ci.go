@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/gadenbuie/utpr/internal/cilog"
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/remote"
@@ -39,7 +40,11 @@ var ciCmd = &cobra.Command{
 var ciLogsCmd = &cobra.Command{
 	Use:   "logs [#pr | @branch | number | branch | ref]",
 	Short: "Show logs for failed CI jobs",
-	Long:  "Show the last N lines of logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.",
+	Long: `Show logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.
+
+By default, post-job steps (artifact upload, cleanup) are excluded and the
+shown window is anchored on errors (##[error] markers, test failures).
+Use --full to show the complete log.`,
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runCILogs,
 }
@@ -80,6 +85,7 @@ const autoPickRunsLimit = 10
 var (
 	flagCILogsWeb        bool
 	flagCILogsLines      int
+	flagCILogsFull       bool
 	flagCILogsTimestamps bool
 	flagCILogsAll        bool
 	flagCILogsFailed     bool
@@ -104,7 +110,8 @@ func init() {
 	ciCmd.Flags().BoolVar(&flagCIAgent, "agent", false, "Show unstyled output for agent consumption")
 
 	ciLogsCmd.Flags().BoolVarP(&flagCILogsWeb, "web", "w", false, "Open failed job in the browser")
-	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job (0 = all)")
+	ciLogsCmd.Flags().IntVarP(&flagCILogsLines, "lines", "n", 100, "Number of log lines to show per job")
+	ciLogsCmd.Flags().BoolVar(&flagCILogsFull, "full", false, "Show the complete log for each job")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsTimestamps, "timestamps", false, "Show timestamps on log lines")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsAll, "all", false, "Show logs for all jobs, not just failed")
 	ciLogsCmd.Flags().BoolVar(&flagCILogsFailed, "failed", false, "Show logs for all failed jobs without prompting")
@@ -867,11 +874,12 @@ func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showT
 
 var actionsTimestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
 
-func processLogLines(raw string, showTimestamps bool, n int) []string {
+func processLogLines(raw string, showTimestamps bool, n int) ([]string, cilog.Mode) {
 	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	sel := cilog.Select(lines, n)
 
-	processed := make([]string, 0, len(lines))
-	for _, line := range lines {
+	processed := make([]string, 0, len(sel.Lines))
+	for _, line := range sel.Lines {
 		if showTimestamps {
 			loc := actionsTimestampRe.FindStringIndex(line)
 			if loc != nil {
@@ -884,11 +892,7 @@ func processLogLines(raw string, showTimestamps bool, n int) []string {
 			processed = append(processed, actionsTimestampRe.ReplaceAllString(line, ""))
 		}
 	}
-
-	if n > 0 && len(processed) > n {
-		processed = processed[len(processed)-n:]
-	}
-	return processed
+	return processed, sel.Mode
 }
 
 func logSeparator(label string) string {
@@ -1014,8 +1018,12 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Resolve target jobs and line count.
+	// Resolve target jobs and line count. --full (or -n 0) shows the
+	// complete log; otherwise the window is anchored on failures.
 	lines := flagCILogsLines
+	if flagCILogsFull {
+		lines = 0
+	}
 
 	var targetJobs []jobEntry
 
@@ -1107,7 +1115,7 @@ func pickCILogs(cmd *cobra.Command, allJobs, failedJobs []jobEntry, defaultLines
 		Height(4)
 
 	formGroups := []*huh.Group{huh.NewGroup(jobSelect)}
-	if !cmd.Flags().Changed("lines") {
+	if !cmd.Flags().Changed("lines") && !flagCILogsFull {
 		formGroups = append(formGroups, huh.NewGroup(linesSelect))
 	}
 
@@ -1151,17 +1159,24 @@ func renderCILogs(ownerRepo string, targetJobs []jobEntry, lines int) error {
 			continue
 		}
 
-		processed := processLogLines(logs, flagCILogsTimestamps, lines)
+		processed, mode := processLogLines(logs, flagCILogsTimestamps, lines)
 		if flagCILogsAgent {
 			for i := range processed {
 				processed[i] = ui.StripANSI(processed[i])
 			}
 		}
-		if lines > 0 && len(processed) == lines {
+		var note string
+		switch mode {
+		case cilog.ModeTail:
+			note = fmt.Sprintf("(last %d lines)", len(processed))
+		case cilog.ModeLandmark:
+			note = fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(processed))
+		}
+		if note != "" {
 			if flagCILogsAgent {
-				_, _ = fmt.Fprintf(os.Stdout, "(last %d lines)\n", lines)
+				_, _ = fmt.Fprintln(os.Stdout, note)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(fmt.Sprintf("(last %d lines)", lines)))
+				_, _ = fmt.Fprintf(os.Stderr, "%s\n", ui.StyleMuted.Render(note))
 			}
 		}
 		if flagCILogsAgent {
