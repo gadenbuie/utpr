@@ -899,14 +899,15 @@ func ListWorkflowRunsForSHA(ownerRepo, sha string) ([]WorkflowRun, error) {
 }
 
 // ListWorkflowRunsForBranch returns the most recent workflow runs for a branch,
-// newest first, up to limit. Fetches a single page (no pagination).
+// newest first, up to limit.
 func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
 	return ListRecentWorkflowRuns(ownerRepo, branch, limit)
 }
 
 // ListRecentWorkflowRuns returns the most recent workflow runs, newest first,
-// up to limit, fetching a single page (no pagination). An empty branch lists
-// runs for the whole repository.
+// up to limit, following pagination so limits above GitHub's 100-per-page cap
+// still return the full count. An empty branch lists runs for the whole
+// repository.
 func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
@@ -916,18 +917,38 @@ func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var response struct {
-		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
-	}
 	path := fmt.Sprintf("repos/%s/%s/actions/runs?per_page=%d",
-		url.PathEscape(owner), url.PathEscape(repo), limit)
+		url.PathEscape(owner), url.PathEscape(repo), min(limit, 100))
 	if branch != "" {
 		path += "&branch=" + url.QueryEscape(branch)
 	}
-	if err := client.Get(path, &response); err != nil {
-		return nil, fmt.Errorf("failed to get workflow runs: %w", err)
+	var all []WorkflowRun
+	for path != "" {
+		var response struct {
+			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get workflow runs: %w", reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.WorkflowRuns...)
+		if len(all) >= limit {
+			break
+		}
+		path = parseNextLink(resp.Header.Get("Link"))
 	}
-	return response.WorkflowRuns, nil
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 // ListRunningWorkflowRuns returns the in-progress and queued workflow runs,

@@ -18,8 +18,8 @@ import (
 
 var ciListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List running GitHub Actions runs",
-	Long: `List currently running and queued GitHub Actions runs.
+	Short: "List recent GitHub Actions runs",
+	Long: `List the most recent GitHub Actions runs, any status.
 
 Shows the most recent workflow runs (any status) for the current
 branch, up to --limit (default 10); --all lists recent runs for the
@@ -449,9 +449,10 @@ func ciListConcludedRuns(ownerRepo, branch string, seenOrder []int64, seen map[i
 	runs := make([]gh.WorkflowRun, 0, len(seenOrder))
 	for _, id := range seenOrder {
 		final, ok := concluded[id]
-		if !ok {
-			// The run finished but its conclusion is unavailable;
-			// render it as unknown, not as still running.
+		if !ok || final.Status != "completed" {
+			// The run finished but its conclusion is unavailable (missing
+			// from the recent page, or still listed in-flight by eventual
+			// consistency); render it as unknown, not as still running.
 			final = seen[id]
 			final.Status = "completed"
 			final.Conclusion = ""

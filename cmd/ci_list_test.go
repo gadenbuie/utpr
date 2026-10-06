@@ -611,3 +611,36 @@ func TestRunCIListLimitWatchConflict(t *testing.T) {
 		}
 	})
 }
+
+func TestWatchCIListStaleRecentRunMarkedUnknown(t *testing.T) {
+	// Right after the queue drains, the recent-runs fetch may still list
+	// a watched run as in-flight; the final frame must not show it as
+	// still running.
+	runA := ciListTestRun(5, "ci/main", "main", "abcdef1234567890", "in_progress", "", "2026-10-06T11:56:00Z", "")
+	stale := runA // still in_progress in the recent response
+
+	withCIListFlags(t, false, true, 10)
+	withCIListSeams(t, "main",
+		func(call int) []gh.WorkflowRun {
+			if call == 1 {
+				return []gh.WorkflowRun{runA}
+			}
+			return nil
+		},
+		func() []gh.WorkflowRun { return []gh.WorkflowRun{stale} },
+		func() ([]gh.PRInfo, error) { return nil, nil })
+
+	var err error
+	out := captureStdout(t, func() { err = watchCIList("gadenbuie/utpr", "main") })
+	if err != nil {
+		t.Fatalf("watchCIList: %v", err)
+	}
+	parts := strings.Split(out, "\n\n")
+	final := parts[len(parts)-1]
+	if strings.Contains(final, "…") {
+		t.Errorf("final frame shows a running icon for a stale run:\n%s", out)
+	}
+	if !strings.Contains(final, "?") {
+		t.Errorf("final frame missing unknown-conclusion icon:\n%s", out)
+	}
+}
