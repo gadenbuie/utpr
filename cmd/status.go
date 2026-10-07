@@ -85,6 +85,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Validate state and dispatch.
+	if err := validateViewState(viewType, flagViewState); err != nil {
+		return err
+	}
+
 	if viewType == "issue" {
 		return issueStatusReport(ownerRepo, numberArg, cachedIssue)
 	}
@@ -120,11 +125,12 @@ type statusReview struct {
 
 // statusReviews summarizes the reviews on a PR.
 type statusReviews struct {
-	Summary  string         `json:"summary"`  // approved, changes_requested, none, unknown
-	Approved int            `json:"approved"` // reviewers whose latest review approves
-	Total    int            `json:"total"`    // reviewers with a review or a pending request
-	Items    []statusReview `json:"items"`    // latest review per reviewer
-	Pending  []string       `json:"pending"`  // requested reviewers who have not reviewed
+	Summary      string         `json:"summary"`                 // approved, changes_requested, none, unknown
+	Approved     int            `json:"approved"`                // reviewers whose latest review approves
+	Total        int            `json:"total"`                   // reviewers with a review or a pending request
+	Items        []statusReview `json:"items"`                   // latest review per reviewer
+	Pending      []string       `json:"pending"`                 // requested users who have not reviewed
+	PendingTeams []string       `json:"pending_teams,omitempty"` // requested teams that have not reviewed
 }
 
 // statusLocalSync compares a local branch with the PR's remote head.
@@ -198,7 +204,7 @@ func prStatusReport(ownerRepo, numberArg string, cfg *remote.Config) error {
 		if err != nil {
 			return err
 		}
-		status = buildPRStatus(ownerRepo, pr)
+		status = buildPRStatus(ownerRepo, pr, cfg)
 		return nil
 	})
 	if spinErr != nil {
@@ -208,7 +214,7 @@ func prStatusReport(ownerRepo, numberArg string, cfg *remote.Config) error {
 	if flagStatusJSON {
 		return printStatusJSON(status)
 	}
-	renderPRStatus(status)
+	renderPRStatus(status, ownerRepo)
 	return nil
 }
 
@@ -261,7 +267,7 @@ func issueStatusReport(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) e
 // buildPRStatus assembles the status report for a pull request, fetching CI
 // checks, reviews, and unresolved review threads. Failures in those optional
 // sections degrade to "unknown" markers rather than failing the report.
-func buildPRStatus(ownerRepo string, pr *gh.PRInfo) *prStatus {
+func buildPRStatus(ownerRepo string, pr *gh.PRInfo, cfg *remote.Config) *prStatus {
 	s := &prStatus{
 		Type:              "pull_request",
 		Number:            pr.Number,
@@ -287,16 +293,16 @@ func buildPRStatus(ownerRepo string, pr *gh.PRInfo) *prStatus {
 	}
 
 	if reviews, err := gh.ListPRReviews(ownerRepo, pr.Number); err == nil {
-		s.Reviews = summarizeReviews(reviews, requestedReviewerLogins(pr))
+		s.Reviews = summarizeReviews(reviews, requestedReviewerLogins(pr), requestedTeamSlugs(pr))
 	} else {
-		s.Reviews = statusReviews{Summary: "unknown", Items: []statusReview{}, Pending: []string{}}
+		s.Reviews = statusReviews{Summary: "unknown", Items: []statusReview{}, Pending: []string{}, PendingTeams: []string{}}
 	}
 
 	if threads, err := gh.ListUnresolvedPRReviewComments(ownerRepo, pr.Number); err == nil {
-		s.UnresolvedThreads = len(threads)
+		s.UnresolvedThreads = countUnresolvedThreads(threads)
 	}
 
-	s.LocalSync = localSyncStatus(pr)
+	s.LocalSync = localSyncStatus(pr, cfg)
 	return s
 }
 
@@ -345,11 +351,34 @@ func requestedReviewerLogins(pr *gh.PRInfo) []string {
 	return logins
 }
 
+// requestedTeamSlugs extracts the slugs of teams requested to review a PR.
+func requestedTeamSlugs(pr *gh.PRInfo) []string {
+	var slugs []string
+	for _, t := range pr.RequestedTeams {
+		slugs = append(slugs, t.Slug)
+	}
+	return slugs
+}
+
+// countUnresolvedThreads counts distinct unresolved review threads. The gh
+// helper returns every comment in every unresolved thread, so thread roots
+// (comments with no reply-to) are counted instead of raw comments.
+func countUnresolvedThreads(comments []gh.ReviewComment) int {
+	n := 0
+	for _, c := range comments {
+		if c.InReplyToID == 0 {
+			n++
+		}
+	}
+	return n
+}
+
 // summarizeReviews reduces reviews to the latest state per reviewer, plus
-// requested reviewers who have not yet reviewed. Changes requested take
-// precedence over approvals in the summary.
-func summarizeReviews(reviews []gh.PRReview, requested []string) statusReviews {
-	s := statusReviews{Items: []statusReview{}, Pending: []string{}}
+// requested reviewers who have not yet reviewed. A comment-only review does
+// not replace an earlier actionable state, matching how GitHub computes
+// review decisions. Changes requested take precedence in the summary.
+func summarizeReviews(reviews []gh.PRReview, requestedUsers, requestedTeams []string) statusReviews {
+	s := statusReviews{Items: []statusReview{}, Pending: []string{}, PendingTeams: []string{}}
 	latest := map[string]statusReview{}
 	var order []string
 	for _, r := range reviews {
@@ -359,6 +388,11 @@ func summarizeReviews(reviews []gh.PRReview, requested []string) statusReviews {
 			continue // skip PENDING
 		}
 		login := r.User.Login
+		existing, seen := latest[login]
+		if seen && r.State == "COMMENTED" && existing.State != "COMMENTED" {
+			// A comment-only review doesn't override an actionable state.
+			continue
+		}
 		if _, seen := latest[login]; !seen {
 			order = append(order, login)
 		}
@@ -376,17 +410,20 @@ func summarizeReviews(reviews []gh.PRReview, requested []string) statusReviews {
 		}
 	}
 
-	// Requested reviewers who have not left a review yet are pending.
+	// Requested users who have not left a review yet are pending. Requested
+	// teams are kept as reported: GitHub removes a team request once the team
+	// reviews, and team members' reviews don't carry the team identity.
 	reviewed := map[string]bool{}
 	for _, r := range s.Items {
 		reviewed[r.Reviewer] = true
 	}
-	for _, login := range requested {
+	for _, login := range requestedUsers {
 		if !reviewed[login] {
 			s.Pending = append(s.Pending, login)
 		}
 	}
-	s.Total = len(s.Items) + len(s.Pending)
+	s.PendingTeams = append(s.PendingTeams, requestedTeams...)
+	s.Total = len(s.Items) + len(s.Pending) + len(s.PendingTeams)
 
 	switch {
 	case changesRequested:
@@ -399,14 +436,16 @@ func summarizeReviews(reviews []gh.PRReview, requested []string) statusReviews {
 	return s
 }
 
-// localSyncStatus compares the local head branch with the PR's remote head.
-// Returns nil when the head branch does not exist locally.
-func localSyncStatus(pr *gh.PRInfo) *statusLocalSync {
-	ref := "refs/heads/" + pr.Head.Ref
-	if !git.BranchExists(pr.Head.Ref) {
+// localSyncStatus finds the local branch for a PR (the plain head ref or
+// utpr's pr/{number}-{author}-{branch} schemes) and compares it with the
+// PR's remote head. Returns nil when no local branch exists.
+func localSyncStatus(pr *gh.PRInfo, cfg *remote.Config) *statusLocalSync {
+	local := findLocalBranchForPR(pr.Number, pr.Head.Ref, pr.User.Login, cfg.DefaultBranch, pr.Base.Ref)
+	if local == "" {
 		return nil
 	}
-	ls := &statusLocalSync{Branch: pr.Head.Ref}
+	ref := "refs/heads/" + local
+	ls := &statusLocalSync{Branch: local}
 
 	localSHA, err := git.RevParse(ref)
 	if err != nil {
@@ -464,8 +503,8 @@ func buildIssueStatus(issue *gh.IssueInfo, ownerRepo string) *issueStatus {
 }
 
 // renderPRStatus prints the human-readable PR status table.
-func renderPRStatus(s *prStatus) {
-	rows := prStatusRows(s)
+func renderPRStatus(s *prStatus, ownerRepo string) {
+	rows := prStatusRows(s, ownerRepo)
 	title := fmt.Sprintf("#%d %s", s.Number, s.Title)
 
 	if ui.PlainMode() {
@@ -500,7 +539,7 @@ func renderIssueStatus(s *issueStatus) {
 // prStatusRows builds the label/value rows of the PR status table.
 // Individual checks and reviewers are continuation rows: the label column
 // stays empty and the icon, name, and detail share the value column.
-func prStatusRows(s *prStatus) []statusRow {
+func prStatusRows(s *prStatus, ownerRepo string) []statusRow {
 	rows := []statusRow{
 		{"State", prStateText(s), stateTone(s)},
 		{"Author", statusLink(githubUserURL(s.Author), s.Author), ""},
@@ -533,6 +572,9 @@ func prStatusRows(s *prStatus) []statusRow {
 		}
 		for _, login := range s.Reviews.Pending {
 			rows = append(rows, statusRow{"", pendingReviewLine(login), "info"})
+		}
+		for _, team := range s.Reviews.PendingTeams {
+			rows = append(rows, statusRow{"", pendingTeamLine(team, orgFromRepo(ownerRepo)), "info"})
 		}
 	}
 
@@ -682,6 +724,19 @@ func githubLabelURL(repo, label string) string {
 	return "https://github.com/" + repo + "/labels/" + url.PathEscape(label)
 }
 
+// orgFromRepo extracts the owner from an "owner/repo" spec.
+func orgFromRepo(ownerRepo string) string {
+	owner, _, _ := strings.Cut(ownerRepo, "/")
+	return owner
+}
+
+func githubTeamURL(org, slug string) string {
+	if org == "" || slug == "" {
+		return ""
+	}
+	return "https://github.com/orgs/" + org + "/teams/" + slug
+}
+
 // statusCheckIcon returns the icon for a check, colored in styled output.
 func statusCheckIcon(c statusCheck) string {
 	if ui.PlainMode() {
@@ -739,6 +794,11 @@ func reviewLine(r statusReview) string {
 // pendingReviewLine renders a requested reviewer who has not reviewed yet.
 func pendingReviewLine(login string) string {
 	return pendingReviewIcon() + " " + statusLink(githubUserURL(login), login) + " (requested)"
+}
+
+// pendingTeamLine renders a requested team that has not reviewed yet.
+func pendingTeamLine(team, org string) string {
+	return pendingReviewIcon() + " " + statusLink(githubTeamURL(org, team), team) + " (requested)"
 }
 
 func pendingReviewIcon() string {

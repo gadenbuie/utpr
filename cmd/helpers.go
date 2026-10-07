@@ -15,6 +15,26 @@ func assumeYes() bool {
 	return flagInitYes || flagFetchYes || flagResumeYes || flagFinishYes || flagForgetYes
 }
 
+// validateViewState checks a --state picker filter for the given view type
+// ("pr" or "issue") and returns a formatted error for invalid values.
+func validateViewState(viewType, state string) error {
+	if viewType == "issue" {
+		switch state {
+		case "open", "closed", "all":
+			return nil
+		case "merged":
+			return ui.Die("--state merged is not valid for issues (expected: open, closed, all)")
+		default:
+			return ui.Dief("Invalid --state value: '%s' (expected: open, closed, all)", state)
+		}
+	}
+	switch state {
+	case "open", "closed", "merged", "all":
+		return nil
+	}
+	return ui.Dief("Invalid --state value: '%s' (expected: open, closed, merged, all)", state)
+}
+
 // parseNumberArg returns the positional number argument, if any. When the
 // --issue flag was given a numeric value (--issue=42), it takes precedence.
 func parseNumberArg(args []string, flagValue string) string {

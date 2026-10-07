@@ -93,12 +93,8 @@ func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
 	}
 
 	// Validate state
-	switch flagViewState {
-	case "open", "closed", "all":
-	case "merged":
-		return ui.Die("--state merged is not valid for issues (expected: open, closed, all)")
-	default:
-		return ui.Dief("Invalid --state value: '%s' (expected: open, closed, all)", flagViewState)
+	if err := validateViewState("issue", flagViewState); err != nil {
+		return err
 	}
 
 	var issueNumber int
@@ -187,10 +183,8 @@ func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, erro
 }
 
 func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
-	switch flagViewState {
-	case "open", "closed", "merged", "all":
-	default:
-		return ui.Dief("Invalid --state value: '%s' (expected: open, closed, merged, all)", flagViewState)
+	if err := validateViewState("pr", flagViewState); err != nil {
+		return err
 	}
 
 	prNumber, err := resolvePRNumber(ownerRepo, numberArg, cfg)

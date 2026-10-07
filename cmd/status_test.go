@@ -10,24 +10,6 @@ import (
 	"github.com/muesli/termenv"
 )
 
-func statusTestPR() *gh.PRInfo {
-	pr := &gh.PRInfo{
-		State:          "open",
-		Draft:          false,
-		MergeableState: "clean",
-		Number:         42,
-		Title:          "Add status command",
-		HTMLURL:        "https://github.com/owner/repo/pull/42",
-	}
-	pr.Head.Ref = "feat/status"
-	pr.Head.SHA = "abc123"
-	pr.Head.Repo.FullName = "owner/repo"
-	pr.Base.Ref = "main"
-	pr.Base.Repo.FullName = "owner/repo"
-	pr.User.Login = "gadenbuie"
-	return pr
-}
-
 func statusTestReview(login, state, at string) gh.PRReview {
 	var r gh.PRReview
 	r.User.Login = login
@@ -158,10 +140,13 @@ func TestSummarizeReviews(t *testing.T) {
 		name        string
 		reviews     []gh.PRReview
 		requested   []string
+		teams       []string
 		wantSummary string
 		wantOrder   []string
 		wantPending []string
+		wantTeams   []string
 		wantTotal   int
+		wantStates  map[string]string
 	}{
 		{
 			name:        "no reviews",
@@ -200,6 +185,24 @@ func TestSummarizeReviews(t *testing.T) {
 			wantTotal:   2,
 		},
 		{
+			name: "comment-only review does not override an actionable state",
+			reviews: []gh.PRReview{
+				statusTestReview("alice", "APPROVED", "2026-10-01T00:00:00Z"),
+				statusTestReview("alice", "COMMENTED", "2026-10-02T00:00:00Z"),
+				statusTestReview("bob", "CHANGES_REQUESTED", "2026-10-01T00:00:00Z"),
+				statusTestReview("bob", "COMMENTED", "2026-10-03T00:00:00Z"),
+				statusTestReview("carol", "COMMENTED", "2026-10-01T00:00:00Z"),
+			},
+			wantSummary: "changes_requested",
+			wantOrder:   []string{"alice", "bob", "carol"},
+			wantTotal:   3,
+			wantStates: map[string]string{
+				"alice": "APPROVED",
+				"bob":   "CHANGES_REQUESTED",
+				"carol": "COMMENTED",
+			},
+		},
+		{
 			name: "requested reviewers who have not reviewed are pending",
 			reviews: []gh.PRReview{
 				statusTestReview("alice", "APPROVED", "2026-10-01T00:00:00Z"),
@@ -217,11 +220,18 @@ func TestSummarizeReviews(t *testing.T) {
 			wantPending: []string{"bob"},
 			wantTotal:   1,
 		},
+		{
+			name:        "requested teams count toward reviewers",
+			teams:       []string{"shiny-team", "r-team"},
+			wantSummary: "none",
+			wantTeams:   []string{"shiny-team", "r-team"},
+			wantTotal:   2,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := summarizeReviews(tt.reviews, tt.requested)
+			got := summarizeReviews(tt.reviews, tt.requested, tt.teams)
 			if got.Summary != tt.wantSummary {
 				t.Errorf("Summary = %q, want %q", got.Summary, tt.wantSummary)
 			}
@@ -236,8 +246,25 @@ func TestSummarizeReviews(t *testing.T) {
 			if strings.Join(got.Pending, ",") != strings.Join(tt.wantPending, ",") {
 				t.Errorf("Pending = %v, want %v", got.Pending, tt.wantPending)
 			}
+			if strings.Join(got.PendingTeams, ",") != strings.Join(tt.wantTeams, ",") {
+				t.Errorf("PendingTeams = %v, want %v", got.PendingTeams, tt.wantTeams)
+			}
 			if got.Total != tt.wantTotal {
 				t.Errorf("Total = %d, want %d", got.Total, tt.wantTotal)
+			}
+			for login, want := range tt.wantStates {
+				found := false
+				for _, item := range got.Items {
+					if item.Reviewer == login {
+						found = true
+						if item.State != want {
+							t.Errorf("%s state = %q, want %q", login, item.State, want)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("%s missing from Items", login)
+				}
 			}
 		})
 	}
@@ -291,7 +318,7 @@ func statusPRStatusFixture() *prStatus {
 	s.Reviews = summarizeReviews([]gh.PRReview{
 		statusTestReview("alice", "APPROVED", "2026-10-02T15:04:05Z"),
 		statusTestReview("bob", "CHANGES_REQUESTED", "2026-10-01T00:00:00Z"),
-	}, []string{"carol"})
+	}, []string{"carol"}, nil)
 	s.LocalSync = &statusLocalSync{Branch: "feat/status", Status: "ahead", AheadBy: 1}
 	return s
 }
@@ -306,12 +333,13 @@ func TestRenderPRStatusRich(t *testing.T) {
 	withPlainMode(t, false)
 
 	// Force a color profile: stdout in tests is a pipe, so lipgloss would
-	// otherwise strip all styling.
+	// otherwise strip all styling. Restore the previous profile afterwards.
+	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI)
-	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
 	out := captureStdout(t, func() {
-		renderPRStatus(statusPRStatusFixture())
+		renderPRStatus(statusPRStatusFixture(), "owner/repo")
 	})
 
 	for _, want := range []string{
@@ -367,7 +395,7 @@ func TestRenderPRStatusPlain(t *testing.T) {
 	withPlainMode(t, true)
 
 	out := captureStdout(t, func() {
-		renderPRStatus(statusPRStatusFixture())
+		renderPRStatus(statusPRStatusFixture(), "owner/repo")
 	})
 
 	for _, want := range []string{
@@ -413,7 +441,7 @@ func TestRenderPRStatusUnavailableSections(t *testing.T) {
 	s.Reviews = statusReviews{Summary: "unknown", Items: []statusReview{}}
 
 	out := captureStdout(t, func() {
-		renderPRStatus(s)
+		renderPRStatus(s, "owner/repo")
 	})
 
 	for _, want := range []string{
@@ -581,6 +609,50 @@ func TestReviewsSummaryText(t *testing.T) {
 	}
 }
 
+func TestCountUnresolvedThreads(t *testing.T) {
+	comment := func(id, replyTo int) gh.ReviewComment {
+		return gh.ReviewComment{ID: id, InReplyToID: replyTo}
+	}
+
+	// Three threads: one with two replies, one with one reply, one standalone.
+	comments := []gh.ReviewComment{
+		comment(1, 0), comment(2, 1), comment(3, 1),
+		comment(4, 0), comment(5, 4),
+		comment(6, 0),
+	}
+	if got := countUnresolvedThreads(comments); got != 3 {
+		t.Errorf("countUnresolvedThreads = %d, want 3", got)
+	}
+	if got := countUnresolvedThreads(nil); got != 0 {
+		t.Errorf("countUnresolvedThreads(nil) = %d, want 0", got)
+	}
+}
+
+func TestValidateViewState(t *testing.T) {
+	tests := []struct {
+		viewType string
+		state    string
+		wantErr  bool
+	}{
+		{"pr", "open", false},
+		{"pr", "closed", false},
+		{"pr", "merged", false},
+		{"pr", "all", false},
+		{"pr", "foo", true},
+		{"issue", "open", false},
+		{"issue", "closed", false},
+		{"issue", "all", false},
+		{"issue", "merged", true},
+		{"issue", "foo", true},
+	}
+	for _, tt := range tests {
+		err := validateViewState(tt.viewType, tt.state)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validateViewState(%q, %q) error = %v, wantErr %v", tt.viewType, tt.state, err, tt.wantErr)
+		}
+	}
+}
+
 func TestGitHubURLHelpers(t *testing.T) {
 	if got := githubUserURL("octocat"); got != "https://github.com/octocat" {
 		t.Errorf("githubUserURL = %q", got)
@@ -593,5 +665,14 @@ func TestGitHubURLHelpers(t *testing.T) {
 	}
 	if got := githubLabelURL("owner/repo", "needs help"); got != "https://github.com/owner/repo/labels/needs%20help" {
 		t.Errorf("githubLabelURL = %q", got)
+	}
+	if got := orgFromRepo("owner/repo"); got != "owner" {
+		t.Errorf("orgFromRepo = %q", got)
+	}
+	if got := githubTeamURL("owner", "shiny-team"); got != "https://github.com/orgs/owner/teams/shiny-team" {
+		t.Errorf("githubTeamURL = %q", got)
+	}
+	if got := githubTeamURL("", "shiny-team"); got != "" {
+		t.Errorf("githubTeamURL(empty org) = %q, want empty", got)
 	}
 }

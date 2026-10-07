@@ -116,6 +116,10 @@ type PRInfo struct {
 	RequestedReviewers []struct {
 		Login string `json:"login"`
 	} `json:"requested_reviewers"`
+	RequestedTeams []struct {
+		Name string `json:"name"`
+		Slug string `json:"slug"`
+	} `json:"requested_teams"`
 }
 
 // GetPR fetches pull request details.
