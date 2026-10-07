@@ -111,8 +111,13 @@ interactive prompt fails fast with guidance instead of hanging. Pass the
 global `--agent` flag to force plain output in a terminal, or `--pretty`
 to force styled output when piping.
 
+New to utpr? Run `utpr quickstart` for a guided tour of the PR lifecycle.
+AI coding agents get an agent-specific guide automatically when output is
+piped, or explicitly with `utpr quickstart --agent`.
+
 | Command | Description |
 |---------|-------------|
+| `utpr quickstart` | Guided introduction: a PR-lifecycle tour for humans; the agent guide is served automatically when piped or with `--agent` |
 | `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree; `--yes` assumes setup defaults |
 | `utpr worktree create [<branch>]` | Create a branch in a new worktree; alias for `utpr init --worktree` |
 | `utpr pause` | Switch back to the default branch |
