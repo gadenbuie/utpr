@@ -13,8 +13,10 @@ keep it current, watch CI, and clean up after the merge.
 utpr init my-feature
 ```
 
-Creates the PR branch (with your repo's prefix, e.g. `feat/my-feature`),
-switches to it, and remembers it for later cleanup.
+Creates the PR branch with the exact name you give it (`my-feature`),
+switches to it, and remembers it for later cleanup. Starting from an issue
+instead — `utpr init 123` — suggests a branch named after the issue
+(`fix/123-<slug>`).
 
 ### 2. Push and open the PR — `utpr push`
 
@@ -75,6 +77,7 @@ clears the metadata utpr stashed along the way.
 - `utpr fetch <pr-number>` — pull down someone else's PR to review or test
   it locally
 - `utpr clean` — tidy up merged branches and stale remotes in one pass
-- `utpr quickstart --agent` — the same tour, written for AI coding agents
+- `utpr quickstart --agent` — the guide for AI coding agents: output
+  modes, CI commands, and non-interactive use
 - The [README](https://github.com/gadenbuie/utpr#readme) — installation,
   worktrees, configuration, troubleshooting

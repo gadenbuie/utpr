@@ -53,7 +53,8 @@ func TestQuickstartVariantSelection(t *testing.T) {
 			out := runQuickstartCaptured(t, tt.stdoutTTY, tt.args)
 			plain := collapseSpace(ui.StripANSI(out))
 
-			if gotAgent := strings.Contains(plain, "guide for AI coding agents"); gotAgent != tt.wantAgent {
+			// "pre-trimmed" appears only in the agent guide.
+			if gotAgent := strings.Contains(plain, "pre-trimmed"); gotAgent != tt.wantAgent {
 				t.Errorf("agent guide shown = %v, want %v", gotAgent, tt.wantAgent)
 			}
 			if gotHuman := strings.Contains(plain, "The PR lifecycle"); gotHuman == tt.wantAgent {
@@ -101,6 +102,7 @@ func TestQuickstartAgentGuideContent(t *testing.T) {
 		"--agent",
 		"--pretty",
 		"utpr status --json",
+		"utpr worktree list --json",
 		"--yes",
 		"non-interactive",
 		"head",

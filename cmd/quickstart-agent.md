@@ -16,8 +16,23 @@ Every utpr command is TTY-aware:
   piping.
 - Read commands trim themselves for agent use: `utpr view` emits raw
   Markdown (review comment threads carry machine-readable `comment_id` /
-  `thread_id` markers), `utpr status` a compact table, and
-  `utpr status --json` structured JSON.
+  `thread_id` markers), `utpr status` a compact table, and structured JSON
+  is a flag away (`--json`, below).
+
+## Machine-readable JSON
+
+When you need specific fields rather than prose, use the JSON modes — they
+avoid parsing terminal output entirely:
+
+- `utpr status --json` — the full status report: PR state, CI checks
+  (name, status, conclusion, duration), review summary (approved / pending
+  reviewers), unresolved thread count, and local sync (`ahead_by` /
+  `behind_by`).
+- `utpr worktree list --json` — worktrees as records (path, branch, head,
+  PR URL).
+
+JSON is written to stdout, so it composes cleanly with the output-mode
+rules above: status messages still go to stderr.
 
 ## CI status and logs
 

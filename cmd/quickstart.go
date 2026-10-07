@@ -29,17 +29,10 @@ is printed instead. --pretty forces the human guide.`,
 
 // runQuickstart prints the guide matching the active output mode: the agent
 // guide whenever plain mode is active (piped, or --agent), and the human guide
-// otherwise. quickstartGuide decides; the variant selection deliberately
-// mirrors ui.AgentMode so piped output serves agents automatically.
+// otherwise. PersistentPreRunE has already applied --agent/--pretty and TTY
+// detection to ui.PlainMode() by the time RunE runs.
 func runQuickstart(cmd *cobra.Command, args []string) error {
-	return printQuickstartGuide(quickstartGuide())
-}
-
-// quickstartGuide returns true when the agent guide should be printed.
-// PersistentPreRunE has already applied --agent/--pretty and TTY detection
-// to ui.PlainMode() by the time RunE runs.
-func quickstartGuide() bool {
-	return ui.PlainMode()
+	return printQuickstartGuide(ui.PlainMode())
 }
 
 // printQuickstartGuide writes the guide to stdout: glamour-rendered for

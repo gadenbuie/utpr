@@ -37,6 +37,7 @@ func TestQuickstartOutsideGitRepo(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(oldWd) })
 
 	withCLIArgs(t, "quickstart")
+	t.Cleanup(func() { ui.SetPlainMode(false) })
 
 	out := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {
