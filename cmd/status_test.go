@@ -376,18 +376,47 @@ func TestRenderPRStatusRich(t *testing.T) {
 		t.Errorf("author should be an OSC 8 hyperlink to their profile")
 	}
 	// Tone colors: green for passing, red for failures and changes requested,
-	// bold for the title.
+	// bold yellow for the title (an open draft matches its State row tone).
 	if !strings.Contains(out, "\x1b[32m") {
 		t.Errorf("styled output should contain green tones")
 	}
 	if !strings.Contains(out, "\x1b[31m") {
 		t.Errorf("styled output should contain red tones")
 	}
-	if !strings.Contains(out, "\x1b[1m") {
-		t.Errorf("title should be bold")
+	if !strings.Contains(out, "\x1b[1;33m") {
+		t.Errorf("title should be bold yellow for an open draft PR")
 	}
 	if !strings.Contains(out, "└") {
 		t.Errorf("table should have a bottom border")
+	}
+}
+
+func TestStatusTitleStyleTones(t *testing.T) {
+	// Force a color profile: stdout in tests is a pipe, so lipgloss would
+	// otherwise strip all styling.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	tests := []struct {
+		name string
+		tone string
+		want string // escape sequence expected in rendered title
+	}{
+		{"open PR is cyan", "info", "\x1b[1;36m"},
+		{"open draft PR is yellow", "warn", "\x1b[1;33m"},
+		{"merged PR is green", "good", "\x1b[1;32m"},
+		{"closed PR is red", "bad", "\x1b[1;31m"},
+		{"unknown state is uncolored", "", "\x1b[1m"},
+		{"muted state is gray", "muted", "\x1b[1;90m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := statusTitleStyle(tt.tone).Render("title")
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("tone %q: got %q, want escape %q", tt.tone, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -514,7 +514,8 @@ func renderPRStatus(s *prStatus, ownerRepo string) {
 		return
 	}
 
-	fmt.Println(lipgloss.NewStyle().Bold(true).Render(ui.Hyperlink(s.URL, title)))
+	fmt.Println()
+	fmt.Println(statusTitleStyle(stateTone(s)).Render(ui.Hyperlink(s.URL, title)))
 	fmt.Println()
 	fmt.Println(renderStatusTable(rows))
 }
@@ -531,9 +532,41 @@ func renderIssueStatus(s *issueStatus) {
 		return
 	}
 
-	fmt.Println(lipgloss.NewStyle().Bold(true).Render(ui.Hyperlink(s.URL, title)))
+	fmt.Println()
+	fmt.Println(statusTitleStyle(issueStateTone(s.State)).Render(ui.Hyperlink(s.URL, title)))
 	fmt.Println()
 	fmt.Println(renderStatusTable(rows))
+}
+
+// toneColors maps tone names to the ANSI colors used across status output:
+// good (green), bad (red), warn (yellow), info (cyan), muted (gray).
+var toneColors = map[string]string{
+	"good":  "2",
+	"bad":   "1",
+	"warn":  "3",
+	"info":  "6",
+	"muted": "8",
+}
+
+// statusTitleStyle styles a status title with bold text in the color used
+// for the given tone, so the title matches the State row of the table.
+func statusTitleStyle(tone string) lipgloss.Style {
+	style := lipgloss.NewStyle().Bold(true)
+	if c, ok := toneColors[tone]; ok {
+		style = style.Foreground(lipgloss.Color(c))
+	}
+	return style
+}
+
+// issueStateTone returns the tone for an issue state.
+func issueStateTone(state string) string {
+	if state == "open" {
+		return "info"
+	}
+	if state != "" {
+		return "muted"
+	}
+	return ""
 }
 
 // prStatusRows builds the label/value rows of the PR status table.
@@ -601,14 +634,8 @@ func prStatusRows(s *prStatus, ownerRepo string) []statusRow {
 
 // issueStatusRows builds the label/value rows of the issue status table.
 func issueStatusRows(s *issueStatus) []statusRow {
-	tone := ""
-	if s.State == "open" {
-		tone = "info"
-	} else if s.State != "" {
-		tone = "muted"
-	}
 	rows := []statusRow{
-		{"State", s.State, tone},
+		{"State", s.State, issueStateTone(s.State)},
 		{"Author", statusLink(githubUserURL(s.Author), s.Author), ""},
 		{"Created", shortDate(s.CreatedAt), ""},
 	}
@@ -635,12 +662,9 @@ func issueStatusRows(s *issueStatus) []statusRow {
 func renderStatusTable(rows []statusRow) string {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Padding(0, 1)
 	valueStyle := lipgloss.NewStyle().Padding(0, 1)
-	tones := map[string]lipgloss.Style{
-		"good":  valueStyle.Foreground(lipgloss.Color("2")),
-		"bad":   valueStyle.Foreground(lipgloss.Color("1")),
-		"warn":  valueStyle.Foreground(lipgloss.Color("3")),
-		"info":  valueStyle.Foreground(lipgloss.Color("6")),
-		"muted": valueStyle.Foreground(lipgloss.Color("8")),
+	tones := map[string]lipgloss.Style{}
+	for tone, color := range toneColors {
+		tones[tone] = valueStyle.Foreground(lipgloss.Color(color))
 	}
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
