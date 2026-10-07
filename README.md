@@ -26,6 +26,9 @@ experience for the full pull request round-trip:
 - **Review others' PRs** with `utpr fetch`, which configures remotes
   and tracking branches automatically — even for fork-based PRs.
 - **Stay up to date** with `utpr pull` and `utpr merge-main`.
+- **Check PR status** with `utpr status`, a one-screen summary of state,
+  CI checks, reviews, and unresolved threads for the current branch's PR
+  (or any PR or issue by number).
 - **Monitor CI** with `utpr ci`, which shows GitHub Actions check status,
   surfaces a one-line failure reason for each failed check, and streams
   failed-job logs right in your terminal.
