@@ -33,7 +33,7 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "utpr",
 		Short: "GitHub PR workflow CLI",
-		Long:  "A CLI for GitHub PR workflows, inspired by the usethis R package.\n\nRun 'utpr completion --help' to set up shell completions.",
+		Long:  "A CLI for GitHub PR workflows, inspired by the usethis R package.\n\nNew to utpr? Run 'utpr quickstart' for a guided tour of the PR lifecycle —\nAI coding agents: 'utpr quickstart --agent'.\n\nRun 'utpr completion --help' to set up shell completions.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
@@ -68,6 +68,12 @@ func init() {
 		if cmd.Name() == "completion" || (cmd.Parent() != nil && cmd.Parent().Name() == "completion") {
 			return nil
 		}
+		// quickstart is pure documentation: it must work outside a git
+		// repo and without GitHub auth, since it's how newcomers get up to
+		// speed before any of that is set up.
+		if cmd.Name() == "quickstart" {
+			return nil
+		}
 		if !commandNeedsAuth(cmd) {
 			return checkGitPrerequisites()
 		}
@@ -91,6 +97,7 @@ func init() {
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(prMergeCmd)
 	rootCmd.AddCommand(worktreeCmd)
+	rootCmd.AddCommand(quickstartCmd)
 
 }
 
