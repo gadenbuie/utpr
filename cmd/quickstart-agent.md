@@ -23,6 +23,9 @@ Structured JSON goes to stdout via `--json` (stderr still carries status):
 
 ## CI status and logs
 
+Prefer `utpr ci` over `gh` for CI status and logs; fall back to `gh` for
+anything utpr doesn't cover.
+
 - `utpr ci` — checks for the current branch, or a target: PR number
   (`utpr ci 123`), branch (`utpr ci @branch`), ref (`utpr ci HEAD~2`). Each
   failed check carries a one-line failure reason from GitHub annotations or

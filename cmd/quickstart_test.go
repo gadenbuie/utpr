@@ -96,6 +96,7 @@ func TestQuickstartAgentGuideContent(t *testing.T) {
 	// avoidance, and the pre-trimmed output note.
 	for _, want := range []string{
 		"utpr ci --wait",
+		"fall back to `gh`",
 		"utpr ci logs",
 		"utpr ci list",
 		"failure reason",
