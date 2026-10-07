@@ -82,12 +82,14 @@ func GetRepo(ownerRepo string) (*RepoInfo, error) {
 
 // PRInfo holds information about a pull request.
 type PRInfo struct {
-	State   string `json:"state"`
-	Merged  bool   `json:"merged"`
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	HTMLURL string `json:"html_url"`
-	Head    struct {
+	State          string `json:"state"`
+	Merged         bool   `json:"merged"`
+	Draft          bool   `json:"draft"`
+	MergeableState string `json:"mergeable_state"` // clean, dirty, blocked, behind, unstable, unknown
+	Number         int    `json:"number"`
+	Title          string `json:"title"`
+	HTMLURL        string `json:"html_url"`
+	Head           struct {
 		Ref  string `json:"ref"`
 		SHA  string `json:"sha"`
 		Repo struct {
@@ -111,6 +113,9 @@ type PRInfo struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	RequestedReviewers []struct {
+		Login string `json:"login"`
+	} `json:"requested_reviewers"`
 }
 
 // GetPR fetches pull request details.
@@ -138,6 +143,7 @@ type IssueInfo struct {
 	State     string `json:"state"`
 	HTMLURL   string `json:"html_url"`
 	CreatedAt string `json:"created_at"`
+	Comments  int    `json:"comments"`
 	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
@@ -927,7 +933,7 @@ func ListRecentWorkflowRuns(ownerRepo, branch string, limit int) ([]WorkflowRun,
 	total := 0
 	for path != "" {
 		var response struct {
-			TotalCount   int            `json:"total_count"`
+			TotalCount   int           `json:"total_count"`
 			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
 		}
 		resp, reqErr := client.Request("GET", path, nil)

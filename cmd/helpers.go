@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
@@ -12,6 +13,39 @@ import (
 
 func assumeYes() bool {
 	return flagInitYes || flagFetchYes || flagResumeYes || flagFinishYes || flagForgetYes
+}
+
+// parseNumberArg returns the positional number argument, if any. When the
+// --issue flag was given a numeric value (--issue=42), it takes precedence.
+func parseNumberArg(args []string, flagValue string) string {
+	var numberArg string
+	if len(args) > 0 {
+		numberArg = args[0]
+	}
+	if flagValue != "" {
+		if _, err := strconv.Atoi(flagValue); err == nil {
+			numberArg = flagValue
+		}
+	}
+	return numberArg
+}
+
+// detectPRorIssue fetches the given number and reports whether it refers to a
+// pull request. For issues, the fetched issue is returned so callers can
+// reuse it without a second API call.
+func detectPRorIssue(ownerRepo, numberArg string) (bool, *gh.IssueInfo, error) {
+	n, err := strconv.Atoi(numberArg)
+	if err != nil {
+		return false, nil, ui.Dief("Invalid number: %s", numberArg)
+	}
+	issue, err := gh.GetIssue(ownerRepo, n)
+	if err != nil {
+		return false, nil, ui.Dief("Could not find issue or PR #%s.", numberArg)
+	}
+	if issue.PullRequest != nil {
+		return true, nil, nil
+	}
+	return false, issue, nil
 }
 
 // findLocalBranchForPR returns the local branch name corresponding to a PR,

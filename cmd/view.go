@@ -63,30 +63,17 @@ func runView(cmd *cobra.Command, args []string) error {
 		viewType = "issue"
 	}
 
-	var numberArg string
-	if len(args) > 0 {
-		numberArg = args[0]
-	}
-	// --issue=N case
-	if flagViewIssue != "" {
-		if _, err := strconv.Atoi(flagViewIssue); err == nil {
-			numberArg = flagViewIssue
-		}
-	}
+	numberArg := parseNumberArg(args, flagViewIssue)
 
 	// Auto-detect PR vs issue when given a number.
 	// We cache the fetched issue to avoid a double API call when viewType == "issue".
 	var cachedIssue *gh.IssueInfo
 	if numberArg != "" && !viewTypeExplicit {
-		n, convErr := strconv.Atoi(numberArg)
-		if convErr != nil {
-			return ui.Dief("Invalid number: %s", numberArg)
-		}
-		issue, err := gh.GetIssue(ownerRepo, n)
+		isPR, issue, err := detectPRorIssue(ownerRepo, numberArg)
 		if err != nil {
-			return ui.Dief("Could not find issue or PR #%s.", numberArg)
+			return err
 		}
-		if issue.PullRequest != nil {
+		if isPR {
 			viewType = "pr"
 		} else {
 			viewType = "issue"
@@ -157,6 +144,48 @@ func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
 	return renderIssueWithComments(issue, comments)
 }
 
+// resolvePRNumber determines which PR to act on: the given number, else the
+// current branch's open PR, else a pick from the PR picker. Returns 0 when
+// the picker was cancelled.
+func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, error) {
+	if numberArg != "" {
+		n, err := strconv.Atoi(numberArg)
+		if err != nil {
+			return 0, ui.Dief("Invalid PR number: %s", numberArg)
+		}
+		return n, nil
+	}
+
+	prNumber := 0
+	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
+	if !onDefault && flagViewState == "open" {
+		branch, err := git.GetCurrentBranch()
+		if err == nil {
+			if prURL := git.GetBranchPRURL(branch); prURL != "" {
+				prNumber = prNumberFromURL(prURL)
+			}
+			if prNumber == 0 {
+				lookup := branch
+				if ref := git.GetBranchMergeRef(branch); ref != "" && ref != branch {
+					lookup = ref
+				}
+				pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open")
+				if err == nil && pr != nil {
+					prNumber = pr.Number
+				}
+			}
+		}
+	}
+	if prNumber == 0 {
+		n, err := pickForView(ownerRepo, "pr")
+		if err != nil {
+			return 0, err
+		}
+		prNumber = n
+	}
+	return prNumber, nil
+}
+
 func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	switch flagViewState {
 	case "open", "closed", "merged", "all":
@@ -164,43 +193,12 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return ui.Dief("Invalid --state value: '%s' (expected: open, closed, merged, all)", flagViewState)
 	}
 
-	var prNumber int
-	if numberArg != "" {
-		n, err := strconv.Atoi(numberArg)
-		if err != nil {
-			return ui.Dief("Invalid PR number: %s", numberArg)
-		}
-		prNumber = n
-	} else {
-		onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
-		if !onDefault && flagViewState == "open" {
-			branch, err := git.GetCurrentBranch()
-			if err == nil {
-				if prURL := git.GetBranchPRURL(branch); prURL != "" {
-					prNumber = prNumberFromURL(prURL)
-				}
-				if prNumber == 0 {
-					lookup := branch
-					if ref := git.GetBranchMergeRef(branch); ref != "" && ref != branch {
-						lookup = ref
-					}
-					pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open")
-					if err == nil && pr != nil {
-						prNumber = pr.Number
-					}
-				}
-			}
-		}
-		if prNumber == 0 {
-			n, err := pickForView(ownerRepo, "pr")
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return nil
-			}
-			prNumber = n
-		}
+	prNumber, err := resolvePRNumber(ownerRepo, numberArg, cfg)
+	if err != nil {
+		return err
+	}
+	if prNumber == 0 {
+		return nil
 	}
 
 	if flagViewWeb {

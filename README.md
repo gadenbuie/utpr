@@ -123,6 +123,7 @@ to force styled output when piping.
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |
 | `utpr view [<pr>]` | View PR details and comments; raw Markdown when piped or with `--agent` |
+| `utpr status [<pr-or-issue>]` | Quick status summary (state, CI checks, reviews, unresolved threads, local sync); defaults to the current branch's PR; `--json` for machine-readable output |
 | `utpr bisect [<bad-ref>]` | Find the commit that introduced a bug |
 
 Run `utpr <command> --help` for detailed usage of any command.
@@ -178,6 +179,31 @@ utpr view --comments only
 
 # Done reviewing
 utpr finish
+```
+
+### Checking PR status
+
+`utpr status` answers "where does this PR stand right now?" as a single
+table: state, every CI check with its duration, the latest review from
+each reviewer, unresolved review threads, and whether your local branch
+matches the remote head. In a rich terminal the table is styled and the
+title, authors, branches, and checks link to GitHub; when piped (or with
+`--agent`) it becomes a markdown table. Give a number to target a
+specific PR or issue (the type is detected automatically).
+
+```bash
+# Status of the current branch's PR
+utpr status
+
+# Status of a specific PR or issue by number
+utpr status 42
+
+# Machine-readable output for scripts and agents
+utpr status --json
+utpr status 42 --json
+
+# Pick an issue interactively
+utpr status --issue
 ```
 
 ### Monitoring CI

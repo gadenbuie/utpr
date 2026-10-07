@@ -84,6 +84,7 @@ func init() {
 	rootCmd.AddCommand(fetchCmd)
 	rootCmd.AddCommand(finishCmd)
 	rootCmd.AddCommand(viewCmd)
+	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(bisectCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(ciCmd)
