@@ -110,6 +110,11 @@ jobs:
       - name: Build release notes
         run: |
           touch release_notes.txt
+          # actions/checkout fetches the tagged commit into refs/tags/<tag>,
+          # replacing the annotated tag object with a lightweight tag, so
+          # %(contents) would return the commit message instead of the tag
+          # message. Re-fetch the tag ref to restore the tag object.
+          git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           TAG_MSG=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
           if [ -n "${TAG_MSG}" ]; then
             printf '%s\n' "${TAG_MSG}" > release_notes.txt
