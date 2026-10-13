@@ -1316,11 +1316,16 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		ownerRepo, sha = target.pickOwnerRepo, picked.HeadSHA
 	}
 
-	// Collect completed jobs. In interactive mode (or --all) we want all jobs
-	// so the picker can offer them; otherwise only fetch from failed runs.
-	// Unlike the one-shot --logs path, runs still in progress are skipped.
-	allJobs, failedJobs, _, err := cilogsJobEntries(ownerRepo, sha, func(r gh.WorkflowRun) bool {
-		return r.Status == "completed" && (interactive || flagCILogsAll || isFailedConclusion(r.Conclusion))
+	// Collect completed jobs. In interactive mode (or --all) we want all
+	// jobs so the picker can offer them; otherwise only fetch from failed
+	// runs. Like the one-shot --logs path, runs still in progress are
+	// included: a failed job completes long before its run does, and its
+	// logs are available immediately.
+	allJobs, failedJobs, pendingRuns, err := cilogsJobEntries(ownerRepo, sha, func(r gh.WorkflowRun) bool {
+		if r.Status != "completed" {
+			return true
+		}
+		return interactive || flagCILogsAll || isFailedConclusion(r.Conclusion)
 	})
 	if errors.Is(err, errNoCIRuns) {
 		printCIInfo(ciAgentMode(), "No CI runs found for this commit.")
@@ -1331,7 +1336,11 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(allJobs) == 0 {
-		printCIInfo(ciAgentMode(), "No completed CI jobs found for this commit.")
+		if pendingRuns > 0 {
+			printCIInfo(ciAgentMode(), "No completed CI jobs yet; some runs are still in progress.")
+		} else {
+			printCIInfo(ciAgentMode(), "No completed CI jobs found for this commit.")
+		}
 		return nil
 	}
 
@@ -1363,6 +1372,8 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 	if len(targetJobs) == 0 {
 		if flagCILogsJob != "" {
 			printCIInfof(ciAgentMode(), "No jobs matching '%s'.", flagCILogsJob)
+		} else if pendingRuns > 0 {
+			printCIInfo(ciAgentMode(), "No completed failed jobs yet; some runs are still in progress.")
 		} else {
 			printCISuccess(ciAgentMode(), "No failed jobs.")
 		}

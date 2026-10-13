@@ -333,6 +333,119 @@ func TestRunCILogsPickerFallbackSwapsTarget(t *testing.T) {
 	}
 }
 
+func TestRunCILogsFailedInProgressRuns(t *testing.T) {
+	t.Run("failed job in in-progress run is shown", func(t *testing.T) {
+		resetCIFlags(t)
+		withCILogsFlags(t, false, false, true, "")
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
+		s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""}}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {
+				{ID: 11, Name: "build", Status: "completed", Conclusion: "failure"},
+				{ID: 12, Name: "slow-job", Status: "in_progress", Conclusion: ""},
+			},
+		}
+		s.logs = map[int64]string{11: "Error: boom\n"}
+
+		out := captureStdout(t, func() {
+			if err := runCILogs(nil, nil); err != nil {
+				t.Errorf("runCILogs() = %v", err)
+			}
+		})
+		if !strings.Contains(out, "## test / build") || !strings.Contains(out, "Error: boom") {
+			t.Errorf("runCILogs() missing failed job from in-progress run:\n%s", out)
+		}
+		if len(s.calls.getJobLogs) != 1 || s.calls.getJobLogs[0] != 11 {
+			t.Errorf("getJobLogs calls = %v, want only failed job 11", s.calls.getJobLogs)
+		}
+	})
+
+	t.Run("no failed jobs yet gets a pending message", func(t *testing.T) {
+		resetCIFlags(t)
+		withCILogsFlags(t, false, false, true, "")
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
+		s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""}}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {
+				{ID: 11, Name: "build", Status: "completed", Conclusion: "success"},
+				{ID: 12, Name: "test", Status: "in_progress", Conclusion: ""},
+			},
+		}
+
+		out := captureStdout(t, func() {
+			if err := runCILogs(nil, nil); err != nil {
+				t.Errorf("runCILogs() = %v", err)
+			}
+		})
+		if !strings.Contains(out, "still in progress") {
+			t.Errorf("runCILogs() missing in-progress message:\n%s", out)
+		}
+		if len(s.calls.getJobLogs) != 0 {
+			t.Errorf("getJobLogs called for %v, want none", s.calls.getJobLogs)
+		}
+	})
+
+	t.Run("no completed jobs at all gets a pending message", func(t *testing.T) {
+		resetCIFlags(t)
+		withCILogsFlags(t, false, false, true, "")
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
+		s.wfRuns = []gh.WorkflowRun{{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""}}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {{ID: 11, Name: "test", Status: "queued", Conclusion: ""}},
+		}
+
+		out := captureStdout(t, func() {
+			if err := runCILogs(nil, nil); err != nil {
+				t.Errorf("runCILogs() = %v", err)
+			}
+		})
+		if !strings.Contains(out, "still in progress") {
+			t.Errorf("runCILogs() missing in-progress message when no jobs completed:\n%s", out)
+		}
+		if len(s.calls.getJobLogs) != 0 {
+			t.Errorf("getJobLogs called for %v, want none", s.calls.getJobLogs)
+		}
+	})
+
+	t.Run("completed successful runs are still skipped", func(t *testing.T) {
+		resetCIFlags(t)
+		withCILogsFlags(t, false, false, true, "")
+		s := &reasonSeam{}
+		withReasonSeam(t, s)
+		withRunCISeams(t, ciTarget{ownerRepo: "o/r", sha: "sha"}, nil)
+		s.wfRuns = []gh.WorkflowRun{
+			{ID: 1, Name: "lint", Status: "completed", Conclusion: "success"},
+			{ID: 2, Name: "test", Status: "in_progress", Conclusion: ""},
+		}
+		s.jobs = map[int64][]gh.WorkflowJob{
+			1: {{ID: 11, Name: "lint", Status: "completed", Conclusion: "success"}},
+			2: {{ID: 21, Name: "build", Status: "completed", Conclusion: "failure"}},
+		}
+		s.logs = map[int64]string{21: "Error: boom\n"}
+
+		out := captureStdout(t, func() {
+			if err := runCILogs(nil, nil); err != nil {
+				t.Errorf("runCILogs() = %v", err)
+			}
+		})
+		if strings.Contains(out, "## lint / lint") {
+			t.Errorf("runCILogs() rendered jobs from a successful run:\n%s", out)
+		}
+		if !strings.Contains(out, "## test / build") {
+			t.Errorf("runCILogs() missing failed job from in-progress run:\n%s", out)
+		}
+		if s.calls.listWorkflowRunJobs != 1 {
+			t.Errorf("listWorkflowRunJobs calls = %d, want 1 (successful run skipped)", s.calls.listWorkflowRunJobs)
+		}
+	})
+}
+
 func TestShowCILogsFailedInProgressRuns(t *testing.T) {
 	t.Run("failed job in in-progress run is shown", func(t *testing.T) {
 		s := &reasonSeam{}
