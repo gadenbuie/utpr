@@ -1291,12 +1291,12 @@ func runCILogs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := remote.Detect()
+	cfg, err := ciRemoteDetect()
 	if err != nil {
 		return ui.Die(err.Error())
 	}
 
-	target, err := resolveCITarget(cfg, args, flagCILogsPick)
+	target, err := ciResolveCITarget(cfg, args, flagCILogsPick)
 	if err != nil {
 		return err
 	}
@@ -1635,12 +1635,12 @@ func resolveRerunMode(jobs []string) (mode string, filters []string, err error) 
 }
 
 func runCIRerun(cmd *cobra.Command, args []string) error {
-	cfg, err := remote.Detect()
+	cfg, err := ciRemoteDetect()
 	if err != nil {
 		return ui.Die(err.Error())
 	}
 
-	target, err := resolveCITarget(cfg, args, flagCIRerunPick)
+	target, err := ciResolveCITarget(cfg, args, flagCIRerunPick)
 	if err != nil {
 		return err
 	}

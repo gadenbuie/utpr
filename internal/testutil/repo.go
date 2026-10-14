@@ -9,6 +9,18 @@ import (
 	"testing"
 )
 
+// NewRepoHooks run whenever TempRepo or TempRepoWithRemote create a fresh
+// repository, and again at test cleanup. Use them to reset global state that
+// depends on the working directory — such as cached remote detection — so it
+// can't leak between tests that run in different repos.
+var NewRepoHooks []func(t *testing.T)
+
+func runNewRepoHooks(t *testing.T) {
+	for _, hook := range NewRepoHooks {
+		hook(t)
+	}
+}
+
 // TempRepo creates a temporary git repository with an initial commit.
 // It changes the working directory to the new repo and restores it on cleanup.
 func TempRepo(t *testing.T) string {
@@ -24,6 +36,8 @@ func TempRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("failed to resolve symlinks: %v", err)
 	}
+
+	runNewRepoHooks(t)
 
 	RunGit(t, dir, "init", "--initial-branch=main")
 	RunGit(t, dir, "config", "user.name", "Test User")
@@ -57,6 +71,8 @@ func TempRepoWithRemote(t *testing.T) (clonePath, remotePath string) {
 	if err != nil {
 		t.Fatalf("failed to resolve symlinks: %v", err)
 	}
+
+	runNewRepoHooks(t)
 
 	remotePath = filepath.Join(parentDir, "remote.git")
 	clonePath = filepath.Join(parentDir, "clone")
