@@ -79,7 +79,7 @@ func runFetch(cmd *cobra.Command, args []string) error {
 
 	existingTracking := git.FindBranchByUpstream(remoteName, headRef)
 	currentUser, _ := gh.GetLogin()
-	localBranch := determineFetchBranchName(existingTracking, currentUser, pr.User.Login, prNumber, headRef)
+	localBranch := determineFetchBranchName(existingTracking, currentUser, pr.User.Login, prNumber, headRef, isForkPR, git.BranchExists)
 
 	err = ui.Spin(
 		fmt.Sprintf("Fetching '%s' from %s...", headRef, remoteName),
@@ -125,6 +125,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 			}
 		}
 		configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
+		if localBranch != headRef {
+			ui.Infof("Local branch '%s' tracks '%s/%s' — use 'utpr push' to push it.", localBranch, remoteName, headRef)
+		}
 		ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
 
 		wtPath := git.GetBranchWorktreePath(localBranch)
@@ -145,6 +148,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 				ui.Warn("Merge had conflicts. Resolve them before continuing.")
 			}
 			configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
+			if localBranch != headRef {
+				ui.Infof("Local branch '%s' tracks '%s/%s' — use 'utpr push' to push it.", localBranch, remoteName, headRef)
+			}
 			ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
 			offerWorktreeNavigation(wtPath)
 			return nil
@@ -162,6 +168,9 @@ func runFetch(cmd *cobra.Command, args []string) error {
 	}
 
 	configureFetchedBranch(localBranch, remoteName, headRef, pr.HTMLURL)
+	if localBranch != headRef {
+		ui.Infof("Local branch '%s' tracks '%s/%s' — use 'utpr push' to push it.", localBranch, remoteName, headRef)
+	}
 	ui.Successf("Fetched PR #%d → '%s'.", prNumber, localBranch)
 	return nil
 }
@@ -178,11 +187,22 @@ func determineFetchRemote(prHeadRepo, prBaseRepo, sourceRemote string) (remoteNa
 }
 
 // determineFetchBranchName returns the local branch name for a fetched PR.
-func determineFetchBranchName(existingTracking, currentUser, prAuthor string, prNumber int, headRef string) string {
+//
+// Prefer the real (remote) branch name so that plain `git push` works out of
+// the box — git's push.default=simple rejects a push when the upstream branch
+// name differs from the local branch name, and git has no per-branch push
+// refspec. Fall back to a pr/<number>-<author>-<branch> name when the real
+// name is taken locally, or for another author's fork PR, where pushing to
+// the contributor's fork should stay a deliberate act.
+func determineFetchBranchName(existingTracking, currentUser, prAuthor string, prNumber int, headRef string, isFork bool, branchExists func(string) bool) string {
 	if existingTracking != "" {
 		return existingTracking
 	}
-	if currentUser != prAuthor {
+	taken := branchExists != nil && branchExists(headRef)
+	if currentUser != prAuthor && isFork {
+		return fmt.Sprintf("pr/%d-%s-%s", prNumber, prAuthor, headRef)
+	}
+	if taken {
 		return fmt.Sprintf("pr/%d-%s-%s", prNumber, prAuthor, headRef)
 	}
 	return headRef

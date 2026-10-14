@@ -58,6 +58,8 @@ func TestDetermineFetchBranchName(t *testing.T) {
 		prAuthor         string
 		prNumber         int
 		headRef          string
+		isFork           bool
+		existing         []string // local branches that already exist
 		want             string
 	}{
 		{
@@ -70,22 +72,48 @@ func TestDetermineFetchBranchName(t *testing.T) {
 			want:             "my-tracked-branch",
 		},
 		{
-			name:             "other user PR no tracking",
-			existingTracking: "",
-			currentUser:      "me",
-			prAuthor:         "other",
-			prNumber:         42,
-			headRef:          "feature-x",
-			want:             "pr/42-other-feature-x",
+			name:        "other user same-repo PR uses real branch name",
+			currentUser: "me",
+			prAuthor:    "other",
+			prNumber:    42,
+			headRef:     "feature-x",
+			want:        "feature-x",
 		},
 		{
-			name:             "own PR no tracking",
-			existingTracking: "",
-			currentUser:      "me",
-			prAuthor:         "me",
-			prNumber:         42,
-			headRef:          "feature-x",
-			want:             "feature-x",
+			name:        "other user fork PR keeps pr/ prefix",
+			currentUser: "me",
+			prAuthor:    "other",
+			prNumber:    42,
+			headRef:     "feature-x",
+			isFork:      true,
+			want:        "pr/42-other-feature-x",
+		},
+		{
+			name:        "own fork PR uses real branch name",
+			currentUser: "me",
+			prAuthor:    "me",
+			prNumber:    42,
+			headRef:     "feature-x",
+			isFork:      true,
+			want:        "feature-x",
+		},
+		{
+			name:        "real branch name taken falls back to pr/ prefix",
+			currentUser: "me",
+			prAuthor:    "other",
+			prNumber:    42,
+			headRef:     "feature-x",
+			existing:    []string{"feature-x"},
+			want:        "pr/42-other-feature-x",
+		},
+		{
+			name:        "own PR with taken branch name falls back to pr/ prefix",
+			currentUser: "me",
+			prAuthor:    "me",
+			prNumber:    42,
+			headRef:     "feature-x",
+			existing:    []string{"feature-x"},
+			want:        "pr/42-me-feature-x",
 		},
 		{
 			name:             "own PR but existing tracking wins",
@@ -97,28 +125,31 @@ func TestDetermineFetchBranchName(t *testing.T) {
 			want:             "tracked",
 		},
 		{
-			name:             "gh login failed uses pr/ prefix",
-			existingTracking: "",
-			currentUser:      "",
-			prAuthor:         "other",
-			prNumber:         42,
-			headRef:          "feature-x",
-			want:             "pr/42-other-feature-x",
+			name:        "gh login failed (unknown author) same-repo PR uses headRef",
+			currentUser: "",
+			prAuthor:    "other",
+			prNumber:    42,
+			headRef:     "feature-x",
+			want:        "feature-x",
 		},
 		{
-			name:             "both users empty returns headRef",
-			existingTracking: "",
-			currentUser:      "",
-			prAuthor:         "",
-			prNumber:         42,
-			headRef:          "feature-x",
-			want:             "feature-x",
+			name:        "both users empty returns headRef",
+			currentUser: "",
+			prAuthor:    "",
+			prNumber:    42,
+			headRef:     "feature-x",
+			want:        "feature-x",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := determineFetchBranchName(tt.existingTracking, tt.currentUser, tt.prAuthor, tt.prNumber, tt.headRef)
+			existing := map[string]bool{}
+			for _, b := range tt.existing {
+				existing[b] = true
+			}
+			branchExists := func(b string) bool { return existing[b] }
+			got := determineFetchBranchName(tt.existingTracking, tt.currentUser, tt.prAuthor, tt.prNumber, tt.headRef, tt.isFork, branchExists)
 			if got != tt.want {
 				t.Errorf("determineFetchBranchName() = %q, want %q", got, tt.want)
 			}
