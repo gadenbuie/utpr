@@ -109,9 +109,16 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Push to the upstream branch explicitly when the local branch name
+	// differs from the remote branch name — e.g. PR branches fetched as
+	// pr/<number>-<author>-<branch>. A bare `git push` is rejected by
+	// push.default=simple when the names don't match.
 	pushArgs := []string{"push"}
 	if pushForce {
 		pushArgs = append(pushArgs, "--force-with-lease")
+	}
+	if pushRemote, pushBranch, ok := trackingParts(tracking); ok && pushBranch != current {
+		pushArgs = append(pushArgs, pushRemote, "HEAD:"+pushBranch)
 	}
 	err = spinPush(fmt.Sprintf("Pushing to %s...", tracking), func() error {
 		_, pushErr := git.Run(pushArgs...)

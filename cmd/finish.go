@@ -379,6 +379,19 @@ func prNumberFromStoredURL(storedURL string) int {
 	return extractPRNumberFromURL(storedURL)
 }
 
+// trackingParts splits a tracking ref like "origin/feature" into the remote
+// name and the remote branch name. ok is false for empty or malformed refs.
+func trackingParts(trackingRef string) (remoteName, branch string, ok bool) {
+	if trackingRef == "" {
+		return "", "", false
+	}
+	name, ref, found := strings.Cut(trackingRef, "/")
+	if !found || name == "" || ref == "" {
+		return "", "", false
+	}
+	return name, ref, true
+}
+
 // remoteBranchName returns the branch name portion of a git tracking ref
 // (e.g. "origin/feature" → "feature", "contributor/feat/thing" → "feat/thing").
 // Falls back to localBranch when trackingRef is empty or contains no slash.

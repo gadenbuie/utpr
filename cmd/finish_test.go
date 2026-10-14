@@ -2,6 +2,35 @@ package cmd
 
 import "testing"
 
+func TestTrackingParts(t *testing.T) {
+	tests := []struct {
+		name        string
+		trackingRef string
+		wantRemote  string
+		wantBranch  string
+		wantOK      bool
+	}{
+		{"simple remote/branch", "origin/feature-x", "origin", "feature-x", true},
+		{"branch name contains slash", "origin/feature/my-thing", "origin", "feature/my-thing", true},
+		{"contributor remote", "contributor/feature-x", "contributor", "feature-x", true},
+		{"empty ref", "", "", "", false},
+		{"no slash", "no-slash-ref", "", "", false},
+		{"empty remote", "/feature-x", "", "", false},
+		{"empty branch", "origin/", "", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRemote, gotBranch, gotOK := trackingParts(tt.trackingRef)
+			if gotRemote != tt.wantRemote || gotBranch != tt.wantBranch || gotOK != tt.wantOK {
+				t.Errorf("trackingParts(%q) = (%q, %q, %v), want (%q, %q, %v)",
+					tt.trackingRef, gotRemote, gotBranch, gotOK,
+					tt.wantRemote, tt.wantBranch, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestPRNumberFromStoredURL(t *testing.T) {
 	tests := []struct {
 		name string
