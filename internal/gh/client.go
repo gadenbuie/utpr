@@ -284,8 +284,14 @@ func BatchGetMergedPRs(ownerRepo string, prNumbers []int) ([]BatchPRStatus, erro
 
 // GetPRForBranch finds a PR whose head matches the given branch.
 // state can be "open", "closed", or "all".
+//
+// GitHub's "head" filter requires the head repository's owner in
+// "owner:branch" format, so PRs from forks are only found when the fork's
+// owner is queried. Pass fork owners via extraHeadOwners; the base repo's
+// owner is always tried first. Duplicate owners are ignored.
+//
 // Returns nil (not error) if no matching PR is found.
-func GetPRForBranch(ownerRepo, branch, state string) (*PRInfo, error) {
+func GetPRForBranch(ownerRepo, branch, state string, extraHeadOwners ...string) (*PRInfo, error) {
 	owner, repo, err := splitOwnerRepo(ownerRepo)
 	if err != nil {
 		return nil, err
@@ -294,17 +300,37 @@ func GetPRForBranch(ownerRepo, branch, state string) (*PRInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
-	var prs []PRInfo
-	err = client.Get(fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=%s&per_page=1",
-		url.PathEscape(owner), url.PathEscape(repo),
-		url.QueryEscape(owner), url.QueryEscape(branch), url.QueryEscape(state)), &prs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search PRs for branch %s: %w", branch, err)
+
+	headOwners := []string{owner}
+	for _, extra := range extraHeadOwners {
+		if extra == "" {
+			continue
+		}
+		duplicate := false
+		for _, seen := range headOwners {
+			if seen == extra {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			headOwners = append(headOwners, extra)
+		}
 	}
-	if len(prs) == 0 {
-		return nil, nil
+
+	for _, headOwner := range headOwners {
+		var prs []PRInfo
+		err = client.Get(fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=%s&per_page=1",
+			url.PathEscape(owner), url.PathEscape(repo),
+			url.QueryEscape(headOwner), url.QueryEscape(branch), url.QueryEscape(state)), &prs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to search PRs for branch %s: %w", branch, err)
+		}
+		if len(prs) > 0 {
+			return &prs[0], nil
+		}
 	}
-	return &prs[0], nil
+	return nil, nil
 }
 
 // ListIssues lists issues for a repository, filtering out pull requests.

@@ -73,7 +73,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	fromPicker := false
 
 	if len(args) > 0 {
-		n, err := resolveFinishArg(args[0], sourceRepo)
+		n, err := resolveFinishArg(args[0], sourceRepo, cfg)
 		if err != nil {
 			return err
 		}
@@ -95,9 +95,12 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			// Slow path: ask GitHub using the remote tracking branch name, which
 			// matches what GitHub knows — handles same-repo branches where the
 			// local name was changed. Falls back to the local name if no upstream
-			// is configured. (Fork PRs are covered by the fast path above.)
+			// is configured. Fork PRs are covered by the head-owner candidates.
 			if len(prNumbers) == 0 {
-				pr, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "all")
+				tracking := git.GetTrackingBranch()
+				pr, prErr := gh.GetPRForBranch(sourceRepo,
+					remoteBranchName(tracking, currentBranch), "all",
+					prHeadOwners(cfg, sourceRepo, tracking)...)
 				if prErr != nil || pr == nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
@@ -353,14 +356,14 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 
 // resolveFinishArg resolves a finish argument to a PR number, accepting
 // either a PR number or a branch name.
-func resolveFinishArg(arg, sourceRepo string) (int, error) {
+func resolveFinishArg(arg, sourceRepo string, cfg *remote.Config) (int, error) {
 	if n, err := strconv.Atoi(arg); err == nil {
 		return n, nil
 	}
 	if n := prNumberFromStoredURL(git.GetBranchPRURL(arg)); n != 0 {
 		return n, nil
 	}
-	pr, err := gh.GetPRForBranch(sourceRepo, arg, "all")
+	pr, err := gh.GetPRForBranch(sourceRepo, arg, "all", prHeadOwners(cfg, sourceRepo, "")...)
 	if err != nil || pr == nil {
 		return 0, ui.Dief("Could not determine PR number for branch '%s'.", arg)
 	}

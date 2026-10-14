@@ -61,7 +61,7 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 	var prNumber int
 
 	if len(args) > 0 {
-		prNumber, err = resolveMergeArg(args[0], sourceRepo)
+		prNumber, err = resolveMergeArg(args[0], sourceRepo, cfg)
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,10 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
 			prNumber = n
 		} else {
-			found, prErr := gh.GetPRForBranch(sourceRepo, remoteBranchName(git.GetTrackingBranch(), currentBranch), "open")
+			tracking := git.GetTrackingBranch()
+			found, prErr := gh.GetPRForBranch(sourceRepo,
+				remoteBranchName(tracking, currentBranch), "open",
+				prHeadOwners(cfg, sourceRepo, tracking)...)
 			if prErr != nil || found == nil {
 				return ui.Dief("No open PR found for branch '%s'.", currentBranch)
 			}
@@ -162,11 +165,11 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 
 // resolveMergeArg interprets the argument as a PR number or branch name and
 // returns the corresponding PR number.
-func resolveMergeArg(arg, sourceRepo string) (int, error) {
+func resolveMergeArg(arg, sourceRepo string, cfg *remote.Config) (int, error) {
 	if n, err := strconv.Atoi(arg); err == nil {
 		return n, nil
 	}
-	pr, err := gh.GetPRForBranch(sourceRepo, arg, "open")
+	pr, err := gh.GetPRForBranch(sourceRepo, arg, "open", prHeadOwners(cfg, sourceRepo, "")...)
 	if err != nil || pr == nil {
 		return 0, ui.Dief("No open PR found for branch '%s'.", arg)
 	}

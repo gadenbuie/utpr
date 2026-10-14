@@ -165,7 +165,8 @@ func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, erro
 				if ref := git.GetBranchMergeRef(branch); ref != "" && ref != branch {
 					lookup = ref
 				}
-				pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open")
+				pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open",
+					prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...)
 				if err == nil && pr != nil {
 					prNumber = pr.Number
 				}

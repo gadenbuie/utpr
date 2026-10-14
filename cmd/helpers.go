@@ -446,6 +446,48 @@ func runMergedPRPickerFallback(cfg *remote.Config, sourceRepo string, opts merge
 	return selected, nil
 }
 
+// prHeadOwners returns candidate head-repo owners for PR branch lookups.
+// GitHub's REST "head" filter requires "owner:branch", where owner is the
+// head repository's owner — PRs from forks have a head owner that differs
+// from the base repo. Candidates, in order: the branch's tracking remote
+// (where this branch was pushed), the push remote (the user's fork), and
+// the source repo itself.
+func prHeadOwners(cfg *remote.Config, sourceRepo, trackingRef string) []string {
+	var owners []string
+	add := func(ownerRepo string) {
+		owner, _, found := strings.Cut(ownerRepo, "/")
+		if !found || owner == "" {
+			return
+		}
+		for _, existing := range owners {
+			if existing == owner {
+				return
+			}
+		}
+		owners = append(owners, owner)
+	}
+
+	if remoteName, _, ok := strings.Cut(trackingRef, "/"); ok {
+		if url, err := git.Run("remote", "get-url", remoteName); err == nil {
+			if ownerRepo, err := remote.ParseRepoSpec(url); err == nil {
+				add(ownerRepo)
+			}
+		}
+	}
+
+	if cfg != nil && cfg.PushRemote != "" {
+		if url, err := git.Run("remote", "get-url", cfg.PushRemote); err == nil {
+			if ownerRepo, err := remote.ParseRepoSpec(url); err == nil {
+				add(ownerRepo)
+			}
+		}
+	}
+
+	add(sourceRepo)
+
+	return owners
+}
+
 // ghGetPRForCurrentBranch finds the PR (any state) for the current branch.
 // Returns nil if no PR is found or on error.
 func ghGetPRForCurrentBranch() *gh.PRInfo {
@@ -462,7 +504,8 @@ func ghGetPRForCurrentBranch() *gh.PRInfo {
 	if err != nil {
 		return nil
 	}
-	pr, err := gh.GetPRForBranch(ownerRepo, branch, "all")
+	pr, err := gh.GetPRForBranch(ownerRepo, branch, "all",
+		prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...)
 	if err != nil {
 		return nil
 	}
