@@ -214,7 +214,7 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	past := estimateTestRun(7, "build")
 	past.Status = "in_progress"
 	past.StartedAt = now.Add(-10 * time.Minute).Format(time.RFC3339)
-	dur, suffix = formatCheckDuration(past, 4*time.Minute, true)
+	_, suffix = formatCheckDuration(past, 4*time.Minute, true)
 	if ui.StripANSI(suffix) != "(est 4m 0s)" {
 		t.Errorf("formatCheckDuration(past est) suffix = %q, want (est 4m 0s)", ui.StripANSI(suffix))
 	}
