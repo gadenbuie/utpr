@@ -12,11 +12,12 @@ import (
 // GitHub API calls used to resolve failure reasons, kept as package-level
 // vars so tests can swap in fakes and count round trips.
 var (
-	ghGetCheckRuns            = gh.GetCheckRuns
-	ghListWorkflowRunsForSHA  = gh.ListWorkflowRunsForSHA
-	ghListCheckRunAnnotations = gh.ListCheckRunAnnotations
-	ghListWorkflowRunJobs     = gh.ListWorkflowRunJobs
-	ghGetJobLogs              = gh.GetJobLogs
+	ghGetCheckRuns                = gh.GetCheckRuns
+	ghListWorkflowRunsForSHA      = gh.ListWorkflowRunsForSHA
+	ghListWorkflowRunsForWorkflow = gh.ListWorkflowRunsForWorkflow
+	ghListCheckRunAnnotations     = gh.ListCheckRunAnnotations
+	ghListWorkflowRunJobs         = gh.ListWorkflowRunJobs
+	ghGetJobLogs                  = gh.GetJobLogs
 )
 
 // reasonLineMaxRunes bounds the inline reason shown per failed check.

@@ -960,6 +960,53 @@ func ListWorkflowRunsForBranch(ownerRepo, branch string, limit int) ([]WorkflowR
 	return runs, err
 }
 
+// ListWorkflowRunsForWorkflow returns the most recent runs of a single
+// workflow, newest first, up to limit. An empty status lists runs with any
+// conclusion; otherwise runs are filtered server-side by conclusion, e.g.
+// "success".
+func ListWorkflowRunsForWorkflow(ownerRepo string, workflowID int64, limit int, status string) ([]WorkflowRun, error) {
+	owner, repo, err := splitOwnerRepo(ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := RESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/workflows/%d/runs?per_page=%d",
+		url.PathEscape(owner), url.PathEscape(repo), workflowID, min(limit, 100))
+	if status != "" {
+		path += "&status=" + url.QueryEscape(status)
+	}
+	var all []WorkflowRun
+	for path != "" {
+		var response struct {
+			WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+		}
+		resp, reqErr := client.Request("GET", path, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to get runs for workflow %d: %w", workflowID, reqErr)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if jsonErr := json.Unmarshal(body, &response); jsonErr != nil {
+			return nil, jsonErr
+		}
+		all = append(all, response.WorkflowRuns...)
+		if len(all) >= limit {
+			break
+		}
+		path = parseNextLink(resp.Header.Get("Link"))
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // ListRecentWorkflowRuns returns the most recent workflow runs, newest first,
 // up to limit, following pagination so limits above GitHub's 100-per-page cap
 // still return the full count; total is the number of runs matching the query

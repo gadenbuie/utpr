@@ -531,10 +531,10 @@ func showCIChecks(ownerRepo, branch, sha string) (int, error) {
 
 	limiter := ui.NewByteLimiter(flagCILogsMaxBytes)
 	if ciAgentMode() {
-		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false, reasons)))
+		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false, reasons, nil)))
 	} else {
 		var buf bytes.Buffer
-		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false, reasons)
+		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false, reasons, nil)
 		_, _ = fmt.Fprint(os.Stderr, limiter.Limit(buf.String()))
 	}
 	if failedCount > 0 {
@@ -711,11 +711,19 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 	}
 	var lastWfRuns []gh.WorkflowRun // latest workflow runs seen by fullDisplay
 
+	// Historical job-duration estimates for watch mode, fetched in the
+	// background so the first frame renders as fast as usual; the poll
+	// loop repaints early when the estimates arrive.
+	var estimates *estimateCache
+	if fullDisplay {
+		estimates = newEstimateCache()
+	}
+
 	// render writes the grouped check run view, overwriting the previous
 	// frame in interactive fullDisplay mode.
-	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string) {
+	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, est map[int64]map[string]time.Duration) {
 		var buf strings.Builder
-		renderCheckRuns(&buf, runs, buildSuiteNameMap(wfRuns), showTimestamp, reasons)
+		renderCheckRuns(&buf, runs, buildSuiteNameMap(wfRuns), showTimestamp, reasons, est)
 		output := buf.String()
 		if ciAgentMode() {
 			_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
@@ -774,11 +782,14 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		if fullDisplay {
 			wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 			lastWfRuns = wfRuns
+			if estimates != nil {
+				estimates.ensure(ownerRepo, wfRuns)
+			}
 			var reasons map[int64]string
 			if cache != nil {
 				reasons = cache.annotationReasons(checkRuns)
 			}
-			render(checkRuns, wfRuns, true, reasons)
+			render(checkRuns, wfRuns, true, reasons, estimatesSnapshot(estimates))
 		} else {
 			var parts []string
 			if running > 0 {
@@ -816,7 +827,18 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 
 		shouldStop := allDone || (mode == "failed" && anyFailed)
 		if !shouldStop {
-			time.Sleep(ciPollInterval)
+			if estimates != nil {
+				// Repaint as soon as background estimates land instead
+				// of waiting out the full poll interval.
+				timer := time.NewTimer(ciPollInterval)
+				select {
+				case <-timer.C:
+				case <-estimates.readyChan():
+					timer.Stop()
+				}
+			} else {
+				time.Sleep(ciPollInterval)
+			}
 			continue
 		}
 
@@ -849,9 +871,9 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		// are enabled. The standalone summary below covers only paths without a frame.
 		frameRendered := fullDisplay
 		if fullDisplay && logReasonsAdded {
-			render(checkRuns, lastWfRuns, true, reasons)
+			render(checkRuns, lastWfRuns, true, reasons, estimatesSnapshot(estimates))
 		} else if !fullDisplay && anyFailed && cache != nil {
-			render(checkRuns, lastWfRuns, false, reasons)
+			render(checkRuns, lastWfRuns, false, reasons, nil)
 			frameRendered = true
 		}
 
@@ -987,25 +1009,35 @@ func isFailedConclusion(conclusion string) bool {
 	return false
 }
 
-func formatCheckDuration(r gh.CheckRun) string {
+func formatCheckDuration(r gh.CheckRun, est time.Duration, hasEst bool) string {
 	if r.StartedAt == "" {
+		// Queued: nothing has happened yet, but the historical
+		// estimate still applies.
+		if hasEst {
+			return ui.StyleMuted.Render("est " + ciFormatDuration(est))
+		}
 		return ""
 	}
 	started, err := time.Parse(time.RFC3339, r.StartedAt)
 	if err != nil {
 		return ""
 	}
-	var d time.Duration
-	if r.Status != "completed" || r.CompletedAt == "" {
-		d = time.Since(started)
-		return ui.StyleMuted.Render("running " + ciFormatDuration(d))
+	if r.Status == "completed" && r.CompletedAt != "" {
+		completed, err := time.Parse(time.RFC3339, r.CompletedAt)
+		if err != nil {
+			return ""
+		}
+		return ui.StyleMuted.Render(ciFormatDuration(completed.Sub(started)))
 	}
-	completed, err := time.Parse(time.RFC3339, r.CompletedAt)
-	if err != nil {
-		return ""
+	elapsed := ciFormatDuration(time.Since(started))
+	if !hasEst {
+		return ui.StyleMuted.Render(elapsed)
 	}
-	d = completed.Sub(started)
-	return ui.StyleMuted.Render(ciFormatDuration(d))
+	if remaining := est - time.Since(started); remaining > 0 {
+		return ui.StyleMuted.Render(fmt.Sprintf("%s (est %s remaining)",
+			elapsed, ciFormatDuration(remaining)))
+	}
+	return ui.StyleMuted.Render(fmt.Sprintf("%s (est %s)", elapsed, ciFormatDuration(est)))
 }
 
 func ciFormatDuration(d time.Duration) string {
@@ -1057,7 +1089,7 @@ func anyFailedCheckRun(runs []gh.CheckRun) bool {
 	return false
 }
 
-func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string) {
+func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
 		_, _ = fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
@@ -1083,7 +1115,8 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 		for _, r := range g.Runs {
 			icon := checkRunIcon(r)
 			name := jobDisplayName(r.Name, g.Name)
-			dur := formatCheckDuration(r)
+			est, hasEst := estimateFor(estimates, r)
+			dur := formatCheckDuration(r, est, hasEst)
 			_, _ = fmt.Fprintf(w, "  %s  %s  %s\n",
 				icon,
 				ui.PadRight(name, maxLen),
@@ -1098,9 +1131,9 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 	_, _ = fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
-func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string) string {
+func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) string {
 	var buf strings.Builder
-	renderCheckRuns(&buf, runs, suiteNames, showTimestamp, reasons)
+	renderCheckRuns(&buf, runs, suiteNames, showTimestamp, reasons, estimates)
 	return ui.StripANSI(buf.String())
 }
 

@@ -286,7 +286,7 @@ func TestRenderCheckRunsWithReasons(t *testing.T) {
 	passed := reasonCheckRun(8, "CI / lint", "success")
 	runs := []gh.CheckRun{failed, passed}
 
-	got := renderCheckRunsPlain(runs, nil, false, map[int64]string{7: "Error: object 'foo' not found"})
+	got := renderCheckRunsPlain(runs, nil, false, map[int64]string{7: "Error: object 'foo' not found"}, nil)
 	if strings.Contains(got, "\x1b[") {
 		t.Errorf("renderCheckRunsPlain() contains ANSI escape codes: %q", got)
 	}
@@ -314,7 +314,7 @@ func TestRenderCheckRunsWithReasons(t *testing.T) {
 	}
 
 	// Nil reasons must render identically to the pre-feature layout.
-	if withNone := renderCheckRunsPlain(runs, nil, false, nil); strings.Contains(withNone, "↳") {
+	if withNone := renderCheckRunsPlain(runs, nil, false, nil, nil); strings.Contains(withNone, "↳") {
 		t.Errorf("renderCheckRunsPlain(nil reasons) = %q, want no reason lines", withNone)
 	}
 }
