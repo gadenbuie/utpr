@@ -141,27 +141,27 @@ func TestFindLocalBranchForPR(t *testing.T) {
 func TestFallbackRepos(t *testing.T) {
 	dir := testutil.TempRepo(t)
 
-	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
-	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/jcheng5/scorecard-db.git")
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/alice/example.git")
+	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/octocat/example.git")
 	// PR-fetch remotes and local paths must never be searched.
 	testutil.RunGit(t, dir, "remote", "add", "pr-123", "https://github.com/alice/patch.git")
 	testutil.RunGit(t, dir, "remote", "add", "local", "/tmp/some/repo.git")
 
 	forkCfg := &remote.Config{Layout: "fork", PushRemote: "origin"}
-	got := fallbackRepos(forkCfg, "jcheng5/scorecard-db")
-	want := []string{"gadenbuie/scorecard-db"}
+	got := fallbackRepos(forkCfg, "octocat/example")
+	want := []string{"alice/example"}
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Errorf("fallbackRepos(fork) = %v, want %v", got, want)
 	}
 
 	// Source and push repo are the same repo: nothing to fall back to.
-	if got := fallbackRepos(forkCfg, "gadenbuie/scorecard-db"); got != nil {
+	if got := fallbackRepos(forkCfg, "alice/example"); got != nil {
 		t.Errorf("fallbackRepos() with push repo as source = %v, want nil", got)
 	}
 
 	// "ours" layout has no fallback at all.
 	oursCfg := &remote.Config{Layout: "ours", PushRemote: "origin"}
-	if got := fallbackRepos(oursCfg, "jcheng5/scorecard-db"); got != nil {
+	if got := fallbackRepos(oursCfg, "octocat/example"); got != nil {
 		t.Errorf("fallbackRepos(ours) = %v, want nil", got)
 	}
 }
@@ -181,45 +181,45 @@ func TestFindPRForBranch(t *testing.T) {
 		{
 			name:        "found in source repo, no fallback",
 			layout:      "fork",
-			sourceRepo:  "jcheng5/scorecard-db",
-			prsByRepo:   map[string]*gh.PRInfo{"jcheng5/scorecard-db": {Number: 3}},
-			queriedRepo: "jcheng5/scorecard-db",
-			wantQueried: []string{"jcheng5/scorecard-db"},
+			sourceRepo:  "octocat/example",
+			prsByRepo:   map[string]*gh.PRInfo{"octocat/example": {Number: 3}},
+			queriedRepo: "octocat/example",
+			wantQueried: []string{"octocat/example"},
 			wantNumber:  3,
 		},
 		{
 			name:        "falls back to the fork",
 			layout:      "fork",
-			sourceRepo:  "jcheng5/scorecard-db",
-			prsByRepo:   map[string]*gh.PRInfo{"gadenbuie/scorecard-db": prInFork},
-			queriedRepo: "gadenbuie/scorecard-db",
-			wantQueried: []string{"jcheng5/scorecard-db", "gadenbuie/scorecard-db"},
+			sourceRepo:  "octocat/example",
+			prsByRepo:   map[string]*gh.PRInfo{"alice/example": prInFork},
+			queriedRepo: "alice/example",
+			wantQueried: []string{"octocat/example", "alice/example"},
 			wantNumber:  7,
 		},
 		{
 			name:        "not found anywhere",
 			layout:      "fork",
-			sourceRepo:  "jcheng5/scorecard-db",
+			sourceRepo:  "octocat/example",
 			prsByRepo:   map[string]*gh.PRInfo{},
 			queriedRepo: "",
-			wantQueried: []string{"jcheng5/scorecard-db", "gadenbuie/scorecard-db"},
+			wantQueried: []string{"octocat/example", "alice/example"},
 			wantNumber:  0,
 		},
 		{
 			name:        "ours layout does not fall back",
 			layout:      "ours",
-			sourceRepo:  "gadenbuie/scorecard-db",
+			sourceRepo:  "alice/example",
 			prsByRepo:   map[string]*gh.PRInfo{},
 			queriedRepo: "",
-			wantQueried: []string{"gadenbuie/scorecard-db"},
+			wantQueried: []string{"alice/example"},
 			wantNumber:  0,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := testutil.TempRepo(t)
-			testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
-			testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/jcheng5/scorecard-db.git")
+			testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/alice/example.git")
+			testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/octocat/example.git")
 
 			var queried []string
 			restore := stubSearchPRForBranch(func(repo, branch, state string, owners ...string) (*gh.PRInfo, error) {

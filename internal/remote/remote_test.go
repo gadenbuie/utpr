@@ -334,15 +334,15 @@ func TestResetCache(t *testing.T) {
 
 func TestResolveLayoutForkIsPrimary(t *testing.T) {
 	ghRepo := &gh.RepoInfo{Fork: true}
-	ghRepo.Parent.FullName = "jcheng5/scorecard-db"
+	ghRepo.Parent.FullName = "octocat/example"
 
 	// The fork itself is the primary repo: behave like a direct-push repo,
 	// even though an upstream remote exists.
 	cfg := resolveLayout(RemoteInfo{
 		OriginName:  "origin",
-		OriginRepo:  "gadenbuie/scorecard-db",
+		OriginRepo:  "alice/example",
 		HasUpstream: true,
-		PrimaryRepo: "gadenbuie/scorecard-db",
+		PrimaryRepo: "alice/example",
 		GHRepo:      ghRepo,
 	}, "main")
 	if cfg.Layout != "ours" {
@@ -360,8 +360,8 @@ func TestResolveLayoutForkIsPrimary(t *testing.T) {
 }
 
 func TestValidatePrimaryRepo(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 
 	cases := []struct {
 		name  string
@@ -385,8 +385,8 @@ func TestValidatePrimaryRepo(t *testing.T) {
 }
 
 func TestDecideForkPrimaryDefaults(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 
 	cases := []struct {
 		name          string
@@ -452,8 +452,8 @@ func TestSuggestForkPrimary(t *testing.T) {
 // primary-repo prompt: the parent goes first for stale contributor forks,
 // the fork first when the fork is the only or clearly primary choice.
 func TestPromptPrimaryRepoOrder(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 	testutil.TempRepo(t)
 
 	var options []string
@@ -483,31 +483,31 @@ func TestGhResolvedRepo(t *testing.T) {
 		t.Errorf("ghResolvedRepo() with no gh config = %q, want empty", got)
 	}
 
-	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
-	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/jcheng5/scorecard-db.git")
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/alice/example.git")
+	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/octocat/example.git")
 
 	// gh repo set-default writes "base" on the chosen remote.
 	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "base")
-	if got := ghResolvedRepo(); got != "gadenbuie/scorecard-db" {
-		t.Errorf("ghResolvedRepo() = %q, want %q", got, "gadenbuie/scorecard-db")
+	if got := ghResolvedRepo(); got != "alice/example" {
+		t.Errorf("ghResolvedRepo() = %q, want %q", got, "alice/example")
 	}
 
 	// gh stores OWNER/REPO when the chosen repo has no remote of its own.
-	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "jcheng5/scorecard-db")
-	if got := ghResolvedRepo(); got != "jcheng5/scorecard-db" {
-		t.Errorf("ghResolvedRepo() with owner/repo value = %q, want %q", got, "jcheng5/scorecard-db")
+	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "octocat/example")
+	if got := ghResolvedRepo(); got != "octocat/example" {
+		t.Errorf("ghResolvedRepo() with owner/repo value = %q, want %q", got, "octocat/example")
 	}
 }
 
 func TestPrimaryRepoOverridePrecedence(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 	dir := testutil.TempRepo(t)
 
 	// Don't let an inherited UTPR_PRIMARY_REPO shadow the sources under test.
 	t.Setenv(PrimaryRepoEnvVar, "")
 
-	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/alice/example.git")
 	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "base")
 
 	// gh's stored default applies when nothing else is set.
@@ -535,8 +535,8 @@ func TestPrimaryRepoOverridePrecedence(t *testing.T) {
 }
 
 func TestPromptPrimaryRepoSavesAnswer(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 	testutil.TempRepo(t)
 
 	restore := testutil.StubChoose(forkRepo + " (this fork)")
@@ -552,8 +552,8 @@ func TestPromptPrimaryRepoSavesAnswer(t *testing.T) {
 }
 
 func TestPromptPrimaryRepoCancel(t *testing.T) {
-	const forkRepo = "gadenbuie/scorecard-db"
-	const parentRepo = "jcheng5/scorecard-db"
+	const forkRepo = "alice/example"
+	const parentRepo = "octocat/example"
 	testutil.TempRepo(t)
 
 	restore := ui.SetChooseFunc(func(header string, options []string) (string, error) {
