@@ -141,34 +141,40 @@ func viewIssue(ownerRepo, numberArg string, cachedIssue *gh.IssueInfo) error {
 }
 
 // resolvePRNumber determines which PR to act on: the given number, else the
-// current branch's open PR, else a pick from the PR picker. Returns 0 when
-// the picker was cancelled.
-func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, error) {
+// current branch's open PR, else a pick from the PR picker. Returns the PR
+// number and the repo that owns the PR (which may differ from ownerRepo
+// when the branch's PR was found in a fork). Returns number 0 when the
+// picker was cancelled.
+func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, string, error) {
 	if numberArg != "" {
 		n, err := strconv.Atoi(numberArg)
 		if err != nil {
-			return 0, ui.Dief("Invalid PR number: %s", numberArg)
+			return 0, "", ui.Dief("Invalid PR number: %s", numberArg)
 		}
-		return n, nil
+		return n, ownerRepo, nil
 	}
 
 	prNumber := 0
+	prRepo := ownerRepo
 	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 	if !onDefault && flagViewState == "open" {
 		branch, err := git.GetCurrentBranch()
 		if err == nil {
 			if prURL := git.GetBranchPRURL(branch); prURL != "" {
 				prNumber = prNumberFromURL(prURL)
+				if repo := prRepoFromURL(prURL); repo != "" {
+					prRepo = repo
+				}
 			}
 			if prNumber == 0 {
 				lookup := branch
 				if ref := git.GetBranchMergeRef(branch); ref != "" && ref != branch {
 					lookup = ref
 				}
-				pr, err := gh.GetPRForBranch(ownerRepo, lookup, "open",
-					prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...)
-				if err == nil && pr != nil {
+				if pr, repo := findPRForBranch(ownerRepo, lookup, "open",
+					prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...); pr != nil {
 					prNumber = pr.Number
+					prRepo = repo
 				}
 			}
 		}
@@ -176,11 +182,11 @@ func resolvePRNumber(ownerRepo, numberArg string, cfg *remote.Config) (int, erro
 	if prNumber == 0 {
 		n, err := pickForView(ownerRepo, "pr")
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
-		prNumber = n
+		return n, ownerRepo, nil
 	}
-	return prNumber, nil
+	return prNumber, prRepo, nil
 }
 
 func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
@@ -188,7 +194,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return err
 	}
 
-	prNumber, err := resolvePRNumber(ownerRepo, numberArg, cfg)
+	prNumber, prRepo, err := resolvePRNumber(ownerRepo, numberArg, cfg)
 	if err != nil {
 		return err
 	}
@@ -197,7 +203,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	}
 
 	if flagViewWeb {
-		return openURL(fmt.Sprintf("https://github.com/%s/pull/%d", ownerRepo, prNumber))
+		return openURL(fmt.Sprintf("https://github.com/%s/pull/%d", prRepo, prNumber))
 	}
 
 	switch flagViewComments {
@@ -206,7 +212,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return ui.Dief("Invalid --comments value: '%s' (expected: reviews, regular, all, none, only, only-reviews, only-regular)", flagViewComments)
 	}
 
-	pr, err := gh.GetPR(ownerRepo, prNumber)
+	pr, err := gh.GetPR(prRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch PR #%d.", prNumber)
 	}
@@ -218,13 +224,13 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 
 		switch onlyMode {
 		case "reviews":
-			reviewComments, err := gh.ListUnresolvedPRReviewComments(ownerRepo, prNumber)
+			reviewComments, err := gh.ListUnresolvedPRReviewComments(prRepo, prNumber)
 			if err != nil {
 				return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
 			}
 			return renderPRWithOnlyReviewComments(pr, reviewComments)
 		case "regular":
-			comments, err := gh.ListIssueComments(ownerRepo, prNumber)
+			comments, err := gh.ListIssueComments(prRepo, prNumber)
 			if err != nil {
 				return ui.Dief("Failed to fetch comments for PR #%d.", prNumber)
 			}
@@ -232,7 +238,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		}
 	}
 
-	reviews, err := gh.ListPRReviews(ownerRepo, prNumber)
+	reviews, err := gh.ListPRReviews(prRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch reviews for PR #%d.", prNumber)
 	}
@@ -241,7 +247,7 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 		return renderPRSummary(pr, reviews)
 	}
 
-	comments, err := gh.ListIssueComments(ownerRepo, prNumber)
+	comments, err := gh.ListIssueComments(prRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch comments for PR #%d.", prNumber)
 	}
@@ -249,12 +255,12 @@ func viewPR(ownerRepo, numberArg string, cfg *remote.Config) error {
 	var reviewComments []gh.ReviewComment
 	switch flagViewComments {
 	case "reviews":
-		reviewComments, err = gh.ListUnresolvedPRReviewComments(ownerRepo, prNumber)
+		reviewComments, err = gh.ListUnresolvedPRReviewComments(prRepo, prNumber)
 		if err != nil {
 			return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
 		}
 	case "all":
-		reviewComments, err = gh.ListPRReviewComments(ownerRepo, prNumber)
+		reviewComments, err = gh.ListPRReviewComments(prRepo, prNumber)
 		if err != nil {
 			return ui.Dief("Failed to fetch review comments for PR #%d.", prNumber)
 		}

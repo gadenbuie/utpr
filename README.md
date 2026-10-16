@@ -47,6 +47,33 @@ utpr automatically detects whether you own the repo or are working from
 a fork, and configures remotes accordingly. It tracks which branches and
 remotes it created, so cleanup is safe and thorough.
 
+### Which repo is the primary repo?
+
+For a fork, it matters which repository owns your PRs and issues: the
+upstream parent (the usual contributor workflow) or the fork itself — some
+projects live on in a fork that has become the primary home. When that's
+ambiguous, utpr asks once:
+
+```
+? Which repository is the primary home for your PRs and issues?
+  you/project (this fork)
+  maintainer/project (upstream)
+```
+
+The answer is stored in git config (`utpr.primary-repo`) and never asked
+again. It's also resolved without a prompt, in this order, when a value is
+already known:
+
+1. `UTPR_PRIMARY_REPO` environment variable (per invocation)
+2. `git config utpr.primary-repo <owner>/<repo>` (set it manually any time)
+3. gh's stored default repo, written by [`gh repo set-default`][gh-set-default]
+
+utpr also prefers the GitHub API's default branch over the local
+`origin/HEAD` when both are available, so a renamed or switched default
+branch is picked up automatically. As a safety net, branch-to-PR lookups
+(`view`, `status`, `merge`, `finish`) fall back to searching your other
+remotes when no PR is found in the expected repo.
+
 For more background on the workflow that inspired utpr, see
 [Pull Request Flow with usethis][blog-pr-flow] and the
 [usethis pull request helpers documentation][usethis-pr].
@@ -432,6 +459,7 @@ utpr can be configured with the following environment variables:
 |----------|---------|-------------|
 | `UTPR_EDITOR` | auto-detected | Editor command used to open worktrees (e.g. `code`, `cursor`, `zed`) |
 | `UTPR_SYMLINK_DIRS` | `_dev,.claude,...` | Comma-separated list of files/dirs to symlink into new worktrees |
+| `UTPR_PRIMARY_REPO` | detected | Force which repo owns PRs and issues when working from a fork (see [Which repo is the primary repo?](#which-repo-is-the-primary-repo)) |
 
 Set these in your shell profile (e.g. `~/.zshrc`):
 
@@ -504,6 +532,7 @@ MIT
 [usethis]: https://usethis.r-lib.org
 [usethis-pr]: https://usethis.r-lib.org/articles/pr-functions.html
 [blog-pr-flow]: https://www.garrickadenbuie.com/blog/pull-request-flow-usethis/
+[gh-set-default]: https://cli.github.com/manual/gh_repo_set-default
 [hadley]: https://github.com/hadley
 [jennybc]: https://github.com/jennybc
 [malcolm]: https://github.com/malcolmbarrett

@@ -2,12 +2,20 @@ package remote
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/gh"
 	"github.com/gadenbuie/utpr/internal/git"
 	"github.com/gadenbuie/utpr/internal/ui"
 )
+
+// PrimaryRepoConfigKey is the git config key where utpr stores the user's
+// answer to "which repository is the primary home for PRs and issues?".
+const PrimaryRepoConfigKey = "utpr.primary-repo"
+
+// PrimaryRepoEnvVar overrides the primary repo for a single invocation.
+const PrimaryRepoEnvVar = "UTPR_PRIMARY_REPO"
 
 // Config holds the detected remote configuration.
 type Config struct {
@@ -26,12 +34,25 @@ type RemoteInfo struct {
 	OriginRepo  string       // owner/repo parsed from the remote URL
 	HasUpstream bool         // whether an "upstream" remote exists
 	GHRepo      *gh.RepoInfo // nil if GitHub API unavailable
+	PrimaryRepo string       // owner/repo that owns PRs/issues; "" when inferred (empty for tests using zero values)
 }
 
 // resolveLayout determines the remote config from gathered remote info.
 func resolveLayout(info RemoteInfo, defaultBranch string) *Config {
 	if defaultBranch == "" {
 		defaultBranch = "main"
+	}
+
+	// Explicit primary-repo choice: when the primary repo is the origin
+	// repo itself — e.g. a fork that has become the primary home of the
+	// project — behave like a direct-push repo, ignoring any upstream remote.
+	if info.PrimaryRepo != "" && info.PrimaryRepo == info.OriginRepo {
+		return &Config{
+			Layout:        "ours",
+			SourceRemote:  info.OriginName,
+			PushRemote:    info.OriginName,
+			DefaultBranch: defaultBranch,
+		}
 	}
 
 	if info.GHRepo != nil {
@@ -173,47 +194,195 @@ func detect() (*Config, error) {
 		GHRepo:      ghRepo,
 	}
 
-	// Determine default branch based on what will be the source remote
-	preliminary := resolveLayout(info, "")
-	defaultBranch, _ := git.GetDefaultBranch(preliminary.SourceRemote)
-
-	cfg := resolveLayout(info, defaultBranch)
-
-	// Side effect: offer to add upstream remote for forks without one
-	if ghRepo != nil && ghRepo.Fork && !hasUpstream {
-		if ghRepo.Parent.FullName != "" {
-			confirmed, err := ui.Confirm(
-				fmt.Sprintf("Add 'upstream' remote for '%s'?", ghRepo.Parent.FullName),
-				true,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if confirmed {
-				_, addErr := git.Run("remote", "add", "upstream",
-					fmt.Sprintf("https://github.com/%s.git", ghRepo.Parent.FullName))
-				if addErr == nil {
-					cfg.SourceRemote = "upstream"
-					newDefault, _ := git.GetDefaultBranch("upstream")
-					if newDefault != "" {
-						cfg.DefaultBranch = newDefault
-					}
-				} else {
-					ui.Warn("Using origin as source remote (no upstream configured).")
-				}
-			} else {
-				ui.Warn("Using origin as source remote (no upstream configured).")
-			}
-		} else {
+	// Resolve the primary repo — the repository that owns PRs and issues.
+	// For forks this is ambiguous (parent vs. the fork itself), so consult
+	// overrides, gh's stored default, and the user before falling back.
+	primary := ""
+	if ghRepo != nil && ghRepo.Fork {
+		parentRepo := ghRepo.Parent.FullName
+		primary = primaryRepoOverride(ownerRepo, parentRepo)
+		if primary == "" && parentRepo != "" {
+			primary = decideForkPrimary(ownerRepo, parentRepo, hasUpstream,
+				ghRepo.DefaultBranch, ghRepo.Parent.DefaultBranch)
+		}
+		// The primary is upstream: make sure the local remote exists so
+		// fetch/pull/merge work. An explicit choice counts as consent.
+		if primary == parentRepo && !hasUpstream {
+			addUpstreamRemote(parentRepo)
+			hasUpstream = true
+			info.HasUpstream = true
+		}
+		if primary == "" && parentRepo == "" && !hasUpstream {
 			ui.Warn("Fork detected but could not determine parent repo. Using origin as source.")
 		}
 	}
+	info.PrimaryRepo = primary
+
+	preliminary := resolveLayout(info, "")
+	defaultBranch, _ := git.GetDefaultBranch(preliminary.SourceRemote)
+
+	// Prefer the GitHub API's default branch for the repo being treated as
+	// primary — local origin/HEAD can go stale when the default changes.
+	if ghRepo != nil {
+		if api := apiDefaultBranch(ghRepo, primary, ownerRepo); api != "" {
+			defaultBranch = api
+		}
+	}
+
+	cfg := resolveLayout(info, defaultBranch)
 
 	if ghRepo != nil && !ghRepo.Fork && !ghRepo.Permissions.Push {
 		ui.Warn("Could not determine remote config. Falling back to 'ours'.")
 	}
 
 	return cfg, nil
+}
+
+// apiDefaultBranch returns the GitHub API default branch for the repo that
+// utpr treats as primary: the parent for contributor forks, the repo itself
+// otherwise. Returns "" when the API did not report one.
+func apiDefaultBranch(repo *gh.RepoInfo, primary, originRepo string) string {
+	if primary != "" && primary != originRepo {
+		return repo.Parent.DefaultBranch
+	}
+	return repo.DefaultBranch
+}
+
+// primaryRepoOverride reads the primary-repo override in precedence order:
+// the UTPR_PRIMARY_REPO environment variable, the utpr.primary-repo git
+// config (written by the one-time confirmation prompt), and gh's
+// remote.*.gh-resolved values (written by `gh repo set-default`). Values
+// matching neither candidate are warned about and ignored. Returns "" when
+// nothing usable is set.
+func primaryRepoOverride(forkRepo, parentRepo string) string {
+	for _, value := range []string{
+		strings.TrimSpace(os.Getenv(PrimaryRepoEnvVar)),
+		git.ConfigGet(PrimaryRepoConfigKey),
+		ghResolvedRepo(),
+	} {
+		if repo := validatePrimaryRepo(value, forkRepo, parentRepo); repo != "" {
+			return repo
+		}
+	}
+	return ""
+}
+
+// validatePrimaryRepo accepts a candidate value for the primary repo when it
+// matches the fork or its parent. Unrecognized values produce a warning.
+func validatePrimaryRepo(value, forkRepo, parentRepo string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if value == forkRepo || (parentRepo != "" && value == parentRepo) {
+		return value
+	}
+	ui.Warnf("Ignoring primary repo '%s': expected '%s' or '%s'.", value, forkRepo, parentRepo)
+	return ""
+}
+
+// ghResolvedRepo returns the default repository chosen by gh CLI, read from
+// the remote.<name>.gh-resolved config entries that `gh repo set-default`
+// writes. A value of "base" means the remote itself is the default repo;
+// any other value is an OWNER/REPO for a repo without its own remote.
+// Returns "" when gh has no stored default.
+func ghResolvedRepo() string {
+	out, err := git.Run("config", "--get-regexp", `^remote\..*\.gh-resolved$`)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		if value == "base" {
+			remoteName := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".gh-resolved")
+			url, err := git.Run("remote", "get-url", remoteName)
+			if err != nil {
+				continue
+			}
+			if repo, err := ParseRepoSpec(url); err == nil {
+				return repo
+			}
+			continue
+		}
+		if strings.Contains(value, "/") {
+			return value
+		}
+	}
+	return ""
+}
+
+// decideForkPrimary resolves the primary repo for a fork whose parent is
+// known but has no stored answer. When the situation is genuinely ambiguous
+// — the user has no upstream remote yet, or the fork's default branch has
+// diverged from the parent's, suggesting the fork is now the primary home —
+// ask once and save the answer. Otherwise keep the historical default.
+func decideForkPrimary(forkRepo, parentRepo string, hasUpstream bool, forkDefault, parentDefault string) string {
+	branchesDiffer := forkDefault != "" && parentDefault != "" && forkDefault != parentDefault
+
+	if !hasUpstream || branchesDiffer {
+		if !ui.StdinIsTTY() {
+			ui.Warnf(
+				"'%s' is a GitHub fork of '%s' but which repo is primary is ambiguous. Using '%s' for now; choose one with: git config %s <owner>/<repo> (or run 'gh repo set-default').",
+				forkRepo, parentRepo, defaultForkPrimary(forkRepo, parentRepo, hasUpstream), PrimaryRepoConfigKey)
+		} else if choice := promptPrimaryRepo(forkRepo, parentRepo, branchesDiffer); choice != "" {
+			return choice
+		}
+	}
+
+	return defaultForkPrimary(forkRepo, parentRepo, hasUpstream)
+}
+
+// defaultForkPrimary picks the primary repo without asking: the parent when
+// a local upstream remote already exists, otherwise the fork itself.
+func defaultForkPrimary(forkRepo, parentRepo string, hasUpstream bool) string {
+	if hasUpstream {
+		return parentRepo
+	}
+	return forkRepo
+}
+
+// promptPrimaryRepo asks which repository is the primary home for PRs and
+// issues and saves the answer to git config. Returns the chosen owner/repo,
+// or "" when the user cancels. suggestFork puts the fork first.
+func promptPrimaryRepo(forkRepo, parentRepo string, suggestFork bool) string {
+	options := []string{
+		fmt.Sprintf("%s (this fork)", forkRepo),
+		fmt.Sprintf("%s (upstream)", parentRepo),
+	}
+	if !suggestFork {
+		options[0], options[1] = options[1], options[0]
+	}
+
+	chosen, err := ui.Choose("Which repository is the primary home for your PRs and issues?", options)
+	if err != nil {
+		ui.Info("No answer saved; using the default for now.")
+		return ""
+	}
+	repo, _, _ := strings.Cut(chosen, " ")
+	if repo != forkRepo && repo != parentRepo {
+		return ""
+	}
+
+	if err := git.ConfigSet(PrimaryRepoConfigKey, repo); err != nil {
+		ui.Warnf("Could not save the primary repo setting: %v", err)
+	} else {
+		ui.Infof("Saved '%s=%s'. Change it any time with: git config %s <owner>/<repo>",
+			PrimaryRepoConfigKey, repo, PrimaryRepoConfigKey)
+	}
+	return repo
+}
+
+// addUpstreamRemote adds a local 'upstream' remote for the parent repo.
+func addUpstreamRemote(parentRepo string) {
+	_, err := git.Run("remote", "add", "upstream", fmt.Sprintf("https://github.com/%s.git", parentRepo))
+	if err == nil {
+		ui.Infof("Added 'upstream' remote for '%s'.", parentRepo)
+	} else {
+		ui.Warnf("Could not add 'upstream' remote for '%s': %v", parentRepo, err)
+	}
 }
 
 // ParseRepoSpec extracts "owner/repo" from a git remote URL.

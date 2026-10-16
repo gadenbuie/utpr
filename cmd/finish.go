@@ -70,14 +70,16 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	}
 
 	var prNumbers []int
+	prRepo := sourceRepo
 	fromPicker := false
 
 	if len(args) > 0 {
-		n, err := resolveFinishArg(args[0], sourceRepo, cfg)
+		n, repo, err := resolveFinishArg(args[0], sourceRepo, cfg)
 		if err != nil {
 			return err
 		}
 		prNumbers = []int{n}
+		prRepo = repo
 	} else {
 		onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 		if !onDefault {
@@ -98,13 +100,14 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			// is configured. Fork PRs are covered by the head-owner candidates.
 			if len(prNumbers) == 0 {
 				tracking := git.GetTrackingBranch()
-				pr, prErr := gh.GetPRForBranch(sourceRepo,
+				pr, repo := findPRForBranch(sourceRepo,
 					remoteBranchName(tracking, currentBranch), "all",
 					prHeadOwners(cfg, sourceRepo, tracking)...)
-				if prErr != nil || pr == nil {
+				if pr == nil {
 					return ui.Die("Could not determine PR number for current branch.")
 				}
 				prNumbers = []int{pr.Number}
+				prRepo = repo
 			}
 		} else {
 			if err := requireInteractiveTTY("pass a PR number or branch name as an argument"); err != nil {
@@ -124,7 +127,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 	// For non-picker path: confirm first and determine the PR's base branch
 	var baseBranch string
 	if !fromPicker {
-		pr, err := gh.GetPR(sourceRepo, prNumbers[0])
+		pr, err := gh.GetPR(prRepo, prNumbers[0])
 		if err != nil {
 			return ui.Dief("Failed to fetch PR #%d details.", prNumbers[0])
 		}
@@ -185,7 +188,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 
 	// Process each PR
 	for _, prNumber := range prNumbers {
-		if err := finishOnePR(cfg, sourceRepo, prNumber); err != nil {
+		if err := finishOnePR(cfg, prRepo, prNumber); err != nil {
 			ui.Errorf("Error finishing PR #%d: %v", prNumber, err)
 		}
 	}
@@ -356,18 +359,24 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 
 // resolveFinishArg resolves a finish argument to a PR number, accepting
 // either a PR number or a branch name.
-func resolveFinishArg(arg, sourceRepo string, cfg *remote.Config) (int, error) {
+func resolveFinishArg(arg, sourceRepo string, cfg *remote.Config) (int, string, error) {
 	if n, err := strconv.Atoi(arg); err == nil {
-		return n, nil
+		return n, sourceRepo, nil
 	}
-	if n := prNumberFromStoredURL(git.GetBranchPRURL(arg)); n != 0 {
-		return n, nil
+	if prURL := git.GetBranchPRURL(arg); prURL != "" {
+		if n := prNumberFromStoredURL(prURL); n != 0 {
+			repo := sourceRepo
+			if r := prRepoFromURL(prURL); r != "" {
+				repo = r
+			}
+			return n, repo, nil
+		}
 	}
-	pr, err := gh.GetPRForBranch(sourceRepo, arg, "all", prHeadOwners(cfg, sourceRepo, "")...)
-	if err != nil || pr == nil {
-		return 0, ui.Dief("Could not determine PR number for branch '%s'.", arg)
+	pr, repo := findPRForBranch(sourceRepo, arg, "all", prHeadOwners(cfg, sourceRepo, "")...)
+	if pr == nil {
+		return 0, sourceRepo, ui.Dief("Could not determine PR number for branch '%s'.", arg)
 	}
-	return pr.Number, nil
+	return pr.Number, repo, nil
 }
 
 // prNumberFromStoredURL extracts the PR number from a stored GitHub PR URL.

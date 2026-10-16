@@ -59,9 +59,10 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 	onDefault, _ := git.IsOnBranch(cfg.DefaultBranch)
 
 	var prNumber int
+	prRepo := sourceRepo
 
 	if len(args) > 0 {
-		prNumber, err = resolveMergeArg(args[0], sourceRepo, cfg)
+		prNumber, prRepo, err = resolveMergeArg(args[0], sourceRepo, cfg)
 		if err != nil {
 			return err
 		}
@@ -89,19 +90,23 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 
 		if n := prNumberFromStoredURL(git.GetBranchPRURL(currentBranch)); n != 0 {
 			prNumber = n
+			if repo := prRepoFromURL(git.GetBranchPRURL(currentBranch)); repo != "" {
+				prRepo = repo
+			}
 		} else {
 			tracking := git.GetTrackingBranch()
-			found, prErr := gh.GetPRForBranch(sourceRepo,
+			found, repo := findPRForBranch(sourceRepo,
 				remoteBranchName(tracking, currentBranch), "open",
 				prHeadOwners(cfg, sourceRepo, tracking)...)
-			if prErr != nil || found == nil {
+			if found == nil {
 				return ui.Dief("No open PR found for branch '%s'.", currentBranch)
 			}
 			prNumber = found.Number
+			prRepo = repo
 		}
 	}
 
-	pr, err := gh.GetPR(sourceRepo, prNumber)
+	pr, err := gh.GetPR(prRepo, prNumber)
 	if err != nil {
 		return ui.Dief("Failed to fetch PR #%d details.", prNumber)
 	}
@@ -144,7 +149,7 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	ghCmd := exec.Command("gh", "pr", "merge", "-R", sourceRepo, fmt.Sprintf("%d", pr.Number), strategyFlag)
+	ghCmd := exec.Command("gh", "pr", "merge", "-R", prRepo, fmt.Sprintf("%d", pr.Number), strategyFlag)
 	ghCmd.Stdin = os.Stdin
 	ghCmd.Stdout = os.Stdout
 	ghCmd.Stderr = os.Stderr
@@ -160,20 +165,20 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return finishOnePR(cfg, sourceRepo, pr.Number)
+	return finishOnePR(cfg, prRepo, pr.Number)
 }
 
 // resolveMergeArg interprets the argument as a PR number or branch name and
 // returns the corresponding PR number.
-func resolveMergeArg(arg, sourceRepo string, cfg *remote.Config) (int, error) {
+func resolveMergeArg(arg, sourceRepo string, cfg *remote.Config) (int, string, error) {
 	if n, err := strconv.Atoi(arg); err == nil {
-		return n, nil
+		return n, sourceRepo, nil
 	}
-	pr, err := gh.GetPRForBranch(sourceRepo, arg, "open", prHeadOwners(cfg, sourceRepo, "")...)
-	if err != nil || pr == nil {
-		return 0, ui.Dief("No open PR found for branch '%s'.", arg)
+	pr, repo := findPRForBranch(sourceRepo, arg, "open", prHeadOwners(cfg, sourceRepo, "")...)
+	if pr == nil {
+		return 0, sourceRepo, ui.Dief("No open PR found for branch '%s'.", arg)
 	}
-	return pr.Number, nil
+	return pr.Number, repo, nil
 }
 
 // pickOpenPRForMerge shows a picker of open PRs and returns the selected number.

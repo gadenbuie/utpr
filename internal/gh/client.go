@@ -54,12 +54,14 @@ func GetLogin() (string, error) {
 
 // RepoInfo holds information about a GitHub repository.
 type RepoInfo struct {
-	Fork        bool `json:"fork"`
-	Permissions struct {
+	Fork          bool   `json:"fork"`
+	DefaultBranch string `json:"default_branch"`
+	Permissions   struct {
 		Push bool `json:"push"`
 	} `json:"permissions"`
 	Parent struct {
-		FullName string `json:"full_name"`
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
 	} `json:"parent"`
 }
 

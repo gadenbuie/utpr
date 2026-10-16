@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/git"
+	"github.com/gadenbuie/utpr/internal/testutil"
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 func TestParseRepoSpec(t *testing.T) {
@@ -326,5 +329,177 @@ func TestResetCache(t *testing.T) {
 	resetCache()
 	if cached != nil {
 		t.Error("resetCache() did not clear cached config")
+	}
+}
+
+func TestResolveLayoutForkIsPrimary(t *testing.T) {
+	ghRepo := &gh.RepoInfo{Fork: true}
+	ghRepo.Parent.FullName = "jcheng5/scorecard-db"
+
+	// The fork itself is the primary repo: behave like a direct-push repo,
+	// even though an upstream remote exists.
+	cfg := resolveLayout(RemoteInfo{
+		OriginName:  "origin",
+		OriginRepo:  "gadenbuie/scorecard-db",
+		HasUpstream: true,
+		PrimaryRepo: "gadenbuie/scorecard-db",
+		GHRepo:      ghRepo,
+	}, "main")
+	if cfg.Layout != "ours" {
+		t.Errorf("Layout = %q, want %q", cfg.Layout, "ours")
+	}
+	if cfg.SourceRemote != "origin" {
+		t.Errorf("SourceRemote = %q, want %q", cfg.SourceRemote, "origin")
+	}
+	if cfg.PushRemote != "origin" {
+		t.Errorf("PushRemote = %q, want %q", cfg.PushRemote, "origin")
+	}
+	if cfg.DefaultBranch != "main" {
+		t.Errorf("DefaultBranch = %q, want %q", cfg.DefaultBranch, "main")
+	}
+}
+
+func TestValidatePrimaryRepo(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"whitespace", "   ", ""},
+		{"matches fork", forkRepo, forkRepo},
+		{"matches parent", parentRepo, parentRepo},
+		{"whitespace trimmed", " " + forkRepo + " ", forkRepo},
+		{"unknown repo", "someone/else", ""},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validatePrimaryRepo(tt.value, forkRepo, parentRepo); got != tt.want {
+				t.Errorf("validatePrimaryRepo(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecideForkPrimaryDefaults(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+
+	cases := []struct {
+		name          string
+		hasUpstream   bool
+		forkDefault   string
+		parentDefault string
+		want          string
+	}{
+		// Contributor fork with upstream remote: no prompt, upstream is primary.
+		{"upstream remote and same defaults", true, "main", "main", parentRepo},
+		// Diverged defaults suggest the fork is primary, but without a TTY
+		// the historical default (upstream) applies with a warning.
+		{"upstream remote and diverged defaults", true, "main", "master", parentRepo},
+		// No upstream remote: the fork is its own primary.
+		{"no upstream remote", false, "main", "master", forkRepo},
+		{"no upstream remote and same defaults", false, "main", "main", forkRepo},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decideForkPrimary(forkRepo, parentRepo, tt.hasUpstream, tt.forkDefault, tt.parentDefault)
+			if got != tt.want {
+				t.Errorf("decideForkPrimary(...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGhResolvedRepo(t *testing.T) {
+	dir := testutil.TempRepo(t)
+
+	if got := ghResolvedRepo(); got != "" {
+		t.Errorf("ghResolvedRepo() with no gh config = %q, want empty", got)
+	}
+
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
+	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/jcheng5/scorecard-db.git")
+
+	// gh repo set-default writes "base" on the chosen remote.
+	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "base")
+	if got := ghResolvedRepo(); got != "gadenbuie/scorecard-db" {
+		t.Errorf("ghResolvedRepo() = %q, want %q", got, "gadenbuie/scorecard-db")
+	}
+
+	// gh stores OWNER/REPO when the chosen repo has no remote of its own.
+	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "jcheng5/scorecard-db")
+	if got := ghResolvedRepo(); got != "jcheng5/scorecard-db" {
+		t.Errorf("ghResolvedRepo() with owner/repo value = %q, want %q", got, "jcheng5/scorecard-db")
+	}
+}
+
+func TestPrimaryRepoOverridePrecedence(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+	dir := testutil.TempRepo(t)
+
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
+	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "base")
+
+	// gh's stored default applies when nothing else is set.
+	if got := primaryRepoOverride(forkRepo, parentRepo); got != forkRepo {
+		t.Errorf("primaryRepoOverride() = %q, want %q (gh-resolved)", got, forkRepo)
+	}
+
+	// utpr's git config wins over gh's stored default.
+	testutil.RunGit(t, dir, "config", PrimaryRepoConfigKey, parentRepo)
+	if got := primaryRepoOverride(forkRepo, parentRepo); got != parentRepo {
+		t.Errorf("primaryRepoOverride() = %q, want %q (git config)", got, parentRepo)
+	}
+
+	// The environment variable wins over everything.
+	t.Setenv(PrimaryRepoEnvVar, forkRepo)
+	if got := primaryRepoOverride(forkRepo, parentRepo); got != forkRepo {
+		t.Errorf("primaryRepoOverride() = %q, want %q (env var)", got, forkRepo)
+	}
+
+	// An unknown value is skipped, falling through to the next source.
+	t.Setenv(PrimaryRepoEnvVar, "someone/else")
+	if got := primaryRepoOverride(forkRepo, parentRepo); got != parentRepo {
+		t.Errorf("primaryRepoOverride() with unknown env value = %q, want %q", got, parentRepo)
+	}
+}
+
+func TestPromptPrimaryRepoSavesAnswer(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+	testutil.TempRepo(t)
+
+	restore := testutil.StubChoose(forkRepo + " (this fork)")
+	defer restore()
+
+	got := promptPrimaryRepo(forkRepo, parentRepo, true)
+	if got != forkRepo {
+		t.Fatalf("promptPrimaryRepo() = %q, want %q", got, forkRepo)
+	}
+	if stored := git.ConfigGet(PrimaryRepoConfigKey); stored != forkRepo {
+		t.Errorf("stored %s = %q, want %q", PrimaryRepoConfigKey, stored, forkRepo)
+	}
+}
+
+func TestPromptPrimaryRepoCancel(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+	testutil.TempRepo(t)
+
+	restore := ui.SetChooseFunc(func(header string, options []string) (string, error) {
+		return "", ui.ErrCancelled
+	})
+	defer restore()
+
+	if got := promptPrimaryRepo(forkRepo, parentRepo, true); got != "" {
+		t.Errorf("promptPrimaryRepo() on cancel = %q, want empty", got)
+	}
+	if stored := git.ConfigGet(PrimaryRepoConfigKey); stored != "" {
+		t.Errorf("stored %s = %q, want empty", PrimaryRepoConfigKey, stored)
 	}
 }

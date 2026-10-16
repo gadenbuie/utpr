@@ -189,7 +189,7 @@ type statusRow struct {
 }
 
 func prStatusReport(ownerRepo, numberArg string, cfg *remote.Config) error {
-	prNumber, err := resolvePRNumber(ownerRepo, numberArg, cfg)
+	prNumber, prRepo, err := resolvePRNumber(ownerRepo, numberArg, cfg)
 	if err != nil {
 		return err
 	}
@@ -200,11 +200,11 @@ func prStatusReport(ownerRepo, numberArg string, cfg *remote.Config) error {
 	// ui.Spin is skipped in plain mode, so piped or agent output stays clean.
 	var status *prStatus
 	spinErr := ui.Spin(fmt.Sprintf("Fetching status of PR #%d...", prNumber), func() error {
-		pr, err := gh.GetPR(ownerRepo, prNumber)
+		pr, err := gh.GetPR(prRepo, prNumber)
 		if err != nil {
 			return err
 		}
-		status = buildPRStatus(ownerRepo, pr, cfg)
+		status = buildPRStatus(prRepo, pr, cfg)
 		return nil
 	})
 	if spinErr != nil {

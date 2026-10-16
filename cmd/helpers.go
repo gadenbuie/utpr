@@ -488,6 +488,80 @@ func prHeadOwners(cfg *remote.Config, sourceRepo, trackingRef string) []string {
 	return owners
 }
 
+// searchPRForBranch is the PR search used by findPRForBranch; swappable in tests.
+var searchPRForBranch = gh.GetPRForBranch
+
+// findPRForBranch finds the PR whose head matches the given branch, searching
+// the source repo first and then every other git remote's repo. This covers
+// forks that are the primary home of their own PRs: the PR lives in the
+// fork rather than the repo utpr treats as source. Returns the PR and the
+// repo where it was found (the source repo when nothing was found); API
+// errors are treated as "not found", matching how callers already handle
+// search failures.
+func findPRForBranch(sourceRepo, branch, state string, headOwners ...string) (*gh.PRInfo, string) {
+	if pr, err := searchPRForBranch(sourceRepo, branch, state, headOwners...); err == nil && pr != nil {
+		return pr, sourceRepo
+	}
+	for _, repo := range otherRemoteRepos(sourceRepo) {
+		pr, err := searchPRForBranch(repo, branch, state, headOwners...)
+		if err == nil && pr != nil {
+			ui.Warnf("Found PR #%d in '%s', not '%s'. To make this the default, run: git config %s %s",
+				pr.Number, repo, sourceRepo, remote.PrimaryRepoConfigKey, repo)
+			return pr, repo
+		}
+	}
+	return nil, sourceRepo
+}
+
+// prRepoFromURL extracts owner/repo from a GitHub PR URL such as
+// https://github.com/owner/repo/pull/123. Returns "" when the URL doesn't
+// match that shape.
+func prRepoFromURL(prURL string) string {
+	trimmed := strings.TrimRight(prURL, "/")
+	idx := strings.LastIndex(trimmed, "/pull/")
+	if idx < 0 {
+		return ""
+	}
+	ownerRepo := trimmed[:idx]
+	ownerRepo = strings.TrimSuffix(strings.TrimPrefix(ownerRepo, "https://github.com/"), ".git")
+	parts := strings.Split(ownerRepo, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-2:], "/")
+}
+
+// otherRemoteRepos returns the owner/repo of every git remote whose URL
+// parses as a GitHub-style owner/repo, except sourceRepo, deduplicated, in
+// the order git lists the remotes.
+func otherRemoteRepos(sourceRepo string) []string {
+	out, err := git.Run("remote")
+	if err != nil {
+		return nil
+	}
+	var repos []string
+	add := func(remoteName string) {
+		url, err := git.Run("remote", "get-url", remoteName)
+		if err != nil {
+			return
+		}
+		repo, err := remote.ParseRepoSpec(url)
+		if err != nil || repo == sourceRepo {
+			return
+		}
+		for _, existing := range repos {
+			if existing == repo {
+				return
+			}
+		}
+		repos = append(repos, repo)
+	}
+	for _, remoteName := range strings.Fields(out) {
+		add(remoteName)
+	}
+	return repos
+}
+
 // ghGetPRForCurrentBranch finds the PR (any state) for the current branch.
 // Returns nil if no PR is found or on error.
 func ghGetPRForCurrentBranch() *gh.PRInfo {
@@ -504,10 +578,7 @@ func ghGetPRForCurrentBranch() *gh.PRInfo {
 	if err != nil {
 		return nil
 	}
-	pr, err := gh.GetPRForBranch(ownerRepo, branch, "all",
+	pr, _ := findPRForBranch(ownerRepo, branch, "all",
 		prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...)
-	if err != nil {
-		return nil
-	}
 	return pr
 }

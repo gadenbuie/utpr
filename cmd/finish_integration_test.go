@@ -21,7 +21,7 @@ func TestResolveFinishArgBranchName(t *testing.T) {
 		t.Fatalf("failed to set stored PR URL: %v", err)
 	}
 
-	got, err := resolveFinishArg("feature-branch", "owner/repo", nil)
+	got, _, err := resolveFinishArg("feature-branch", "owner/repo", nil)
 	if err != nil {
 		t.Fatalf("resolveFinishArg returned error: %v", err)
 	}
