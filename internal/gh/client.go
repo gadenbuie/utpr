@@ -84,13 +84,14 @@ func GetRepo(ownerRepo string) (*RepoInfo, error) {
 
 // PRInfo holds information about a pull request.
 type PRInfo struct {
-	State          string `json:"state"`
-	Merged         bool   `json:"merged"`
-	Draft          bool   `json:"draft"`
-	MergeableState string `json:"mergeable_state"` // clean, dirty, blocked, behind, unstable, unknown
-	Number         int    `json:"number"`
-	Title          string `json:"title"`
-	HTMLURL        string `json:"html_url"`
+	State          string  `json:"state"`
+	Merged         bool    `json:"merged"`
+	MergedAt       *string `json:"merged_at"` // reliable merged signal in list endpoints
+	Draft          bool    `json:"draft"`
+	MergeableState string  `json:"mergeable_state"` // clean, dirty, blocked, behind, unstable, unknown
+	Number         int     `json:"number"`
+	Title          string  `json:"title"`
+	HTMLURL        string  `json:"html_url"`
 	Head           struct {
 		Ref  string `json:"ref"`
 		SHA  string `json:"sha"`
@@ -329,6 +330,7 @@ func GetPRForBranch(ownerRepo, branch, state string, extraHeadOwners ...string) 
 			return nil, fmt.Errorf("failed to search PRs for branch %s: %w", branch, err)
 		}
 		if len(prs) > 0 {
+			normalizeMerged(prs)
 			return &prs[0], nil
 		}
 	}
@@ -380,7 +382,20 @@ func ListPRs(ownerRepo, state string) ([]PRInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list PRs: %w", err)
 	}
+	normalizeMerged(prs)
 	return prs, nil
+}
+
+// normalizeMerged fills Merged from merged_at on PRs decoded from list
+// endpoints. GitHub returns "merged": null there — even for merged PRs —
+// while the single-PR endpoint returns a proper boolean. merged_at is set
+// in both, so it is the reliable signal.
+func normalizeMerged(prs []PRInfo) {
+	for i := range prs {
+		if prs[i].MergedAt != nil {
+			prs[i].Merged = true
+		}
+	}
 }
 
 // SearchPRsByCommit finds pull requests associated with a given commit SHA.
@@ -399,6 +414,7 @@ func SearchPRsByCommit(ownerRepo, sha string) ([]PRInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to search PRs by commit %s: %w", sha, err)
 	}
+	normalizeMerged(prs)
 	return prs, nil
 }
 
@@ -420,6 +436,7 @@ func GetMergedPRForBranch(ownerRepo, branch string) (*PRInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to search merged PRs for branch %s: %w", branch, err)
 	}
+	normalizeMerged(prs)
 	for i := range prs {
 		if prs[i].Merged {
 			return &prs[i], nil

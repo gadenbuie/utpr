@@ -37,3 +37,27 @@ func TestSplitOwnerRepo(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeMerged(t *testing.T) {
+	mergedAt := "2026-10-16T18:24:02Z"
+	prs := []PRInfo{
+		// List endpoints return merged: null even for merged PRs, with
+		// merged_at carrying the signal.
+		{State: "closed", MergedAt: &mergedAt},
+		// Closed-but-unmerged PR: no merged_at, Merged stays false.
+		{State: "closed"},
+		// Single-PR endpoint already returns merged: true.
+		{State: "closed", Merged: true, MergedAt: &mergedAt},
+	}
+	normalizeMerged(prs)
+
+	if !prs[0].Merged {
+		t.Error("expected merged_at to set Merged true for list-endpoint PR")
+	}
+	if prs[1].Merged {
+		t.Error("expected closed PR without merged_at to stay unmerged")
+	}
+	if !prs[2].Merged {
+		t.Error("expected already-merged PR to stay merged")
+	}
+}
