@@ -95,6 +95,10 @@ func reasonCheckRun(id int64, name, conclusion string) gh.CheckRun {
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns
 // what it wrote. In tests stdout is never a TTY, so CI output lands there
 // via agent mode.
+//
+// The pipe is drained concurrently with fn: OS pipe buffers are small
+// (notably on Windows), so writing more than the buffer before reading
+// would block forever and deadlock the test.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -105,13 +109,18 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
 
+	done := make(chan string, 1)
+	go func() {
+		out, err := io.ReadAll(r)
+		if err != nil {
+			t.Errorf("read captured stdout: %v", err)
+		}
+		done <- string(out)
+	}()
+
 	fn()
 	_ = w.Close()
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read captured stdout: %v", err)
-	}
-	return string(out)
+	return <-done
 }
 
 func TestInformativeAnnotation(t *testing.T) {
