@@ -95,7 +95,7 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			tracking := git.GetTrackingBranch()
-			found, repo := findPRForBranch(sourceRepo,
+			found, repo := findPRForBranch(cfg, sourceRepo,
 				remoteBranchName(tracking, currentBranch), "open",
 				prHeadOwners(cfg, sourceRepo, tracking)...)
 			if found == nil {
@@ -174,7 +174,7 @@ func resolveMergeArg(arg, sourceRepo string, cfg *remote.Config) (int, string, e
 	if n, err := strconv.Atoi(arg); err == nil {
 		return n, sourceRepo, nil
 	}
-	pr, repo := findPRForBranch(sourceRepo, arg, "open", prHeadOwners(cfg, sourceRepo, "")...)
+	pr, repo := findPRForBranch(cfg, sourceRepo, arg, "open", prHeadOwners(cfg, sourceRepo, "")...)
 	if pr == nil {
 		return 0, sourceRepo, ui.Dief("No open PR found for branch '%s'.", arg)
 	}

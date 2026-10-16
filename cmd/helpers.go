@@ -492,17 +492,18 @@ func prHeadOwners(cfg *remote.Config, sourceRepo, trackingRef string) []string {
 var searchPRForBranch = gh.GetPRForBranch
 
 // findPRForBranch finds the PR whose head matches the given branch, searching
-// the source repo first and then every other git remote's repo. This covers
+// the source repo first and then the push remote's repo when working from a
+// fork. That fallback covers
 // forks that are the primary home of their own PRs: the PR lives in the
 // fork rather than the repo utpr treats as source. Returns the PR and the
 // repo where it was found (the source repo when nothing was found); API
 // errors are treated as "not found", matching how callers already handle
 // search failures.
-func findPRForBranch(sourceRepo, branch, state string, headOwners ...string) (*gh.PRInfo, string) {
+func findPRForBranch(cfg *remote.Config, sourceRepo, branch, state string, headOwners ...string) (*gh.PRInfo, string) {
 	if pr, err := searchPRForBranch(sourceRepo, branch, state, headOwners...); err == nil && pr != nil {
 		return pr, sourceRepo
 	}
-	for _, repo := range otherRemoteRepos(sourceRepo) {
+	for _, repo := range fallbackRepos(cfg, sourceRepo) {
 		pr, err := searchPRForBranch(repo, branch, state, headOwners...)
 		if err == nil && pr != nil {
 			ui.Warnf("Found PR #%d in '%s', not '%s'. To make this the default, run: git config %s %s",
@@ -531,35 +532,25 @@ func prRepoFromURL(prURL string) string {
 	return strings.Join(parts[len(parts)-2:], "/")
 }
 
-// otherRemoteRepos returns the owner/repo of every git remote whose URL
-// parses as a GitHub-style owner/repo, except sourceRepo, deduplicated, in
-// the order git lists the remotes.
-func otherRemoteRepos(sourceRepo string) []string {
-	out, err := git.Run("remote")
+// fallbackRepos returns repos to search when a branch has no PR in the
+// source repo: only the push remote's repo, and only in fork layout — that
+// is where a fork's own primary-home PRs live. In "ours" layout the source
+// repo is already the primary home, so there is no fallback, keeping
+// first-push lookups for new branches down to a single repo. Remotes created
+// for PR fetches (pr-N) are never searched.
+func fallbackRepos(cfg *remote.Config, sourceRepo string) []string {
+	if cfg == nil || cfg.Layout != "fork" {
+		return nil
+	}
+	url, err := git.Run("remote", "get-url", cfg.PushRemote)
 	if err != nil {
 		return nil
 	}
-	var repos []string
-	add := func(remoteName string) {
-		url, err := git.Run("remote", "get-url", remoteName)
-		if err != nil {
-			return
-		}
-		repo, err := remote.ParseRepoSpec(url)
-		if err != nil || repo == sourceRepo {
-			return
-		}
-		for _, existing := range repos {
-			if existing == repo {
-				return
-			}
-		}
-		repos = append(repos, repo)
+	repo, err := remote.ParseRepoSpec(url)
+	if err != nil || repo == sourceRepo {
+		return nil
 	}
-	for _, remoteName := range strings.Fields(out) {
-		add(remoteName)
-	}
-	return repos
+	return []string{repo}
 }
 
 // ghGetPRForCurrentBranch finds the PR (any state) for the current branch.
@@ -578,7 +569,7 @@ func ghGetPRForCurrentBranch() *gh.PRInfo {
 	if err != nil {
 		return nil
 	}
-	pr, _ := findPRForBranch(ownerRepo, branch, "all",
+	pr, _ := findPRForBranch(cfg, ownerRepo, branch, "all",
 		prHeadOwners(cfg, ownerRepo, git.GetTrackingBranch())...)
 	return pr
 }

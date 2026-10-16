@@ -404,6 +404,12 @@ func TestDecideForkPrimaryDefaults(t *testing.T) {
 		{"no upstream remote", false, "main", "master", forkRepo},
 		{"no upstream remote and same defaults", false, "main", "main", forkRepo},
 	}
+	// decideForkPrimary consults the prompt in a TTY; force the non-TTY
+	// path so the test never hangs or prompts regardless of how the test
+	// binary's stdin is wired.
+	restoreTTY := ui.SetTTYFuncs(func() bool { return true }, func() bool { return false })
+	defer restoreTTY()
+
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			got := decideForkPrimary(forkRepo, parentRepo, tt.hasUpstream, tt.forkDefault, tt.parentDefault)
@@ -414,8 +420,64 @@ func TestDecideForkPrimaryDefaults(t *testing.T) {
 	}
 }
 
+func TestSuggestForkPrimary(t *testing.T) {
+	cases := []struct {
+		name          string
+		hasUpstream   bool
+		forkDefault   string
+		parentDefault string
+		want          bool
+	}{
+		// No upstream remote: the fork is the only locally workable primary.
+		{"no upstream remote", false, "main", "main", true},
+		// Fork moved ahead (fork main vs parent master): fork is primary.
+		{"fork default moved ahead", true, "main", "master", true},
+		// Stale contributor fork (fork master, parent renamed to main):
+		// keep the parent preselected.
+		{"stale fork, renamed parent", true, "master", "main", false},
+		// Same defaults with upstream: parent first.
+		{"same defaults with upstream", true, "main", "main", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := suggestForkPrimary(tt.hasUpstream, tt.forkDefault, tt.parentDefault); got != tt.want {
+				t.Errorf("suggestForkPrimary(%v, %q, %q) = %v, want %v",
+					tt.hasUpstream, tt.forkDefault, tt.parentDefault, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPromptPrimaryRepoOrder verifies the preselected (first) option in the
+// primary-repo prompt: the parent goes first for stale contributor forks,
+// the fork first when the fork is the only or clearly primary choice.
+func TestPromptPrimaryRepoOrder(t *testing.T) {
+	const forkRepo = "gadenbuie/scorecard-db"
+	const parentRepo = "jcheng5/scorecard-db"
+	testutil.TempRepo(t)
+
+	var options []string
+	restore := ui.SetChooseFunc(func(header string, opts []string) (string, error) {
+		options = opts
+		return "", ui.ErrCancelled
+	})
+	defer restore()
+
+	promptPrimaryRepo(forkRepo, parentRepo, true)
+	if len(options) != 2 || options[0] != forkRepo+" (this fork)" || options[1] != parentRepo+" (upstream)" {
+		t.Errorf("suggestFork order = %v, want fork first", options)
+	}
+
+	options = nil
+	promptPrimaryRepo(forkRepo, parentRepo, false)
+	if len(options) != 2 || options[0] != parentRepo+" (upstream)" || options[1] != forkRepo+" (this fork)" {
+		t.Errorf("suggestParent order = %v, want parent first", options)
+	}
+}
+
 func TestGhResolvedRepo(t *testing.T) {
 	dir := testutil.TempRepo(t)
+	t.Setenv(PrimaryRepoEnvVar, "")
 
 	if got := ghResolvedRepo(); got != "" {
 		t.Errorf("ghResolvedRepo() with no gh config = %q, want empty", got)
@@ -441,6 +503,9 @@ func TestPrimaryRepoOverridePrecedence(t *testing.T) {
 	const forkRepo = "gadenbuie/scorecard-db"
 	const parentRepo = "jcheng5/scorecard-db"
 	dir := testutil.TempRepo(t)
+
+	// Don't let an inherited UTPR_PRIMARY_REPO shadow the sources under test.
+	t.Setenv(PrimaryRepoEnvVar, "")
 
 	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
 	testutil.RunGit(t, dir, "config", "remote.origin.gh-resolved", "base")

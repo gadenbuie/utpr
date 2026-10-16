@@ -100,7 +100,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 			// is configured. Fork PRs are covered by the head-owner candidates.
 			if len(prNumbers) == 0 {
 				tracking := git.GetTrackingBranch()
-				pr, repo := findPRForBranch(sourceRepo,
+				pr, repo := findPRForBranch(cfg, sourceRepo,
 					remoteBranchName(tracking, currentBranch), "all",
 					prHeadOwners(cfg, sourceRepo, tracking)...)
 				if pr == nil {
@@ -372,7 +372,7 @@ func resolveFinishArg(arg, sourceRepo string, cfg *remote.Config) (int, string, 
 			return n, repo, nil
 		}
 	}
-	pr, repo := findPRForBranch(sourceRepo, arg, "all", prHeadOwners(cfg, sourceRepo, "")...)
+	pr, repo := findPRForBranch(cfg, sourceRepo, arg, "all", prHeadOwners(cfg, sourceRepo, "")...)
 	if pr == nil {
 		return 0, sourceRepo, ui.Dief("Could not determine PR number for branch '%s'.", arg)
 	}

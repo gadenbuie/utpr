@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/remote"
 	"github.com/gadenbuie/utpr/internal/testutil"
 )
 
@@ -136,19 +138,31 @@ func TestFindLocalBranchForPR(t *testing.T) {
 	}
 }
 
-func TestOtherRemoteRepos(t *testing.T) {
+func TestFallbackRepos(t *testing.T) {
 	dir := testutil.TempRepo(t)
 
-	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/jcheng5/scorecard-db.git")
+	testutil.RunGit(t, dir, "remote", "add", "origin", "https://github.com/gadenbuie/scorecard-db.git")
 	testutil.RunGit(t, dir, "remote", "add", "upstream", "https://github.com/jcheng5/scorecard-db.git")
-	testutil.RunGit(t, dir, "remote", "add", "fork", "https://github.com/gadenbuie/scorecard-db.git")
-	// Local paths don't parse as owner/repo and are skipped.
+	// PR-fetch remotes and local paths must never be searched.
+	testutil.RunGit(t, dir, "remote", "add", "pr-123", "https://github.com/alice/patch.git")
 	testutil.RunGit(t, dir, "remote", "add", "local", "/tmp/some/repo.git")
 
-	got := otherRemoteRepos("jcheng5/scorecard-db")
+	forkCfg := &remote.Config{Layout: "fork", PushRemote: "origin"}
+	got := fallbackRepos(forkCfg, "jcheng5/scorecard-db")
 	want := []string{"gadenbuie/scorecard-db"}
 	if len(got) != len(want) || got[0] != want[0] {
-		t.Errorf("otherRemoteRepos() = %v, want %v", got, want)
+		t.Errorf("fallbackRepos(fork) = %v, want %v", got, want)
+	}
+
+	// Source and push repo are the same repo: nothing to fall back to.
+	if got := fallbackRepos(forkCfg, "gadenbuie/scorecard-db"); got != nil {
+		t.Errorf("fallbackRepos() with push repo as source = %v, want nil", got)
+	}
+
+	// "ours" layout has no fallback at all.
+	oursCfg := &remote.Config{Layout: "ours", PushRemote: "origin"}
+	if got := fallbackRepos(oursCfg, "jcheng5/scorecard-db"); got != nil {
+		t.Errorf("fallbackRepos(ours) = %v, want nil", got)
 	}
 }
 
@@ -157,30 +171,47 @@ func TestFindPRForBranch(t *testing.T) {
 
 	tests := []struct {
 		name        string
+		layout      string
 		sourceRepo  string
 		prsByRepo   map[string]*gh.PRInfo
 		queriedRepo string
+		wantQueried []string
 		wantNumber  int
 	}{
 		{
 			name:        "found in source repo, no fallback",
+			layout:      "fork",
 			sourceRepo:  "jcheng5/scorecard-db",
 			prsByRepo:   map[string]*gh.PRInfo{"jcheng5/scorecard-db": {Number: 3}},
 			queriedRepo: "jcheng5/scorecard-db",
+			wantQueried: []string{"jcheng5/scorecard-db"},
 			wantNumber:  3,
 		},
 		{
 			name:        "falls back to the fork",
+			layout:      "fork",
 			sourceRepo:  "jcheng5/scorecard-db",
 			prsByRepo:   map[string]*gh.PRInfo{"gadenbuie/scorecard-db": prInFork},
 			queriedRepo: "gadenbuie/scorecard-db",
+			wantQueried: []string{"jcheng5/scorecard-db", "gadenbuie/scorecard-db"},
 			wantNumber:  7,
 		},
 		{
 			name:        "not found anywhere",
+			layout:      "fork",
 			sourceRepo:  "jcheng5/scorecard-db",
 			prsByRepo:   map[string]*gh.PRInfo{},
 			queriedRepo: "",
+			wantQueried: []string{"jcheng5/scorecard-db", "gadenbuie/scorecard-db"},
+			wantNumber:  0,
+		},
+		{
+			name:        "ours layout does not fall back",
+			layout:      "ours",
+			sourceRepo:  "gadenbuie/scorecard-db",
+			prsByRepo:   map[string]*gh.PRInfo{},
+			queriedRepo: "",
+			wantQueried: []string{"gadenbuie/scorecard-db"},
 			wantNumber:  0,
 		},
 	}
@@ -197,7 +228,8 @@ func TestFindPRForBranch(t *testing.T) {
 			})
 			defer restore()
 
-			pr, prRepo := findPRForBranch(tt.sourceRepo, "fix/thing", "open")
+			cfg := &remote.Config{Layout: tt.layout, PushRemote: "origin"}
+			pr, prRepo := findPRForBranch(cfg, tt.sourceRepo, "fix/thing", "open")
 			if tt.wantNumber == 0 {
 				if pr != nil {
 					t.Fatalf("findPRForBranch() = %+v, want nil", pr)
@@ -213,12 +245,8 @@ func TestFindPRForBranch(t *testing.T) {
 					t.Errorf("findPRForBranch() repo = %q, want %q", prRepo, tt.queriedRepo)
 				}
 			}
-			if tt.queriedRepo != "" && (len(queried) == 0 || queried[len(queried)-1] != tt.queriedRepo) {
-				t.Errorf("last searched repo = %v, want %q", queried, tt.queriedRepo)
-			}
-			// The source repo is always searched first.
-			if len(queried) == 0 || queried[0] != tt.sourceRepo {
-				t.Errorf("first searched repo = %v, want %q", queried, tt.sourceRepo)
+			if !reflect.DeepEqual(queried, tt.wantQueried) {
+				t.Errorf("searched repos = %v, want %v", queried, tt.wantQueried)
 			}
 		})
 	}

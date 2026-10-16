@@ -208,9 +208,10 @@ func detect() (*Config, error) {
 		// The primary is upstream: make sure the local remote exists so
 		// fetch/pull/merge work. An explicit choice counts as consent.
 		if primary == parentRepo && !hasUpstream {
-			addUpstreamRemote(parentRepo)
-			hasUpstream = true
-			info.HasUpstream = true
+			if addUpstreamRemote(parentRepo) == nil {
+				hasUpstream = true
+				info.HasUpstream = true
+			}
 		}
 		if primary == "" && parentRepo == "" && !hasUpstream {
 			ui.Warn("Fork detected but could not determine parent repo. Using origin as source.")
@@ -317,8 +318,8 @@ func ghResolvedRepo() string {
 // decideForkPrimary resolves the primary repo for a fork whose parent is
 // known but has no stored answer. When the situation is genuinely ambiguous
 // — the user has no upstream remote yet, or the fork's default branch has
-// diverged from the parent's, suggesting the fork is now the primary home —
-// ask once and save the answer. Otherwise keep the historical default.
+// diverged from the parent's — ask once and save the answer. Otherwise
+// keep the historical default.
 func decideForkPrimary(forkRepo, parentRepo string, hasUpstream bool, forkDefault, parentDefault string) string {
 	branchesDiffer := forkDefault != "" && parentDefault != "" && forkDefault != parentDefault
 
@@ -326,13 +327,25 @@ func decideForkPrimary(forkRepo, parentRepo string, hasUpstream bool, forkDefaul
 		if !ui.StdinIsTTY() {
 			ui.Warnf(
 				"'%s' is a GitHub fork of '%s' but which repo is primary is ambiguous. Using '%s' for now; choose one with: git config %s <owner>/<repo> (or run 'gh repo set-default').",
-				forkRepo, parentRepo, defaultForkPrimary(forkRepo, parentRepo, hasUpstream), PrimaryRepoConfigKey)
-		} else if choice := promptPrimaryRepo(forkRepo, parentRepo, branchesDiffer); choice != "" {
-			return choice
+					forkRepo, parentRepo, defaultForkPrimary(forkRepo, parentRepo, hasUpstream), PrimaryRepoConfigKey)
+		} else if choice := promptPrimaryRepo(forkRepo, parentRepo, suggestForkPrimary(hasUpstream, forkDefault, parentDefault)); choice != "" {
+				return choice
 		}
 	}
 
 	return defaultForkPrimary(forkRepo, parentRepo, hasUpstream)
+}
+
+// suggestForkPrimary reports whether the fork should be the preselected
+// option in the primary-repo prompt. The fork goes first only when it is
+// the only locally workable primary (no upstream remote exists) or when
+// its default branch has moved ahead of the parent's (fork main vs parent
+// master) — a strong signal the fork is now the primary home. With an
+// upstream remote, any other divergence (typically a stale fork still on
+// master while the parent renamed to main) keeps the parent first, so
+// pressing Enter preserves the historical contributor workflow.
+func suggestForkPrimary(hasUpstream bool, forkDefault, parentDefault string) bool {
+	return !hasUpstream || (forkDefault == "main" && parentDefault == "master")
 }
 
 // defaultForkPrimary picks the primary repo without asking: the parent when
@@ -376,13 +389,15 @@ func promptPrimaryRepo(forkRepo, parentRepo string, suggestFork bool) string {
 }
 
 // addUpstreamRemote adds a local 'upstream' remote for the parent repo.
-func addUpstreamRemote(parentRepo string) {
+// Returns an error when the remote could not be added.
+func addUpstreamRemote(parentRepo string) error {
 	_, err := git.Run("remote", "add", "upstream", fmt.Sprintf("https://github.com/%s.git", parentRepo))
 	if err == nil {
 		ui.Infof("Added 'upstream' remote for '%s'.", parentRepo)
 	} else {
 		ui.Warnf("Could not add 'upstream' remote for '%s': %v", parentRepo, err)
 	}
+	return err
 }
 
 // ParseRepoSpec extracts "owner/repo" from a git remote URL.
