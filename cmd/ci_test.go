@@ -416,20 +416,39 @@ func TestCIFormatDuration(t *testing.T) {
 		in   time.Duration
 		want string
 	}{
-		{"zero rounds to 0s", 0, " 0s"},
+		{"zero rounds to 0s", 0, "0s"},
 		{"two-digit seconds", 49 * time.Second, "49s"},
-		{"single-digit seconds right-aligned", 8 * time.Second, " 8s"},
+		{"single-digit seconds alone are not padded", 8 * time.Second, "8s"},
 		{"minutes and single-digit seconds", 5*time.Minute + 8*time.Second, "5m  8s"},
 		{"minutes and two-digit seconds", 45*time.Minute + 30*time.Second, "45m 30s"},
 		{"minutes fill their column", 5*time.Minute + 30*time.Second, "5m 30s"},
 		{"hours render minutes and seconds", time.Hour + 5*time.Minute + 8*time.Second, "1h 5m  8s"},
 		{"hours with zero minutes", time.Hour + 8*time.Second, "1h 0m  8s"},
 		{"exactly one hour", time.Hour, "1h 0m  0s"},
-		{"rounds to nearest second", 1500 * time.Millisecond, " 2s"},
+		{"rounds to nearest second", 1500 * time.Millisecond, "2s"},
 	}
 	for _, tt := range tests {
 		if got := ciFormatDuration(tt.in); got != tt.want {
 			t.Errorf("ciFormatDuration(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestCIFormatDurationCompact(t *testing.T) {
+	tests := []struct {
+		name string
+		in   time.Duration
+		want string
+	}{
+		{"zero", 0, "0s"},
+		{"seconds", 8 * time.Second, "8s"},
+		{"minutes and seconds", 5*time.Minute + 8*time.Second, "5m 8s"},
+		{"hours render minutes and seconds", time.Hour + 5*time.Minute + 8*time.Second, "1h 5m 8s"},
+		{"exactly one hour", time.Hour, "1h 0m 0s"},
+	}
+	for _, tt := range tests {
+		if got := ciFormatDurationCompact(tt.in); got != tt.want {
+			t.Errorf("ciFormatDurationCompact(%v) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

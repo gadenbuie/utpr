@@ -1009,54 +1009,76 @@ func isFailedConclusion(conclusion string) bool {
 	return false
 }
 
-func formatCheckDuration(r gh.CheckRun, est time.Duration, hasEst bool) string {
+// formatCheckDuration renders a check run's duration cell in two parts:
+// dur is the elapsed or total time, right-aligned into the duration
+// column; suffix is an optional estimate annotation that follows it
+// raggedly, e.g. "(est 2m 3s remaining)". Both parts are empty for a
+// queued check run without history.
+func formatCheckDuration(r gh.CheckRun, est time.Duration, hasEst bool) (dur, suffix string) {
 	if r.StartedAt == "" {
 		// Queued: nothing has happened yet, but the historical
 		// estimate still applies.
 		if hasEst {
-			return ui.StyleMuted.Render("est " + ciFormatDuration(est))
+			return ui.StyleMuted.Render("est " + ciFormatDurationCompact(est)), ""
 		}
-		return ""
+		return "", ""
 	}
 	started, err := time.Parse(time.RFC3339, r.StartedAt)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if r.Status == "completed" && r.CompletedAt != "" {
 		completed, err := time.Parse(time.RFC3339, r.CompletedAt)
 		if err != nil {
-			return ""
+			return "", ""
 		}
-		return ui.StyleMuted.Render(ciFormatDuration(completed.Sub(started)))
+		return ui.StyleMuted.Render(ciFormatDuration(completed.Sub(started))), ""
 	}
-	elapsed := ciFormatDuration(time.Since(started))
+	elapsed := time.Since(started)
+	dur = ui.StyleMuted.Render(ciFormatDuration(elapsed))
 	if !hasEst {
-		return ui.StyleMuted.Render(elapsed)
+		return dur, ""
 	}
-	if remaining := est - time.Since(started); remaining > 0 {
-		return ui.StyleMuted.Render(fmt.Sprintf("%s (est %s remaining)",
-			elapsed, ciFormatDuration(remaining)))
+	if remaining := est - elapsed; remaining > 0 {
+		return dur, ui.StyleMuted.Render("(est " + ciFormatDurationCompact(remaining) + " remaining)")
 	}
-	return ui.StyleMuted.Render(fmt.Sprintf("%s (est %s)", elapsed, ciFormatDuration(est)))
+	return dur, ui.StyleMuted.Render("(est " + ciFormatDurationCompact(est) + ")")
 }
 
 // ciFormatDuration renders a duration as unit-aligned columns so minutes
 // and seconds line up vertically across rows, e.g. "49s", "5m  8s",
-// "1h 5m 30s". Seconds are right-aligned to two digits; a larger unit
-// always renders the smaller ones ("1h  0m  0s", never "1h 05m").
+// "1h 5m 30s". Seconds are right-aligned to two digits when a larger
+// unit is present; a larger unit always renders the smaller ones
+// ("1h  0m  0s", never "1h 05m").
 func ciFormatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
-	sec := fmt.Sprintf("%2ds", s)
 	if h > 0 {
-		return fmt.Sprintf("%dh %dm %s", h, m, sec)
+		return fmt.Sprintf("%dh %dm %2ds", h, m, s)
 	}
 	if m > 0 {
-		return fmt.Sprintf("%dm %s", m, sec)
+		return fmt.Sprintf("%dm %2ds", m, s)
 	}
-	return sec
+	return fmt.Sprintf("%ds", s)
+}
+
+// ciFormatDurationCompact renders a duration without unit padding, for
+// inline contexts where column alignment does not matter, e.g.
+// "(est 2m 3s remaining)".
+func ciFormatDurationCompact(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }
 
 func checkRunSummary(runs []gh.CheckRun) string {
@@ -1121,13 +1143,13 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 			}
 		}
 
-		durs := make([]string, len(g.Runs))
+		durs := make([][2]string, len(g.Runs)) // [duration cell, estimate suffix]
 		durWidth := 0
 		for i, r := range g.Runs {
 			est, hasEst := estimateFor(estimates, r)
-			durs[i] = formatCheckDuration(r, est, hasEst)
-			if durs[i] != "" {
-				if w := len([]rune(ui.StripANSI(durs[i]))); w > durWidth {
+			durs[i][0], durs[i][1] = formatCheckDuration(r, est, hasEst)
+			if durs[i][0] != "" {
+				if w := len([]rune(ui.StripANSI(durs[i][0]))); w > durWidth {
 					durWidth = w
 				}
 			}
@@ -1136,11 +1158,14 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 		for i, r := range g.Runs {
 			icon := checkRunIcon(r)
 			name := jobDisplayName(r.Name, g.Name)
-			dur := durs[i]
+			// The duration cell is right-aligned so unit digits line up;
+			// the estimate suffix trails after it, raggedly.
+			dur := durs[i][0]
 			if dur != "" {
-				// Right-align durations so the seconds of "49s" and
-				// "5m 7s" line up in the same column.
 				dur = ui.PadLeft(dur, durWidth)
+				if suffix := durs[i][1]; suffix != "" {
+					dur += " " + suffix
+				}
 			}
 			line := fmt.Sprintf("  %s  %s  %s",
 				icon,

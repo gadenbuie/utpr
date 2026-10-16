@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gadenbuie/utpr/internal/gh"
+	"github.com/gadenbuie/utpr/internal/ui"
 )
 
 // runningElapsedRE matches a bare elapsed duration, e.g. "30s".
@@ -180,42 +181,42 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	// Queued with estimate: bare estimated duration.
 	queued := estimateTestRun(7, "build")
 	queued.Status = "queued"
-	got := formatCheckDuration(queued, 4*time.Minute, true)
-	if got == "" || !strings.Contains(got, "est 4m  0s") {
-		t.Errorf("formatCheckDuration(queued, est) = %q, want est 4m  0s", got)
+	dur, suffix := formatCheckDuration(queued, 4*time.Minute, true)
+	if suffix != "" {
+		t.Errorf("formatCheckDuration(queued, est) suffix = %q, want empty", suffix)
+	}
+	if ui.StripANSI(dur) != "est 4m 0s" {
+		t.Errorf("formatCheckDuration(queued, est) dur = %q, want est 4m 0s", ui.StripANSI(dur))
 	}
 
-	// Running with estimate: elapsed plus remaining countdown.
+	// Running with estimate: elapsed cell plus remaining countdown suffix.
 	running := estimateTestRun(7, "build")
 	running.Status = "in_progress"
 	running.StartedAt = now.Add(-30 * time.Second).Format(time.RFC3339)
-	got = formatCheckDuration(running, 4*time.Minute, true)
-	if !strings.Contains(got, "s (est ") || !strings.Contains(got, " remaining)") {
-		t.Errorf("formatCheckDuration(running, est) = %q, want elapsed + remaining countdown", got)
+	dur, suffix = formatCheckDuration(running, 4*time.Minute, true)
+	if !runningElapsedRE.MatchString(ui.StripANSI(dur)) {
+		t.Errorf("formatCheckDuration(running, est) dur = %q, want a bare elapsed duration like 30s", ui.StripANSI(dur))
 	}
-	if strings.Contains(got, "running") {
-		t.Errorf("formatCheckDuration(running, est) = %q, want no \"running\" word", got)
-	}
-	if strings.Contains(got, "est ~") {
-		t.Errorf("formatCheckDuration(running, est) = %q, want no tilde prefix", got)
+	if !strings.HasPrefix(ui.StripANSI(suffix), "(est ") || !strings.HasSuffix(ui.StripANSI(suffix), " remaining)") {
+		t.Errorf("formatCheckDuration(running, est) suffix = %q, want (est Ns remaining)", ui.StripANSI(suffix))
 	}
 
-	// Running without estimate: bare elapsed, still no "running" word.
-	got = formatCheckDuration(running, 0, false)
-	if !runningElapsedRE.MatchString(got) {
-		t.Errorf("formatCheckDuration(running, no est) = %q, want a bare elapsed duration like 30s", got)
+	// Running without estimate: bare elapsed, no suffix.
+	dur, suffix = formatCheckDuration(running, 0, false)
+	if suffix != "" {
+		t.Errorf("formatCheckDuration(running, no est) suffix = %q, want empty", suffix)
+	}
+	if !runningElapsedRE.MatchString(ui.StripANSI(dur)) {
+		t.Errorf("formatCheckDuration(running, no est) dur = %q, want a bare elapsed duration like 30s", ui.StripANSI(dur))
 	}
 
 	// Running past the estimate: no countdown, estimated total still shown.
 	past := estimateTestRun(7, "build")
 	past.Status = "in_progress"
 	past.StartedAt = now.Add(-10 * time.Minute).Format(time.RFC3339)
-	got = formatCheckDuration(past, 4*time.Minute, true)
-	if strings.Contains(got, "remaining") {
-		t.Errorf("formatCheckDuration(past est) = %q, want no remaining countdown", got)
-	}
-	if !strings.Contains(got, "est 4m  0s") {
-		t.Errorf("formatCheckDuration(past est) = %q, want estimate still shown", got)
+	dur, suffix = formatCheckDuration(past, 4*time.Minute, true)
+	if ui.StripANSI(suffix) != "(est 4m 0s)" {
+		t.Errorf("formatCheckDuration(past est) suffix = %q, want (est 4m 0s)", ui.StripANSI(suffix))
 	}
 
 	// Completed runs ignore estimates.
@@ -224,9 +225,12 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	done.Conclusion = "success"
 	done.StartedAt = now.Add(-5 * time.Minute).Format(time.RFC3339)
 	done.CompletedAt = now.Add(-1 * time.Minute).Format(time.RFC3339)
-	got = formatCheckDuration(done, 9*time.Minute, true)
-	if got != "4m  0s" {
-		t.Errorf("formatCheckDuration(completed, est) = %q, want 4m  0s", got)
+	dur, suffix = formatCheckDuration(done, 9*time.Minute, true)
+	if suffix != "" {
+		t.Errorf("formatCheckDuration(completed, est) suffix = %q, want empty", suffix)
+	}
+	if ui.StripANSI(dur) != "4m  0s" {
+		t.Errorf("formatCheckDuration(completed, est) dur = %q, want 4m  0s", ui.StripANSI(dur))
 	}
 }
 
@@ -258,10 +262,17 @@ func TestRenderCheckRunsAlignsDurations(t *testing.T) {
 	if len(jobLines) != 2 {
 		t.Fatalf("renderCheckRunsPlain() job lines = %v, want 2", jobLines)
 	}
-	// Right-aligned durations: both rows end at the same column, with no
-	// trailing whitespace on either.
-	if len(jobLines[0]) != len(jobLines[1]) {
-		t.Errorf("duration column not aligned:\n%q\n%q", jobLines[0], jobLines[1])
+	completedLine, runningLine := jobLines[0], jobLines[1]
+	// The completed row ends at its duration cell; the running row's cell
+	// ends where its " (est" suffix begins. Both must end at the same
+	// column so the unit digits line up.
+	suffixAt := strings.Index(runningLine, " (est ")
+	if suffixAt < 0 {
+		t.Fatalf("running row %q has no estimate suffix", runningLine)
+	}
+	if endCol := len(strings.TrimRight(completedLine, " ")); endCol != suffixAt {
+		t.Errorf("duration cells not aligned: completed ends at column %d, running cell ends at %d\n%q\n%q",
+			endCol, suffixAt, completedLine, runningLine)
 	}
 	for _, line := range jobLines {
 		if strings.TrimRight(line, " ") != line {
