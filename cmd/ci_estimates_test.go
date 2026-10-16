@@ -181,8 +181,8 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	queued := estimateTestRun(7, "build")
 	queued.Status = "queued"
 	got := formatCheckDuration(queued, 4*time.Minute, true)
-	if got == "" || !strings.Contains(got, "est 4m 0s") {
-		t.Errorf("formatCheckDuration(queued, est) = %q, want est 4m 0s", got)
+	if got == "" || !strings.Contains(got, "est 4m  0s") {
+		t.Errorf("formatCheckDuration(queued, est) = %q, want est 4m  0s", got)
 	}
 
 	// Running with estimate: elapsed plus remaining countdown.
@@ -214,7 +214,7 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	if strings.Contains(got, "remaining") {
 		t.Errorf("formatCheckDuration(past est) = %q, want no remaining countdown", got)
 	}
-	if !strings.Contains(got, "est 4m 0s") {
+	if !strings.Contains(got, "est 4m  0s") {
 		t.Errorf("formatCheckDuration(past est) = %q, want estimate still shown", got)
 	}
 
@@ -225,8 +225,8 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	done.StartedAt = now.Add(-5 * time.Minute).Format(time.RFC3339)
 	done.CompletedAt = now.Add(-1 * time.Minute).Format(time.RFC3339)
 	got = formatCheckDuration(done, 9*time.Minute, true)
-	if got != "4m 0s" {
-		t.Errorf("formatCheckDuration(completed, est) = %q, want 4m 0s", got)
+	if got != "4m  0s" {
+		t.Errorf("formatCheckDuration(completed, est) = %q, want 4m  0s", got)
 	}
 }
 

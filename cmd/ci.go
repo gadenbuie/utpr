@@ -1040,14 +1040,23 @@ func formatCheckDuration(r gh.CheckRun, est time.Duration, hasEst bool) string {
 	return ui.StyleMuted.Render(fmt.Sprintf("%s (est %s)", elapsed, ciFormatDuration(est)))
 }
 
+// ciFormatDuration renders a duration as unit-aligned columns so minutes
+// and seconds line up vertically across rows, e.g. "49s", "5m  8s",
+// "1h 5m 30s". Seconds are right-aligned to two digits; a larger unit
+// always renders the smaller ones ("1h  0m  0s", never "1h 05m").
 func ciFormatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
-	m := int(d.Minutes())
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
-	if m > 0 {
-		return fmt.Sprintf("%dm %ds", m, s)
+	sec := fmt.Sprintf("%2ds", s)
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm %s", h, m, sec)
 	}
-	return fmt.Sprintf("%ds", s)
+	if m > 0 {
+		return fmt.Sprintf("%dm %s", m, sec)
+	}
+	return sec
 }
 
 func checkRunSummary(runs []gh.CheckRun) string {
