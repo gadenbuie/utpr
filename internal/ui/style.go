@@ -80,6 +80,16 @@ func PadRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-visible)
 }
 
+// PadLeft pads s with spaces on the left so that its visible (non-ANSI)
+// width is at least width.
+func PadLeft(s string, width int) string {
+	visible := len([]rune(StripANSI(s)))
+	if visible >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-visible) + s
+}
+
 // StyleStateTag returns a colored "[state]" tag.
 func StyleStateTag(state string) string {
 	tag := "[" + state + "]"

@@ -230,6 +230,58 @@ func TestFormatCheckDurationWithEstimate(t *testing.T) {
 	}
 }
 
+func TestRenderCheckRunsAlignsDurations(t *testing.T) {
+	now := time.Now()
+	completed := estimateTestRun(7, "py-test")
+	completed.Status = "completed"
+	completed.Conclusion = "success"
+	completed.StartedAt = now.Add(-49 * time.Second).Format(time.RFC3339)
+	completed.CompletedAt = now.Format(time.RFC3339)
+
+	// Long-running job with a countdown: its duration string is the
+	// widest in the group.
+	running := estimateTestRun(7, "py-playwright")
+	running.Status = "in_progress"
+	running.StartedAt = now.Add(-2*time.Minute - 57*time.Second).Format(time.RFC3339)
+	est := map[int64]map[string]time.Duration{7: {"py-playwright": 7 * time.Minute}}
+
+	got := renderCheckRunsPlain(
+		[]gh.CheckRun{completed, running},
+		map[int64]string{7: "CI"}, false, nil, est)
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	var jobLines []string
+	for _, line := range lines {
+		if strings.Contains(line, "py-") {
+			jobLines = append(jobLines, line)
+		}
+	}
+	if len(jobLines) != 2 {
+		t.Fatalf("renderCheckRunsPlain() job lines = %v, want 2", jobLines)
+	}
+	// Right-aligned durations: both rows end at the same column, with no
+	// trailing whitespace on either.
+	if len(jobLines[0]) != len(jobLines[1]) {
+		t.Errorf("duration column not aligned:\n%q\n%q", jobLines[0], jobLines[1])
+	}
+	for _, line := range jobLines {
+		if strings.TrimRight(line, " ") != line {
+			t.Errorf("job line has trailing whitespace: %q", line)
+		}
+	}
+
+	// A queued job with no estimate renders a blank duration cell rather
+	// than padding-only trailing spaces.
+	queued := estimateTestRun(7, "py-pending")
+	got = renderCheckRunsPlain(
+		[]gh.CheckRun{completed, queued},
+		map[int64]string{7: "CI"}, false, nil, nil)
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if strings.Contains(line, "py-pending") && strings.TrimRight(line, " ") != line {
+			t.Errorf("queued row has trailing whitespace: %q", line)
+		}
+	}
+}
+
 func TestRenderCheckRunsWithEstimates(t *testing.T) {
 	running := estimateTestRun(7, "build")
 	running.Status = "in_progress"

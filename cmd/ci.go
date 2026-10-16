@@ -1112,15 +1112,37 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 			}
 		}
 
-		for _, r := range g.Runs {
+		durs := make([]string, len(g.Runs))
+		durWidth := 0
+		for i, r := range g.Runs {
+			est, hasEst := estimateFor(estimates, r)
+			durs[i] = formatCheckDuration(r, est, hasEst)
+			if durs[i] != "" {
+				if w := len([]rune(ui.StripANSI(durs[i]))); w > durWidth {
+					durWidth = w
+				}
+			}
+		}
+
+		for i, r := range g.Runs {
 			icon := checkRunIcon(r)
 			name := jobDisplayName(r.Name, g.Name)
-			est, hasEst := estimateFor(estimates, r)
-			dur := formatCheckDuration(r, est, hasEst)
-			_, _ = fmt.Fprintf(w, "  %s  %s  %s\n",
+			dur := durs[i]
+			if dur != "" {
+				// Right-align durations so the seconds of "49s" and
+				// "5m 7s" line up in the same column.
+				dur = ui.PadLeft(dur, durWidth)
+			}
+			line := fmt.Sprintf("  %s  %s  %s",
 				icon,
 				ui.PadRight(name, maxLen),
 				dur)
+			if dur == "" {
+				// Blank duration cell: drop the padding so the row has
+				// no trailing whitespace.
+				line = strings.TrimRight(line, " ")
+			}
+			_, _ = fmt.Fprintln(w, line)
 			if reason, ok := reasons[r.ID]; ok {
 				_, _ = fmt.Fprintf(w, "      %s\n", ui.StyleMuted.Render("↳ "+reason))
 			}
