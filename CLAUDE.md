@@ -26,7 +26,7 @@ A Go CLI for GitHub PR workflows, inspired by the `pr_*()` functions from the R 
 
 ## Development notes
 
-- Run `go vet ./...` and `go test ./...` before committing — both must pass clean.
+- Run `go vet ./...`, `golangci-lint run ./...`, and `go test ./...` before committing — all must pass clean. (`go vet` alone misses `ineffassign` and other checks that CI's Lint job runs.)
 - If present, the implementation plan and review history are in `_dev/plan.md`.
 
 ## Cutting a release
