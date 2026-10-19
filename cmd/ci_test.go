@@ -38,12 +38,89 @@ func TestRenderCheckRunsPlain(t *testing.T) {
 	}
 	run.CheckSuite.ID = 42
 
-	got := renderCheckRunsPlain([]gh.CheckRun{run}, map[int64]string{42: "build"}, false, nil, nil)
+	got := renderCheckRunsPlain([]gh.CheckRun{run}, map[int64]gh.WorkflowRun{42: {Name: "build"}}, false, nil, nil)
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("renderCheckRunsPlain() contains ANSI escape codes: %q", got)
 	}
 	if !strings.Contains(got, "test") || !strings.Contains(got, "1m  0s") {
 		t.Errorf("renderCheckRunsPlain() = %q, missing check details", got)
+	}
+}
+
+func TestRenderCheckRunHeaders(t *testing.T) {
+	workflowRuns := []gh.WorkflowRun{
+		{CheckSuiteID: 77, Name: "CI", RunNumber: 75},
+		{CheckSuiteID: 78, Name: "CI", RunNumber: 74},
+		{CheckSuiteID: 79, Name: "Docs", RunNumber: 32},
+	}
+	tests := []struct {
+		name    string
+		suites  []int64
+		wfRuns  []gh.WorkflowRun
+		headers []string
+	}{
+		{
+			name:    "single run stays unnumbered",
+			suites:  []int64{77, 77},
+			wfRuns:  workflowRuns[:1],
+			headers: []string{"● CI"},
+		},
+		{
+			name:    "repeated workflow names get run numbers without reordering",
+			suites:  []int64{78, 77, 79},
+			wfRuns:  workflowRuns,
+			headers: []string{"● CI · run #74", "● CI · run #75", "● Docs"},
+		},
+		{
+			name:    "runs without displayed checks do not cause numbering",
+			suites:  []int64{77, 79},
+			wfRuns:  workflowRuns,
+			headers: []string{"● CI", "● Docs"},
+		},
+		{
+			name:   "missing run number is not printed as zero",
+			suites: []int64{77, 78},
+			wfRuns: []gh.WorkflowRun{
+				{CheckSuiteID: 77, Name: "CI", RunNumber: 75},
+				{CheckSuiteID: 78, Name: "CI"},
+			},
+			headers: []string{"● CI · run #75", "● CI"},
+		},
+		{
+			name:    "unavailable workflow metadata preserves fallback headers",
+			suites:  []int64{77, 78},
+			headers: []string{"● CI", "● CI"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var runs []gh.CheckRun
+			for i, suite := range tt.suites {
+				name := "CI / build"
+				if suite == 79 {
+					name = "Docs / build"
+				}
+				run := estimateTestRun(suite, name)
+				run.ID = int64(i + 1)
+				runs = append(runs, run)
+			}
+			got := renderCheckRunsPlain(runs, buildSuiteRunMap(tt.wfRuns), false, nil, nil)
+			var headers []string
+			for _, line := range strings.Split(got, "\n") {
+				if strings.HasPrefix(line, "● ") {
+					headers = append(headers, line)
+				}
+			}
+			if strings.Join(headers, "\n") != strings.Join(tt.headers, "\n") {
+				t.Errorf("headers = %q, want %q", headers, tt.headers)
+			}
+			if strings.Contains(got, " / build") || strings.Count(got, "  …  build") != len(runs) {
+				t.Errorf("job names or job count changed:\n%s", got)
+			}
+			if want := fmt.Sprintf("%d running\n", len(runs)); !strings.HasSuffix(got, want) {
+				t.Errorf("summary missing %q:\n%s", want, got)
+			}
+		})
 	}
 }
 

@@ -531,10 +531,10 @@ func showCIChecks(ownerRepo, branch, sha string) (int, error) {
 
 	limiter := ui.NewByteLimiter(flagCILogsMaxBytes)
 	if ciAgentMode() {
-		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteNameMap(data.workflowRuns), false, reasons, nil)))
+		_, _ = fmt.Fprint(os.Stdout, limiter.Limit(renderCheckRunsPlain(runs, buildSuiteRunMap(data.workflowRuns), false, reasons, nil)))
 	} else {
 		var buf bytes.Buffer
-		renderCheckRuns(&buf, runs, buildSuiteNameMap(data.workflowRuns), false, reasons, nil)
+		renderCheckRuns(&buf, runs, buildSuiteRunMap(data.workflowRuns), false, reasons, nil)
 		_, _ = fmt.Fprint(os.Stderr, limiter.Limit(buf.String()))
 	}
 	if failedCount > 0 {
@@ -723,7 +723,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 	// frame in interactive fullDisplay mode.
 	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, est map[int64]map[string]time.Duration) {
 		var buf strings.Builder
-		renderCheckRuns(&buf, runs, buildSuiteNameMap(wfRuns), showTimestamp, reasons, est)
+		renderCheckRuns(&buf, runs, buildSuiteRunMap(wfRuns), showTimestamp, reasons, est)
 		output := buf.String()
 		if ciAgentMode() {
 			_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
@@ -904,22 +904,23 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 
 // ciGroup holds a named group of check runs sharing a check suite.
 type ciGroup struct {
-	Name string
-	Runs []gh.CheckRun
+	Name      string
+	RunNumber int
+	Runs      []gh.CheckRun
 }
 
-// buildSuiteNameMap returns a map from check suite ID to workflow run name.
-func buildSuiteNameMap(wfRuns []gh.WorkflowRun) map[int64]string {
-	m := map[int64]string{}
+// buildSuiteRunMap returns a map from check suite ID to workflow run.
+func buildSuiteRunMap(wfRuns []gh.WorkflowRun) map[int64]gh.WorkflowRun {
+	m := map[int64]gh.WorkflowRun{}
 	for _, r := range wfRuns {
 		if r.CheckSuiteID != 0 && r.Name != "" {
-			m[r.CheckSuiteID] = r.Name
+			m[r.CheckSuiteID] = r
 		}
 	}
 	return m
 }
 
-func groupCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string) []ciGroup {
+func groupCheckRuns(runs []gh.CheckRun, suiteRuns map[int64]gh.WorkflowRun) []ciGroup {
 	var order []int64
 	groups := map[int64]*ciGroup{}
 
@@ -935,8 +936,9 @@ func groupCheckRuns(runs []gh.CheckRun, suiteNames map[int64]string) []ciGroup {
 	result := make([]ciGroup, 0, len(order))
 	for _, sid := range order {
 		g := groups[sid]
-		if name, ok := suiteNames[sid]; ok {
-			g.Name = name
+		if wf, ok := suiteRuns[sid]; ok {
+			g.Name = wf.Name
+			g.RunNumber = wf.RunNumber
 		} else {
 			g.Name = deriveGroupName(g.Runs)
 		}
@@ -1120,20 +1122,28 @@ func anyFailedCheckRun(runs []gh.CheckRun) bool {
 	return false
 }
 
-func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) {
+func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteRuns map[int64]gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) {
 	if showTimestamp {
 		ts := time.Now().Format("15:04:05")
 		_, _ = fmt.Fprintf(w, "%s\n\n", ui.StyleMuted.Render("Checking CI... (updated "+ts+")"))
 	}
 
-	groups := groupCheckRuns(runs, suiteNames)
+	groups := groupCheckRuns(runs, suiteRuns)
+	nameCounts := map[string]int{}
+	for _, g := range groups {
+		nameCounts[g.Name]++
+	}
 	groupHeaderStyle := lipgloss.NewStyle().Bold(true)
 	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 
 	for _, g := range groups {
+		header := g.Name
+		if nameCounts[g.Name] > 1 && g.RunNumber > 0 {
+			header += fmt.Sprintf(" · run #%d", g.RunNumber)
+		}
 		_, _ = fmt.Fprintf(w, "%s %s\n",
 			bulletStyle.Render("●"),
-			groupHeaderStyle.Render(g.Name))
+			groupHeaderStyle.Render(header))
 
 		maxLen := 0
 		for _, r := range g.Runs {
@@ -1187,9 +1197,9 @@ func renderCheckRuns(w io.Writer, runs []gh.CheckRun, suiteNames map[int64]strin
 	_, _ = fmt.Fprintf(w, "%s\n", checkRunSummary(runs))
 }
 
-func renderCheckRunsPlain(runs []gh.CheckRun, suiteNames map[int64]string, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) string {
+func renderCheckRunsPlain(runs []gh.CheckRun, suiteRuns map[int64]gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, estimates map[int64]map[string]time.Duration) string {
 	var buf strings.Builder
-	renderCheckRuns(&buf, runs, suiteNames, showTimestamp, reasons, estimates)
+	renderCheckRuns(&buf, runs, suiteRuns, showTimestamp, reasons, estimates)
 	return ui.StripANSI(buf.String())
 }
 

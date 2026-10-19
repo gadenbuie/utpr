@@ -316,7 +316,7 @@ func TestRenderCheckRunsAlignsDurations(t *testing.T) {
 
 	got := renderCheckRunsPlain(
 		[]gh.CheckRun{completed, running},
-		map[int64]string{7: "CI"}, false, nil, est)
+		map[int64]gh.WorkflowRun{7: {Name: "CI"}}, false, nil, est)
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	var jobLines []string
 	for _, line := range lines {
@@ -350,7 +350,7 @@ func TestRenderCheckRunsAlignsDurations(t *testing.T) {
 	queued := estimateTestRun(7, "py-pending")
 	got = renderCheckRunsPlain(
 		[]gh.CheckRun{completed, queued},
-		map[int64]string{7: "CI"}, false, nil, nil)
+		map[int64]gh.WorkflowRun{7: {Name: "CI"}}, false, nil, nil)
 	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
 		if strings.Contains(line, "py-pending") && strings.TrimRight(line, " ") != line {
 			t.Errorf("queued row has trailing whitespace: %q", line)
@@ -364,14 +364,14 @@ func TestRenderCheckRunsWithEstimates(t *testing.T) {
 	running.StartedAt = time.Now().Add(-30 * time.Second).Format(time.RFC3339)
 
 	// Without estimates: plain running line.
-	got := renderCheckRunsPlain([]gh.CheckRun{running}, map[int64]string{7: "CI"}, false, nil, nil)
+	got := renderCheckRunsPlain([]gh.CheckRun{running}, map[int64]gh.WorkflowRun{7: {Name: "CI"}}, false, nil, nil)
 	if strings.Contains(got, "(est ") {
 		t.Errorf("renderCheckRunsPlain(no estimates) = %q, want no estimate text", got)
 	}
 
 	// With estimates: the line shows the remaining countdown.
 	est := map[int64]map[string]time.Duration{7: {"build": 4 * time.Minute}}
-	got = renderCheckRunsPlain([]gh.CheckRun{running}, map[int64]string{7: "CI"}, false, nil, est)
+	got = renderCheckRunsPlain([]gh.CheckRun{running}, map[int64]gh.WorkflowRun{7: {Name: "CI"}}, false, nil, est)
 	if !strings.Contains(got, " remaining)") {
 		t.Errorf("renderCheckRunsPlain(estimates) = %q, missing remaining countdown", got)
 	}
