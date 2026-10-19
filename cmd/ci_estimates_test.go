@@ -131,6 +131,71 @@ func TestEstimateCache(t *testing.T) {
 	}
 }
 
+func TestEstimateCacheSharesHistoryAcrossSuites(t *testing.T) {
+	for _, discovery := range []string{"same poll", "while loading", "after loading"} {
+		t.Run(discovery, func(t *testing.T) {
+			oldRuns, oldJobs := ghListWorkflowRunsForWorkflow, ghListWorkflowRunJobs
+			t.Cleanup(func() {
+				ghListWorkflowRunsForWorkflow, ghListWorkflowRunJobs = oldRuns, oldJobs
+			})
+
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var historyCalls atomic.Int32
+			ghListWorkflowRunsForWorkflow = func(ownerRepo string, workflowID int64, limit int, status string) ([]gh.WorkflowRun, error) {
+				if historyCalls.Add(1) == 1 {
+					close(started)
+				}
+				<-release
+				return []gh.WorkflowRun{{ID: 1000}}, nil
+			}
+			ghListWorkflowRunJobs = func(ownerRepo string, runID int64) ([]gh.WorkflowJob, error) {
+				base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+				return []gh.WorkflowJob{estimateTestJob("build", base, 2*time.Minute)}, nil
+			}
+
+			first := gh.WorkflowRun{ID: 42, WorkflowID: 555, CheckSuiteID: 77}
+			second := gh.WorkflowRun{ID: 43, WorkflowID: 555, CheckSuiteID: 78}
+			initial := []gh.WorkflowRun{first}
+			if discovery == "same poll" {
+				initial = append(initial, second)
+			}
+			c := newEstimateCache()
+			ready := c.readyChan()
+			c.ensure("owner/repo", initial)
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				close(release)
+				t.Fatal("history fetch never started")
+			}
+			if discovery == "while loading" {
+				c.ensure("owner/repo", []gh.WorkflowRun{second})
+			}
+			close(release)
+			select {
+			case <-ready:
+			case <-time.After(5 * time.Second):
+				t.Fatal("estimates never became ready")
+			}
+			if discovery == "after loading" {
+				c.ensure("owner/repo", []gh.WorkflowRun{second})
+			}
+
+			est := c.snapshot()
+			for _, suite := range []int64{77, 78} {
+				d, ok := estimateFor(est, estimateTestRun(suite, "build"))
+				if !ok || d != 2*time.Minute {
+					t.Errorf("suite %d build estimate = %v, %v; want 2m, true", suite, d, ok)
+				}
+			}
+			if calls := historyCalls.Load(); calls != 1 {
+				t.Errorf("history fetched %d times, want once for the shared workflow", calls)
+			}
+		})
+	}
+}
+
 func TestEstimateCacheFetchErrorsSilent(t *testing.T) {
 	oldRuns, oldJobs := ghListWorkflowRunsForWorkflow, ghListWorkflowRunJobs
 	t.Cleanup(func() {

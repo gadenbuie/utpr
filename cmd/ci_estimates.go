@@ -15,8 +15,8 @@ const estimateSampleRuns = 5
 
 // estimateCache tracks median historical job durations, fetched
 // asynchronously from the last estimateSampleRuns successful runs of each
-// workflow. Results are keyed by check suite ID so the renderer can map a
-// check run to its workflow's job history without extra lookups.
+// workflow. History is shared across all check suites for a workflow;
+// snapshots are keyed by check suite ID for the renderer.
 //
 // All fetches are best-effort: any failure or missing history simply means
 // no estimate is shown for that job.
@@ -25,17 +25,21 @@ type estimateCache struct {
 	// started holds workflow IDs whose history has been requested;
 	// each workflow is fetched at most once.
 	started map[int64]bool
-	// est maps check suite ID -> job name -> median duration. Inner maps
+	// est maps workflow ID -> job name -> median duration. Inner maps
 	// are built before publishing and never mutated afterwards.
-	est   map[int64]map[string]time.Duration
-	ready chan struct{}
+	est map[int64]map[string]time.Duration
+	// workflows maps check suite ID -> workflow ID, including suites
+	// discovered while history is loading or after it has arrived.
+	workflows map[int64]int64
+	ready     chan struct{}
 }
 
 func newEstimateCache() *estimateCache {
 	return &estimateCache{
-		started: map[int64]bool{},
-		est:     map[int64]map[string]time.Duration{},
-		ready:   make(chan struct{}),
+		started:   map[int64]bool{},
+		est:       map[int64]map[string]time.Duration{},
+		workflows: map[int64]int64{},
+		ready:     make(chan struct{}),
 	}
 }
 
@@ -45,7 +49,11 @@ func (c *estimateCache) ensure(ownerRepo string, wfRuns []gh.WorkflowRun) {
 	c.mu.Lock()
 	var pending []gh.WorkflowRun
 	for _, r := range wfRuns {
-		if r.WorkflowID == 0 || r.CheckSuiteID == 0 || c.started[r.WorkflowID] {
+		if r.WorkflowID == 0 || r.CheckSuiteID == 0 {
+			continue
+		}
+		c.workflows[r.CheckSuiteID] = r.WorkflowID
+		if c.started[r.WorkflowID] {
 			continue
 		}
 		c.started[r.WorkflowID] = true
@@ -58,8 +66,7 @@ func (c *estimateCache) ensure(ownerRepo string, wfRuns []gh.WorkflowRun) {
 }
 
 // fetchWorkflow samples the last estimateSampleRuns successful runs of one
-// workflow and records the median duration per job name under the current
-// run's check suite ID.
+// workflow and records the median duration per job name under its workflow ID.
 func (c *estimateCache) fetchWorkflow(ownerRepo string, wf gh.WorkflowRun) {
 	runs, err := ghListWorkflowRunsForWorkflow(ownerRepo, wf.WorkflowID, estimateSampleRuns, "success")
 	if err != nil {
@@ -103,7 +110,7 @@ func (c *estimateCache) fetchWorkflow(ownerRepo string, wf gh.WorkflowRun) {
 		medians[name] = medianDuration(ds)
 	}
 	c.mu.Lock()
-	c.est[wf.CheckSuiteID] = medians
+	c.est[wf.WorkflowID] = medians
 	c.mu.Unlock()
 	c.signalReady()
 }
@@ -127,9 +134,11 @@ func (c *estimateCache) readyChan() <-chan struct{} {
 func (c *estimateCache) snapshot() map[int64]map[string]time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make(map[int64]map[string]time.Duration, len(c.est))
-	for k, v := range c.est {
-		out[k] = v
+	out := make(map[int64]map[string]time.Duration, len(c.workflows))
+	for suiteID, workflowID := range c.workflows {
+		if jobs, ok := c.est[workflowID]; ok {
+			out[suiteID] = jobs
+		}
 	}
 	return out
 }
