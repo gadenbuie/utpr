@@ -45,9 +45,10 @@ Piped/non-TTY runs are non-interactive: they never hang, they fail fast with
 guidance instead. To avoid prompts:
 
 - Pass explicit arguments instead of pickers: `utpr view 123`,
-  `utpr ci 123`, `utpr fetch 123`, `utpr finish <branch>`.
-- `--yes` skips confirmation prompts on `init`, `resume`, `fetch`, `finish`,
-  `forget`, `worktree create`.
+  `utpr ci 123`, `utpr fetch 123`, `utpr finish <branch>`, `utpr merge 7`.
+- `--yes` skips confirmation prompts on `init`, `resume`, `fetch`, `merge`,
+  `finish`, `forget`, and `worktree create`. For example, `utpr merge 7 --yes`
+  confirms the merge and cleanup prompts without requiring a terminal.
 - `utpr push --edit browser` opens GitHub's PR form instead of a terminal
   prompt. A piped `utpr push` on a branch with an existing PR just prints
   the PR URL.

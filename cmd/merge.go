@@ -25,12 +25,14 @@ var (
 	prMergeFlagMerge  bool
 	prMergeFlagSquash bool
 	prMergeFlagRebase bool
+	prMergeFlagYes    bool
 )
 
 func init() {
 	prMergeCmd.Flags().BoolVarP(&prMergeFlagMerge, "merge", "m", false, "Create a merge commit")
 	prMergeCmd.Flags().BoolVarP(&prMergeFlagSquash, "squash", "s", false, "Squash commits into one commit and merge")
 	prMergeCmd.Flags().BoolVarP(&prMergeFlagRebase, "rebase", "r", false, "Rebase commits onto the base branch and merge")
+	prMergeCmd.Flags().BoolVar(&prMergeFlagYes, "yes", false, "Skip confirmation prompts")
 	prMergeCmd.MarkFlagsMutuallyExclusive("merge", "squash", "rebase")
 }
 
@@ -139,14 +141,12 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 		strategyLabel = "rebase"
 	}
 
-	if err := ui.MustConfirm(
-		fmt.Sprintf("Merge PR #%d '%s' as %s?", pr.Number, pr.Title, strategyLabel),
-		true,
-	); err != nil {
+	if err := confirmPRMerge(pr.Number, pr.Title, strategyLabel); err != nil {
 		if err == ui.ErrCancelled {
 			ui.Info("Cancelled.")
+			return nil
 		}
-		return nil
+		return err
 	}
 
 	ghCmd := exec.Command("gh", "pr", "merge", "-R", prRepo, fmt.Sprintf("%d", pr.Number), strategyFlag)
@@ -166,6 +166,16 @@ func runPRMerge(cmd *cobra.Command, args []string) error {
 	}
 
 	return finishOnePR(cfg, prRepo, pr.Number)
+}
+
+func confirmPRMerge(prNumber int, title, strategyLabel string) error {
+	if assumeYes() {
+		return nil
+	}
+	if err := requireInteractiveTTY("pass --yes to confirm the merge"); err != nil {
+		return err
+	}
+	return ui.MustConfirm(fmt.Sprintf("Merge PR #%d '%s' as %s?", prNumber, title, strategyLabel), true)
 }
 
 // resolveMergeArg interprets the argument as a PR number or branch name and
