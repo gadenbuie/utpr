@@ -12,7 +12,7 @@ import (
 )
 
 func assumeYes() bool {
-	return flagInitYes || flagFetchYes || flagResumeYes || flagFinishYes || flagForgetYes
+	return flagInitYes || flagFetchYes || flagResumeYes || flagFinishYes || flagForgetYes || prMergeFlagYes
 }
 
 // validateViewState checks a --state picker filter for the given view type

@@ -30,14 +30,11 @@ func TestCINextStepHints(t *testing.T) {
 			want:         nil,
 		},
 		{
-			name:         "reasons suppressed adds hint",
+			name:         "no-reasons only keeps logs hint",
 			failed:       1,
 			showLogsHint: true,
 			noReasons:    true,
-			want: []string{
-				"1 failing — run 'utpr ci logs <ref> --failed'",
-				"failure reasons skipped (--no-reasons); rerun without it to show inline reasons",
-			},
+			want:         []string{"1 failing — run 'utpr ci logs <ref> --failed'"},
 		},
 		{
 			name:         "no failures no hints",
@@ -158,7 +155,7 @@ func TestShowCIChecksHint(t *testing.T) {
 		}
 	})
 
-	t.Run("--no-reasons adds reasons hint", func(t *testing.T) {
+	t.Run("--no-reasons only shows the logs hint", func(t *testing.T) {
 		newSeam("success", "failure")
 		withNoReasonsFlag(t, true)
 		out := captureStdout(t, func() {
@@ -166,8 +163,11 @@ func TestShowCIChecksHint(t *testing.T) {
 				t.Errorf("showCIChecks() = %v", err)
 			}
 		})
-		if !strings.Contains(out, "failure reasons skipped (--no-reasons); rerun without it to show inline reasons") {
-			t.Errorf("showCIChecks() output missing reasons hint; got:\n%s", out)
+		if !strings.Contains(out, "1 failing — run 'utpr ci logs <ref> --failed'") {
+			t.Errorf("showCIChecks() output missing logs hint; got:\n%s", out)
+		}
+		if strings.Contains(out, "reasons skipped") {
+			t.Errorf("showCIChecks() mentioned suppressed reasons:\n%s", out)
 		}
 	})
 

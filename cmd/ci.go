@@ -547,22 +547,13 @@ func showCIChecks(ownerRepo, branch, sha string) (int, error) {
 // hint is printed without echoing the resolved ref back.
 const ciHintRef = "<ref>"
 
-// ciNextStepHints returns the follow-up hint lines shown after a failing
-// status. The logs hint is skipped when --logs already fetched the logs;
-// the reasons hint appears only when reasons were suppressed with
-// --no-reasons (there is no --reasons flag to point at).
+// ciNextStepHints returns the follow-up log command shown after a failing
+// status. The hint is skipped when --logs already fetched the logs.
 func ciNextStepHints(failed int, showLogsHint bool) []string {
-	if failed <= 0 {
+	if failed <= 0 || !showLogsHint {
 		return nil
 	}
-	var hints []string
-	if showLogsHint {
-		hints = append(hints, fmt.Sprintf("%d failing — run 'utpr ci logs %s --failed'", failed, ciHintRef))
-	}
-	if flagCINoReasons {
-		hints = append(hints, "failure reasons skipped (--no-reasons); rerun without it to show inline reasons")
-	}
-	return hints
+	return []string{fmt.Sprintf("%d failing — run 'utpr ci logs %s --failed'", failed, ciHintRef)}
 }
 
 // printCINextStepHint prints the next-step hints after a failing status.
@@ -710,6 +701,8 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		defer cache.flushWarnings() // after the spinner and status lines
 	}
 	var lastWfRuns []gh.WorkflowRun // latest workflow runs seen by fullDisplay
+	shownReasons := map[int64]string{}
+	hintedFailureCount := 0
 
 	// Historical job-duration estimates for watch mode, fetched in the
 	// background so the first frame renders as fast as usual; the poll
@@ -721,9 +714,14 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 
 	// render writes the grouped check run view, overwriting the previous
 	// frame in interactive fullDisplay mode.
-	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, est map[int64]map[string]time.Duration) {
+	render := func(runs []gh.CheckRun, wfRuns []gh.WorkflowRun, showTimestamp bool, reasons map[int64]string, est map[int64]map[string]time.Duration, showNextStepHints bool) {
 		var buf strings.Builder
 		renderCheckRuns(&buf, runs, buildSuiteRunMap(wfRuns), showTimestamp, reasons, est)
+		if showNextStepHints {
+			for _, hint := range ciNextStepHints(countFailedCheckRuns(runs), true) {
+				fmt.Fprintln(&buf, hint)
+			}
+		}
 		output := buf.String()
 		if ciAgentMode() {
 			_, _ = fmt.Fprint(os.Stdout, ui.StripANSI(output))
@@ -779,6 +777,15 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		anyFailed := failing > 0
 		allDone := running == 0
 
+		var previewLines []string
+		if !fullDisplay && anyFailed && cache != nil {
+			previewLines = waitFailurePreviewLines(checkRuns, cache.annotationReasons(checkRuns), shownReasons)
+		}
+		showFailureHint := anyFailed && (failing > hintedFailureCount || (fullDisplay && isInteractive))
+		if failing > hintedFailureCount {
+			hintedFailureCount = failing
+		}
+
 		if fullDisplay {
 			wfRuns, _ := ghListWorkflowRunsForSHA(ownerRepo, sha) // best-effort
 			lastWfRuns = wfRuns
@@ -789,7 +796,7 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 			if cache != nil {
 				reasons = cache.annotationReasons(checkRuns)
 			}
-			render(checkRuns, wfRuns, true, reasons, estimatesSnapshot(estimates))
+			render(checkRuns, wfRuns, true, reasons, estimatesSnapshot(estimates), showFailureHint)
 		} else {
 			var parts []string
 			if running > 0 {
@@ -821,6 +828,17 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 						fmt.Fprintf(os.Stderr, "[%s] %s\n", ts, statusMsg)
 					}
 					lastStatus = stripped
+				}
+			}
+			if len(previewLines) > 0 || (showFailureHint && !fullDisplay) {
+				if isInteractive {
+					clearLine()
+				}
+				for _, line := range previewLines {
+					printCIInfof(ciAgentMode(), "%s", line)
+				}
+				if showFailureHint && !fullDisplay {
+					printCINextStepHint(ciAgentMode(), failing, true)
 				}
 			}
 		}
@@ -866,14 +884,15 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		// Watch frames already render annotation reasons, so re-render only
 		// when the completion fetch added log-derived ones. Compact mode
 		// has no earlier grouped view to update, so it renders once here.
-		// A rendered frame ends with the summary line: watch mode renders
-		// a frame every poll, compact mode only on failure when reasons
-		// are enabled. The standalone summary below covers only paths without a frame.
+		// A rendered frame carries the summary; fullDisplay frames may also
+		// include the next-step hint after it. Compact mode renders once on
+		// failure when reasons are enabled. The standalone summary below
+		// covers only paths without a frame.
 		frameRendered := fullDisplay
 		if fullDisplay && logReasonsAdded {
-			render(checkRuns, lastWfRuns, true, reasons, estimatesSnapshot(estimates))
+			render(checkRuns, lastWfRuns, true, reasons, estimatesSnapshot(estimates), fullDisplay && isInteractive && anyFailed)
 		} else if !fullDisplay && anyFailed && cache != nil {
-			render(checkRuns, lastWfRuns, false, reasons, nil)
+			render(checkRuns, lastWfRuns, false, reasons, nil, false)
 			frameRendered = true
 		}
 
@@ -900,6 +919,24 @@ func waitCI(ownerRepo, sha, mode string, fullDisplay bool) error {
 		}
 		return nil
 	}
+}
+
+// waitFailurePreviewLines returns each new annotation-derived failure reason
+// once, labeled with its check name for compact wait-mode output.
+func waitFailurePreviewLines(runs []gh.CheckRun, reasons, shown map[int64]string) []string {
+	var lines []string
+	for _, run := range runs {
+		if !isFailedCheckRun(run) {
+			continue
+		}
+		reason := reasons[run.ID]
+		if reason == "" || shown[run.ID] == reason {
+			continue
+		}
+		shown[run.ID] = reason
+		lines = append(lines, fmt.Sprintf("↳ %s: %s", run.Name, reason))
+	}
+	return lines
 }
 
 // ciGroup holds a named group of check runs sharing a check suite.
@@ -1111,6 +1148,16 @@ func checkRunSummary(runs []gh.CheckRun) string {
 		parts = append(parts, ui.StyleMuted.Render(fmt.Sprintf("%d skipped", skipped)))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func countFailedCheckRuns(runs []gh.CheckRun) int {
+	count := 0
+	for _, run := range runs {
+		if isFailedCheckRun(run) {
+			count++
+		}
+	}
+	return count
 }
 
 func anyFailedCheckRun(runs []gh.CheckRun) bool {

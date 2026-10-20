@@ -433,6 +433,48 @@ func TestWaitCIReasonsCallBudget(t *testing.T) {
 	}
 }
 
+func TestWaitCIShowsFailurePreviewAndLogsHintWhileChecksRun(t *testing.T) {
+	s := &reasonSeam{}
+	withReasonSeam(t, s)
+	withNoReasonsFlag(t, false)
+
+	buildRunning := reasonCheckRun(7, "CI / build", "")
+	buildRunning.Status = "in_progress"
+	lintRunning := reasonCheckRun(8, "CI / lint", "")
+	lintRunning.Status = "in_progress"
+	buildFailed := reasonCheckRun(7, "CI / build", "failure")
+	lintPassed := reasonCheckRun(8, "CI / lint", "success")
+	s.checkRuns = [][]gh.CheckRun{
+		{buildRunning, lintRunning},
+		{buildFailed, lintRunning},
+		{buildFailed, lintPassed},
+	}
+	s.annotations[7] = []gh.CheckRunAnnotation{{
+		AnnotationLevel: "failure",
+		Message:         "Build failed: undefined symbol 'foo'",
+	}}
+
+	var waitErr error
+	out := captureStdout(t, func() { waitErr = waitCI("o/r", "sha", "all", false) })
+	if waitErr == nil {
+		t.Fatal("waitCI() = nil, want CI checks failed")
+	}
+	preview := "↳ CI / build: Build failed: undefined symbol 'foo'"
+	if !strings.Contains(out, preview) {
+		t.Errorf("wait output missing the early failure preview %q:\n%s", preview, out)
+	}
+	hint := "1 failing — run 'utpr ci logs <ref> --failed'"
+	if n := strings.Count(out, hint); n != 1 {
+		t.Errorf("logs hint printed %d times, want once:\n%s", n, out)
+	}
+	if strings.Index(out, preview) > strings.Index(out, hint) {
+		t.Errorf("logs hint appeared before the failure preview:\n%s", out)
+	}
+	if s.calls.getCheckRuns != 3 {
+		t.Errorf("GetCheckRuns called %d times, want 3", s.calls.getCheckRuns)
+	}
+}
+
 func TestWaitCINoReasonsCallBudget(t *testing.T) {
 	s := &reasonSeam{}
 	withReasonSeam(t, s)
@@ -459,6 +501,12 @@ func TestWaitCINoReasonsCallBudget(t *testing.T) {
 	if s.calls.listCheckRunAnnotations != 0 || len(s.calls.getJobLogs) != 0 ||
 		s.calls.listWorkflowRunJobs != 0 || s.calls.listWorkflowRunsForSHA != 0 {
 		t.Errorf("--no-reasons made extra calls: %+v", s.calls)
+	}
+	if !strings.Contains(out, "utpr ci logs <ref> --failed") {
+		t.Errorf("--no-reasons wait output missing the full-log command hint:\n%s", out)
+	}
+	if strings.Contains(out, "reasons skipped") {
+		t.Errorf("--no-reasons wait output mentioned skipped previews:\n%s", out)
 	}
 	if strings.Contains(out, "●") || strings.Contains(out, "↳") {
 		t.Errorf("--no-reasons wait output grew a grouped listing:\n%s", out)
@@ -630,6 +678,9 @@ func TestWaitCIWatchNoDoubleRender(t *testing.T) {
 		if !strings.Contains(out, "↳ Error: object 'foo' not found") {
 			t.Errorf("final frame missing the inline reason:\n%s", out)
 		}
+		if n := strings.Count(out, "utpr ci logs <ref> --failed"); n != 1 {
+			t.Errorf("logs hint printed %d times, want once across the frames:\n%s", n, out)
+		}
 	})
 }
 
@@ -696,7 +747,7 @@ func TestWaitCICompletionSummaryOnce(t *testing.T) {
 		if frames != 2 {
 			t.Errorf("rendered %d frames, want 2 (poll + final with reasons):\n%s", frames, out)
 		}
-		// Each frame ends with the summary; the completion block must add
+		// Each frame contains the summary; the completion block must add
 		// no standalone copy on the re-render path.
 		if n := strings.Count(out, "\n1 passing · 1 failing\n"); n != frames {
 			t.Errorf("summary printed %d times for %d frames, want one per frame:\n%s", n, frames, out)
@@ -790,6 +841,9 @@ func TestWaitCIWatchAnnotationOnlyReasonsOneFrame(t *testing.T) {
 	}
 	if !strings.Contains(out, "↳ Build failed: undefined symbol 'foo'") {
 		t.Errorf("poll frame missing the annotation reason:\n%s", out)
+	}
+	if !strings.Contains(out, "utpr ci logs <ref> --failed") {
+		t.Errorf("poll frame missing the full-log command hint:\n%s", out)
 	}
 	if len(s.calls.getJobLogs) != 0 {
 		t.Errorf("job logs fetched %d times, want 0 when annotations answer", len(s.calls.getJobLogs))
