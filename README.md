@@ -154,7 +154,7 @@ piped, or explicitly with `utpr quickstart --agent`.
 | `utpr merge [<pr>] [--yes]` | Merge a PR (squash by default), update the base branch, and clean up; `--yes` skips confirmation prompts |
 | `utpr pull` | Pull latest changes |
 | `utpr merge-main` | Merge default branch into current branch |
-| `utpr ci [<ref>]` | Show GitHub Actions status with a one-line failure reason for each failed check (`--no-reasons` skips it); plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output; `utpr ci list` shows recent runs grouped by commit (`--limit`, default 10) |
+| `utpr ci [<ref>]` | Show GitHub Actions status with a one-line failure reason for each failed check (`--no-reasons` skips it); plain output when piped or with `--agent` (`--pretty` forces styling); `--wait` blocks until done, showing failure previews and a command for full logs; `--logs` appends failed-job logs to a failing status in one shot; `utpr ci logs` streams failed-job output; `utpr ci list` shows recent runs grouped by commit (`--limit`, default 10) |
 | `utpr forget [<branch>] [--yes]` | Abandon local PR branch; works without a git remote |
 | `utpr finish [<pr>] [--yes]` | Clean up after a merged PR; falls back to local cleanup when GitHub is unreachable |
 | `utpr clean` | Interactively clean up merged branches, stale remotes, and pruned refs |

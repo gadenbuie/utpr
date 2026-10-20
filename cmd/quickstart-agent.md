@@ -33,6 +33,8 @@ anything utpr doesn't cover.
   failures.
 - `utpr ci --wait` — block until checks complete: `--wait=all` (default) or
   `--wait=failed` (stop at first failure); exits 0 on success, 1 on failure.
+  Where available, failed checks get a short reason preview and a
+  `utpr ci logs <ref> --failed` hint for full context.
 - `utpr ci logs` — failed-job logs, scoped to step groups containing error
   markers by default; `--failed` (all failed jobs, no prompt), `--job <name>`
   (one job), `--grep <pattern>` with `-A`/`-B` context, `--full` (complete logs).
