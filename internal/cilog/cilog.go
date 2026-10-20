@@ -34,6 +34,7 @@ type Selection struct {
 var timestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
 
 const groupPrefix = "##[group]"
+const endGroupPrefix = "##[endgroup]"
 
 var landmarkRe = regexp.MustCompile(
 	`##\[error\]|^Failed tests\b|^Error:|^Execution halted\b`)
@@ -242,23 +243,32 @@ type stepGroup struct {
 	start, end int // half-open [start, end)
 }
 
-// stepGroups parses ##[group] step boundaries. A group extends from its
-// marker to the next ##[group] marker (or the end of the log), so it covers
-// both the grouped input expansion and the ungrouped step output that
-// follows.
+// stepGroups parses top-level ##[group] step boundaries, ignoring nested
+// groups. Each step group extends to the next top-level group marker (or the
+// end of the log), so it covers both grouped input and ungrouped step output.
+// Lines before the first marker form a preamble group.
 func stepGroups(lines []string) []stepGroup {
 	var groups []stepGroup
 	start := -1
 	name := ""
+	depth := 0
 	for i, line := range lines {
 		c := content(line)
-		if !strings.HasPrefix(c, groupPrefix) {
-			continue
+		switch {
+		case strings.HasPrefix(c, groupPrefix):
+			if depth == 0 {
+				if start >= 0 {
+					groups = append(groups, stepGroup{name, start, i})
+				} else if i > 0 {
+					groups = append(groups, stepGroup{"", 0, i})
+				}
+				start = i
+				name = strings.TrimSpace(c[len(groupPrefix):])
+			}
+			depth++
+		case strings.HasPrefix(c, endGroupPrefix) && depth > 0:
+			depth--
 		}
-		if start >= 0 {
-			groups = append(groups, stepGroup{name, start, i})
-		}
-		start, name = i, strings.TrimSpace(c[len(groupPrefix):])
 	}
 	if start >= 0 {
 		groups = append(groups, stepGroup{name, start, len(lines)})

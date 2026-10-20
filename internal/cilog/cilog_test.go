@@ -67,7 +67,7 @@ func containsLine(lines []string, substr string) bool {
 	return false
 }
 
-func TestSelectAnchorsWindowOnFailure(t *testing.T) {
+func TestSelectScopesToFailingStepGroups(t *testing.T) {
 	lines := testthatFailureLog(120)
 
 	sel := Select(lines, 100)
@@ -93,10 +93,12 @@ func TestSelectStaysWithinFailureStepGroup(t *testing.T) {
 	lines := []string{
 		ts("##[group]Set up job"),
 		ts("setup details"),
+		ts("##[endgroup]"),
 		ts("##[group]Run tests"),
 		ts("test output before failure"),
 		ts("Error: test failed"),
 		ts("test output after failure"),
+		ts("##[endgroup]"),
 		ts("##[group]Run final checks"),
 	}
 	for i := 0; i < 150; i++ {
@@ -117,17 +119,110 @@ func TestSelectStaysWithinFailureStepGroup(t *testing.T) {
 	}
 }
 
+func TestSelectKeepsNestedGroupFailureContext(t *testing.T) {
+	lines := []string{
+		ts("##[group]Run tests"),
+		ts("starting test suite"),
+		ts("##[group]gotestsum details"),
+		ts("--- FAIL: TestImportantRegression"),
+		ts("traceback line 1"),
+		ts("##[endgroup]"),
+		ts("##[endgroup]"),
+		ts("##[error]Process completed with exit code 1."),
+		ts("##[group]Post Run actions/checkout@v4"),
+		ts("##[endgroup]"),
+		ts("cleanup output"),
+	}
+
+	sel := Select(lines, 100)
+	if !containsLine(sel.Lines, "--- FAIL: TestImportantRegression") {
+		t.Errorf("Select() lost failure output from a nested group: %q", join(sel.Lines))
+	}
+	if !containsLine(sel.Lines, "Process completed with exit code 1") {
+		t.Errorf("Select() lost the trailing failure landmark: %q", join(sel.Lines))
+	}
+	if containsLine(sel.Lines, "cleanup output") {
+		t.Error("Select() included the post-job step")
+	}
+}
+
+func TestSelectKeepsPreambleLandmarks(t *testing.T) {
+	lines := []string{
+		ts("Error: failure before the first group"),
+		ts("preamble traceback"),
+		ts("##[group]Run tests"),
+		ts("Error: failure inside a step"),
+		ts("##[endgroup]"),
+		ts("##[group]Run unrelated step"),
+		ts("unrelated output"),
+	}
+
+	sel := Select(lines, 100)
+	for _, want := range []string{"failure before the first group", "preamble traceback", "failure inside a step"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() omitted landmark context %q: %q", want, join(sel.Lines))
+		}
+	}
+	if containsLine(sel.Lines, "unrelated output") {
+		t.Error("Select() included a group without an error landmark")
+	}
+}
+
+func TestSelectScopesLandmarkWindowAcrossGroups(t *testing.T) {
+	lines := []string{
+		ts("##[group]Run first failing step"),
+		ts("first-step error"),
+		ts("##[endgroup]"),
+		ts("##[group]Run unrelated step"),
+	}
+	for i := 0; i < 150; i++ {
+		lines = append(lines, ts(fmt.Sprintf("unrelated output %d", i)))
+	}
+	lines = append(lines, ts("##[endgroup]"), ts("##[group]Run final failing step"))
+	for i := 0; i < 120; i++ {
+		lines = append(lines, ts(fmt.Sprintf("right step filler %d", i)))
+	}
+	lines = append(lines,
+		ts("right step context before"),
+		ts("Error: right-step failure"),
+		ts("Execution halted"),
+		ts("right step context after"),
+		ts("##[endgroup]"),
+	)
+
+	sel := Select(lines, 80)
+	if sel.Mode != ModeLandmark {
+		t.Fatalf("Select() mode = %v, want ModeLandmark", sel.Mode)
+	}
+	if !sel.Scoped {
+		t.Error("Select().Scoped = false, want true")
+	}
+	if len(sel.Lines) > 80 {
+		t.Errorf("Select() returned %d lines, want at most 80", len(sel.Lines))
+	}
+	for _, want := range []string{"right-step failure", "right step context before", "right step context after"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() window missing %q: %q", want, join(sel.Lines))
+		}
+	}
+	if containsLine(sel.Lines, "unrelated output") {
+		t.Error("Select() included lines from the error-free group")
+	}
+}
+
 func TestSelectKeepsEachFailureStepGroup(t *testing.T) {
 	lines := []string{
 		ts("##[group]Run unit tests"),
 		ts("unit test output"),
 		ts("Error: unit test failed"),
+		ts("##[endgroup]"),
 		ts("##[group]Run integration tests"),
 	}
 	for i := 0; i < 150; i++ {
 		lines = append(lines, ts(fmt.Sprintf("integration output %d", i)))
 	}
 	lines = append(lines,
+		ts("##[endgroup]"),
 		ts("##[group]Run lint"),
 		ts("lint output"),
 		ts("Execution halted"),
