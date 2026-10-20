@@ -260,8 +260,8 @@ func TestProcessLogLinesAnchorsWindowOnFailure(t *testing.T) {
 
 	result := processLogLines(raw, false, 100, nil)
 	processed, mode := result.Lines, result.Mode
-	if mode != cilog.ModeLandmark {
-		t.Fatalf("processLogLines() mode = %v, want ModeLandmark", mode)
+	if mode != cilog.ModeFull {
+		t.Fatalf("processLogLines() mode = %v, want ModeFull when the full failed step fits", mode)
 	}
 	if len(processed) > 100 {
 		t.Errorf("processLogLines() returned %d lines, want at most 100", len(processed))
@@ -301,16 +301,19 @@ func TestProcessLogLinesFullWindow(t *testing.T) {
 		t.Errorf("processLogLines(raw, _, 0) dropped post-job step output")
 	}
 
-	// A log that fits within n lines is shown in full.
+	// A log that fits within n lines is still scoped to the failing step group.
 	small := ciLogsFixture(3, 2)
-	total = strings.Count(small, "\n")
 	result = processLogLines(small, false, 100, nil)
 	processed, mode = result.Lines, result.Mode
 	if mode != cilog.ModeFull {
 		t.Errorf("processLogLines(short log) mode = %v, want ModeFull", mode)
 	}
-	if len(processed) != total {
-		t.Errorf("processLogLines(short log) returned %d lines, want all %d", len(processed), total)
+	got = strings.Join(processed, "\n")
+	if !strings.Contains(got, "expect_equal(x, 2) is not TRUE") {
+		t.Error("processLogLines(short log) omitted the failure step")
+	}
+	if strings.Contains(got, "upload noise") {
+		t.Error("processLogLines(short log) included an unrelated step")
 	}
 }
 
@@ -353,6 +356,8 @@ func TestCILogsNote(t *testing.T) {
 	}{
 		{"tail", processedLog{Lines: make([]string, 50), Mode: cilog.ModeTail}, false, "(last 50 lines)"},
 		{"landmark", processedLog{Lines: make([]string, 80), Mode: cilog.ModeLandmark}, false, "(80 lines around the failure; use --full for the complete log)"},
+		{"landmark scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeLandmark, Scoped: true}, false, "(12 lines from failed step groups; use --full for the complete log)"},
+		{"full scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeFull, Scoped: true}, false, "(failed step groups only; use --full for the complete log)"},
 		{"full with dropped steps", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull, Dropped: true}, false, "(post-job steps omitted; use --full for the complete log)"},
 		{"full complete", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull}, false, ""},
 		{"grep", processedLog{Lines: make([]string, 10), GrepMatches: 8, GrepTotal: 10}, true, "(8 matching lines)"},

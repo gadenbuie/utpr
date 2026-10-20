@@ -27,11 +27,14 @@ type Selection struct {
 	Mode  Mode
 	// Dropped reports that post-job steps were omitted from Lines.
 	Dropped bool
+	// Scoped reports that step groups without error landmarks were omitted.
+	Scoped bool
 }
 
 var timestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
 
 const groupPrefix = "##[group]"
+const endGroupPrefix = "##[endgroup]"
 
 var landmarkRe = regexp.MustCompile(
 	`##\[error\]|^Failed tests\b|^Error:|^Execution halted\b`)
@@ -45,30 +48,36 @@ func IsGenericExitMessage(msg string) bool {
 }
 
 // Select returns the lines to display for a job log:
-//   - n <= 0, or a log that fits in n lines, yields the complete log;
-//   - otherwise post-job steps are dropped and the remaining lines are
-//     windowed around error landmarks;
-//   - without landmarks it falls back to the last n lines.
+//   - n <= 0 yields the complete log;
+//   - otherwise post-job steps and step groups without error landmarks are
+//     omitted, then the remaining lines are windowed around error landmarks;
+//   - without landmarks it returns the complete log if it fits, or the last n
+//     lines otherwise.
 func Select(lines []string, n int) Selection {
 	if len(lines) == 0 {
 		return Selection{Lines: lines, Mode: ModeFull}
 	}
-	if n <= 0 || len(lines) <= n {
+	if n <= 0 {
 		return Selection{Lines: lines, Mode: ModeFull}
 	}
 
 	landmarks := findLandmarks(lines)
 	if len(landmarks) == 0 {
+		if len(lines) <= n {
+			return Selection{Lines: lines, Mode: ModeFull}
+		}
 		return Selection{Lines: lines[len(lines)-n:], Mode: ModeTail}
 	}
 
 	kept, dropped := dropPostSteps(lines, landmarks)
+	landmarks = findLandmarks(kept)
+	kept, landmarks, scoped := keepLandmarkGroups(kept, landmarks)
 	if len(kept) <= n {
-		return Selection{Lines: kept, Mode: ModeFull, Dropped: dropped}
+		return Selection{Lines: kept, Mode: ModeFull, Dropped: dropped, Scoped: scoped}
 	}
 
-	window := windowAround(kept, findLandmarks(kept), n)
-	return Selection{Lines: window, Mode: ModeLandmark, Dropped: dropped}
+	window := windowAround(kept, landmarks, n)
+	return Selection{Lines: window, Mode: ModeLandmark, Dropped: dropped, Scoped: scoped}
 }
 
 // Grep filters lines to those whose timestamp-stripped content matches re,
@@ -234,23 +243,32 @@ type stepGroup struct {
 	start, end int // half-open [start, end)
 }
 
-// stepGroups parses ##[group] step boundaries. A group extends from its
-// marker to the next ##[group] marker (or the end of the log), so it covers
-// both the grouped input expansion and the ungrouped step output that
-// follows.
+// stepGroups parses top-level ##[group] step boundaries, ignoring nested
+// groups. Each step group extends to the next top-level group marker (or the
+// end of the log), so it covers both grouped input and ungrouped step output.
+// Lines before the first marker form a preamble group.
 func stepGroups(lines []string) []stepGroup {
 	var groups []stepGroup
 	start := -1
 	name := ""
+	depth := 0
 	for i, line := range lines {
 		c := content(line)
-		if !strings.HasPrefix(c, groupPrefix) {
-			continue
+		switch {
+		case strings.HasPrefix(c, groupPrefix):
+			if depth == 0 {
+				if start >= 0 {
+					groups = append(groups, stepGroup{name, start, i})
+				} else if i > 0 {
+					groups = append(groups, stepGroup{"", 0, i})
+				}
+				start = i
+				name = strings.TrimSpace(c[len(groupPrefix):])
+			}
+			depth++
+		case strings.HasPrefix(c, endGroupPrefix) && depth > 0:
+			depth--
 		}
-		if start >= 0 {
-			groups = append(groups, stepGroup{name, start, i})
-		}
-		start, name = i, strings.TrimSpace(c[len(groupPrefix):])
 	}
 	if start >= 0 {
 		groups = append(groups, stepGroup{name, start, len(lines)})
@@ -266,6 +284,47 @@ func isPostStepName(name string) bool {
 		strings.HasPrefix(l, "post:") ||
 		strings.Contains(l, "upload-artifact") ||
 		strings.Contains(l, "upload artifacts")
+}
+
+// keepLandmarkGroups retains only step groups containing at least one
+// landmark. Landmark indices are remapped to the compacted result. If no
+// landmark is inside a parsed group, the input is left unchanged.
+func keepLandmarkGroups(lines []string, landmarks []int) ([]string, []int, bool) {
+	groups := stepGroups(lines)
+	groupLandmarks := make([][]int, len(groups))
+	for _, landmark := range landmarks {
+		for i, group := range groups {
+			if landmark >= group.start && landmark < group.end {
+				groupLandmarks[i] = append(groupLandmarks[i], landmark)
+				break
+			}
+		}
+	}
+
+	matched := false
+	for _, group := range groupLandmarks {
+		if len(group) > 0 {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return lines, landmarks, false
+	}
+
+	kept := make([]string, 0, len(lines))
+	keptLandmarks := make([]int, 0, len(landmarks))
+	for i, group := range groups {
+		if len(groupLandmarks[i]) == 0 {
+			continue
+		}
+		base := len(kept)
+		kept = append(kept, lines[group.start:group.end]...)
+		for _, landmark := range groupLandmarks[i] {
+			keptLandmarks = append(keptLandmarks, base+landmark-group.start)
+		}
+	}
+	return kept, keptLandmarks, len(kept) < len(lines)
 }
 
 // dropPostSteps removes post-job step groups that start after the last

@@ -1223,7 +1223,7 @@ func processLogLines(raw string, showTimestamps bool, n int, gf *grepFilter) pro
 		}
 	} else {
 		sel := cilog.Select(lines, n)
-		lines, result.Mode, result.Dropped = sel.Lines, sel.Mode, sel.Dropped
+		lines, result.Mode, result.Dropped, result.Scoped = sel.Lines, sel.Mode, sel.Dropped, sel.Scoped
 	}
 
 	processed := make([]string, 0, len(lines))
@@ -1248,6 +1248,8 @@ type processedLog struct {
 	Mode  cilog.Mode
 	// Dropped reports that post-job steps were omitted from Lines.
 	Dropped bool
+	// Scoped reports that step groups without errors were omitted.
+	Scoped bool
 	// GrepMatches is the number of lines matching --grep (context excluded);
 	// GrepTotal is the number of filtered lines before the line cap.
 	// Both are zero unless --grep was given.
@@ -1523,8 +1525,12 @@ func ciLogsNote(result processedLog, grep bool) string {
 		return note + ")"
 	case result.Mode == cilog.ModeTail:
 		return fmt.Sprintf("(last %d lines)", len(result.Lines))
+	case result.Mode == cilog.ModeLandmark && result.Scoped:
+		return fmt.Sprintf("(%d lines from failed step groups; use --full for the complete log)", len(result.Lines))
 	case result.Mode == cilog.ModeLandmark:
 		return fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(result.Lines))
+	case result.Mode == cilog.ModeFull && result.Scoped:
+		return "(failed step groups only; use --full for the complete log)"
 	case result.Mode == cilog.ModeFull && result.Dropped:
 		return "(post-job steps omitted; use --full for the complete log)"
 	}

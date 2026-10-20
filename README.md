@@ -330,8 +330,9 @@ to skip the reason lookup entirely:
 
 When checks fail, `utpr ci logs` streams the output of failed jobs so
 you can debug without leaving the terminal. By default, post-job steps
-(artifact upload, cleanup) are excluded and the shown window is anchored on
-the errors, so the failure isn't buried in teardown noise:
+(artifact upload, cleanup) are excluded, and error-anchored context stays
+within the step group(s) containing the error markers. Use `--full` to see
+the complete log, including other steps and post-job output:
 
 ```bash
 # One shot: status plus logs for all failed jobs when the commit fails
