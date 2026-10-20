@@ -71,8 +71,8 @@ func TestSelectAnchorsWindowOnFailure(t *testing.T) {
 	lines := testthatFailureLog(120)
 
 	sel := Select(lines, 100)
-	if sel.Mode != ModeLandmark {
-		t.Fatalf("Select() mode = %v, want ModeLandmark", sel.Mode)
+	if sel.Mode != ModeFull {
+		t.Fatalf("Select() mode = %v, want ModeFull after the complete failing step fits", sel.Mode)
 	}
 	if len(sel.Lines) > 100 {
 		t.Errorf("Select() returned %d lines, want at most 100", len(sel.Lines))
@@ -86,6 +86,61 @@ func TestSelectAnchorsWindowOnFailure(t *testing.T) {
 		if containsLine(sel.Lines, noise) {
 			t.Errorf("Select() window includes post-failure noise %q", noise)
 		}
+	}
+}
+
+func TestSelectStaysWithinFailureStepGroup(t *testing.T) {
+	lines := []string{
+		ts("##[group]Set up job"),
+		ts("setup details"),
+		ts("##[group]Run tests"),
+		ts("test output before failure"),
+		ts("Error: test failed"),
+		ts("test output after failure"),
+		ts("##[group]Run final checks"),
+	}
+	for i := 0; i < 150; i++ {
+		lines = append(lines, ts(fmt.Sprintf("final check output %d", i)))
+	}
+
+	sel := Select(lines, 100)
+	if !containsLine(sel.Lines, "test output before failure") || !containsLine(sel.Lines, "test output after failure") {
+		t.Errorf("Select() missing context from the failure step: %q", join(sel.Lines))
+	}
+	for _, otherStep := range []string{"Set up job", "Run final checks", "final check output"} {
+		if containsLine(sel.Lines, otherStep) {
+			t.Errorf("Select() included unrelated step content %q", otherStep)
+		}
+	}
+	if !sel.Scoped {
+		t.Error("Select().Scoped = false, want true when unrelated step groups are omitted")
+	}
+}
+
+func TestSelectKeepsEachFailureStepGroup(t *testing.T) {
+	lines := []string{
+		ts("##[group]Run unit tests"),
+		ts("unit test output"),
+		ts("Error: unit test failed"),
+		ts("##[group]Run integration tests"),
+	}
+	for i := 0; i < 150; i++ {
+		lines = append(lines, ts(fmt.Sprintf("integration output %d", i)))
+	}
+	lines = append(lines,
+		ts("##[group]Run lint"),
+		ts("lint output"),
+		ts("Execution halted"),
+	)
+
+	sel := Select(lines, 100)
+	for _, want := range []string{"unit test failed", "Execution halted"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() omitted error group containing %q", want)
+		}
+	}
+	if containsLine(sel.Lines, "integration output") {
+		t.Error("Select() included a step group without an error landmark")
 	}
 }
 
@@ -105,7 +160,7 @@ func TestSelectFullMode(t *testing.T) {
 		}
 	}
 
-	// A log that fits within n lines is also shown in full.
+	// A short scoped selection that fits within n is shown in full.
 	sel = Select(testthatFailureLog(3), 200)
 	if sel.Mode != ModeFull {
 		t.Errorf("Select(small log, 200) mode = %v, want ModeFull", sel.Mode)
