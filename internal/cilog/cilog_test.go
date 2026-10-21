@@ -486,6 +486,8 @@ func TestFindLandmarks(t *testing.T) {
 		{ts("Failed tests:"), true},
 		{ts("Error: object 'foo' not found"), true},
 		{ts("Execution halted"), true},
+		{ts("Err:63 https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble/main amd64 chromium-common"), true},
+		{ts("Err: repository unavailable"), false},
 		{ts("##[warning]Something suspicious"), false},
 		{ts("No errors here"), false},
 		{ts("  Error: indented"), false},
@@ -694,6 +696,16 @@ func TestReason(t *testing.T) {
 				ts("expect_true(ok) is not TRUE"),
 			},
 			want: "Failure (test-x:12): expect_true(ok) is not TRUE",
+		},
+		{
+			name: "apt fetch line is a selection landmark, not the inline reason",
+			lines: []string{
+				ts("Err:63 https://ppa.launchpadcontent.net/example/ubuntu package.deb"),
+				ts("  503 Service Unavailable"),
+				ts("E: Unable to fetch some archives"),
+				ts("Error: system requirements install failed"),
+			},
+			want: "Error: system requirements install failed",
 		},
 		{
 			name: "only generic exit code",

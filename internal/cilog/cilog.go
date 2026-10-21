@@ -48,6 +48,10 @@ const endGroupPrefix = "##[endgroup]"
 var landmarkRe = regexp.MustCompile(
 	`##\[error\]|^Failed tests\b|^Error:|^Execution halted\b`)
 
+// aptErrRe marks apt package-fetch failures for log selection. It is kept out
+// of Reason's landmarks because the line often contains a long mirror URL.
+var aptErrRe = regexp.MustCompile(`(?i)^Err:\d+\b`)
+
 var exitCodeMsgRe = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 
 // IsGenericExitMessage reports whether msg is GitHub's content-free
@@ -225,12 +229,13 @@ func firstDetail(lines []string) (title, detail string) {
 }
 
 // findLandmarks returns the sorted indices of lines that mark failures:
-// GitHub Actions error annotations, testthat failure blocks, and R's
-// Error/Execution halted messages.
+// GitHub Actions error annotations, testthat/R errors, and apt package-fetch
+// failures.
 func findLandmarks(lines []string) []int {
 	var out []int
 	for i, line := range lines {
-		if landmarkRe.MatchString(content(line)) {
+		c := content(line)
+		if landmarkRe.MatchString(c) || aptErrRe.MatchString(c) {
 			out = append(out, i)
 		}
 	}
