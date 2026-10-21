@@ -71,8 +71,8 @@ func TestSelectScopesToFailingStepGroups(t *testing.T) {
 	lines := testthatFailureLog(120)
 
 	sel := Select(lines, 100)
-	if sel.Mode != ModeFull {
-		t.Fatalf("Select() mode = %v, want ModeFull after the complete failing step fits", sel.Mode)
+	if sel.Mode != ModeLandmark {
+		t.Fatalf("Select() mode = %v, want ModeLandmark for a bounded failure excerpt", sel.Mode)
 	}
 	if len(sel.Lines) > 100 {
 		t.Errorf("Select() returned %d lines, want at most 100", len(sel.Lines))
@@ -171,7 +171,7 @@ func TestSelectKeepsPreambleLandmarks(t *testing.T) {
 func TestSelectScopesLandmarkWindowAcrossGroups(t *testing.T) {
 	lines := []string{
 		ts("##[group]Run first failing step"),
-		ts("first-step error"),
+		ts("Error: first step failed"),
 		ts("##[endgroup]"),
 		ts("##[group]Run unrelated step"),
 	}
@@ -208,6 +208,73 @@ func TestSelectScopesLandmarkWindowAcrossGroups(t *testing.T) {
 	if containsLine(sel.Lines, "unrelated output") {
 		t.Error("Select() included lines from the error-free group")
 	}
+	wantHeaders := []GroupHeader{
+		{Index: 0, Name: "Run first failing step"},
+	}
+	if len(sel.Headers) != 2 || sel.Headers[0].Name != wantHeaders[0].Name || sel.Headers[1].Name != "Run final failing step" {
+		t.Errorf("Select().Headers = %+v, want headers for both failed steps", sel.Headers)
+	}
+}
+
+func TestSelectDoesNotCrossFailedGroupBoundary(t *testing.T) {
+	lines := []string{
+		ts("##[group]Run first check"),
+		ts("first check setup"),
+		ts("Error: first check failed"),
+		ts("##[endgroup]"),
+		ts("##[group]Run second check"),
+	}
+	for i := 0; i < 40; i++ {
+		lines = append(lines, ts(fmt.Sprintf("second check boilerplate %d", i)))
+	}
+	lines = append(lines,
+		ts("Error: second check failed"),
+		ts("Execution halted"),
+		ts("##[endgroup]"),
+	)
+
+	sel := Select(lines, 40)
+	if containsLine(sel.Lines, "second check boilerplate 0") {
+		t.Error("Select() included boilerplate from the start of the next failed group")
+	}
+	for _, want := range []string{"first check failed", "second check failed"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() omitted %q", want)
+		}
+	}
+	if len(sel.Headers) != 2 || sel.Headers[0].Name != "Run first check" || sel.Headers[1].Name != "Run second check" {
+		t.Errorf("Select().Headers = %+v, want both failing group names", sel.Headers)
+	}
+}
+
+func TestSelectStopsAtNestedActionBoundary(t *testing.T) {
+	lines := []string{
+		ts("##[group]Run R CMD check"),
+		ts("##[start-action display=Install system requirements]"),
+		ts("Err: chromium-common returned 503"),
+		ts("E: Unable to fetch chromium-common"),
+		ts("Error: system requirements install failed"),
+		ts("Execution halted"),
+		ts("##[error]Process completed with exit code 1."),
+		ts("##[end-action id=install-system-requirements]"),
+		ts("##[start-action display=Check whether pandoc is needed]"),
+		ts("pandoc setup boilerplate"),
+		ts("##[end-action id=check-pandoc]"),
+		ts("##[endgroup]"),
+	}
+
+	sel := Select(lines, 100)
+	for _, want := range []string{"returned 503", "Unable to fetch", "system requirements install failed"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() omitted failure detail %q", want)
+		}
+	}
+	if containsLine(sel.Lines, "pandoc setup boilerplate") || containsLine(sel.Lines, "Check whether pandoc") {
+		t.Error("Select() crossed the failed action boundary into setup boilerplate")
+	}
+	if len(sel.Headers) != 1 || sel.Headers[0].Name != "Run R CMD check" {
+		t.Errorf("Select().Headers = %+v, want the failed step group name", sel.Headers)
+	}
 }
 
 func TestSelectKeepsEachFailureStepGroup(t *testing.T) {
@@ -239,6 +306,24 @@ func TestSelectKeepsEachFailureStepGroup(t *testing.T) {
 	}
 }
 
+func TestSelectHonorsSmallLineLimitAcrossClusters(t *testing.T) {
+	lines := []string{ts("##[group]Run checks"), ts("##[endgroup]")}
+	for i := 0; i < 12; i++ {
+		lines = append(lines,
+			ts(fmt.Sprintf("check output %d", i)),
+			ts(fmt.Sprintf("Error: failure %d", i)),
+		)
+	}
+
+	sel := Select(lines, 5)
+	if len(sel.Lines)+len(sel.Headers) > 5 {
+		t.Errorf("Select() emitted %d log lines and %d headers, exceeding limit 5", len(sel.Lines), len(sel.Headers))
+	}
+	if !containsLine(sel.Lines, "Error: failure") {
+		t.Errorf("Select() omitted all failure lines under a tight line limit: %q", join(sel.Lines))
+	}
+}
+
 func TestSelectFullMode(t *testing.T) {
 	lines := testthatFailureLog(5)
 
@@ -255,10 +340,10 @@ func TestSelectFullMode(t *testing.T) {
 		}
 	}
 
-	// A short scoped selection that fits within n is shown in full.
+	// A short log still uses a bounded failure excerpt.
 	sel = Select(testthatFailureLog(3), 200)
-	if sel.Mode != ModeFull {
-		t.Errorf("Select(small log, 200) mode = %v, want ModeFull", sel.Mode)
+	if sel.Mode != ModeLandmark {
+		t.Errorf("Select(small log, 200) mode = %v, want ModeLandmark for a bounded failure excerpt", sel.Mode)
 	}
 }
 
@@ -314,11 +399,16 @@ func TestSelectDensestWindow(t *testing.T) {
 	if sel.Mode != ModeLandmark {
 		t.Fatalf("Select() mode = %v, want ModeLandmark", sel.Mode)
 	}
-	if !containsLine(sel.Lines, "cluster A root cause") {
-		t.Errorf("Select() window skipped the densest landmark cluster: %q", join(sel.Lines))
+	for _, want := range []string{"cluster A root cause", "cluster B"} {
+		if !containsLine(sel.Lines, want) {
+			t.Errorf("Select() omitted failure cluster %q: %q", want, join(sel.Lines))
+		}
 	}
-	if containsLine(sel.Lines, "cluster B") {
-		t.Errorf("Select() window includes the sparser landmark cluster over the densest one")
+	if len(sel.Lines) >= 60 {
+		t.Errorf("Select() returned %d lines, want compact windows around both clusters", len(sel.Lines))
+	}
+	if containsLine(sel.Lines, "filler 75") {
+		t.Error("Select() included distant filler between failure clusters")
 	}
 }
 
@@ -442,22 +532,21 @@ func TestSelectWindowUsesFullBudgetAtLogEnd(t *testing.T) {
 	if sel.Mode != ModeLandmark {
 		t.Fatalf("Select() mode = %v, want ModeLandmark", sel.Mode)
 	}
-	if len(sel.Lines) != 100 {
-		t.Errorf("Select() returned %d lines, want the full 100-line budget", len(sel.Lines))
+	if len(sel.Lines) > 16 {
+		t.Errorf("Select() returned %d lines, want only tight failure context", len(sel.Lines))
 	}
-	if !containsLine(sel.Lines, "test output 105") {
-		t.Errorf("Select() window missing failure context above the annotation")
+	if !containsLine(sel.Lines, "test output 193") {
+		t.Errorf("Select() window missing nearby failure context")
 	}
 }
 
 func TestSelectReportsDroppedPostSteps(t *testing.T) {
-	// Dropping post-job steps brings this log within n lines: the caller
-	// must be told lines were omitted even though the mode is ModeFull.
+	// The selected excerpt remains bounded while post-job steps are dropped.
 	lines := testthatFailureLog(60)
 
 	sel := Select(lines, 200)
-	if sel.Mode != ModeFull {
-		t.Fatalf("Select() mode = %v, want ModeFull", sel.Mode)
+	if sel.Mode != ModeLandmark {
+		t.Fatalf("Select() mode = %v, want ModeLandmark after failure context was selected", sel.Mode)
 	}
 	if !sel.Dropped {
 		t.Error("Select() Dropped = false, want true after post-job steps were omitted")

@@ -35,9 +35,17 @@ anything utpr doesn't cover.
   `--wait=failed` (stop at first failure); exits 0 on success, 1 on failure.
   Where available, failed checks get a short reason preview and a
   `utpr ci logs <ref> --failed` hint for full context.
-- `utpr ci logs` — failed-job logs, scoped to step groups containing error
-  markers by default; `--failed` (all failed jobs, no prompt), `--job <name>`
-  (one job), `--grep <pattern>` with `-A`/`-B` context, `--full` (complete logs).
+- `utpr ci logs` — failed-job logs. By default, output is limited to short
+  windows around error landmarks, bounded to their step groups and labeled
+  with the failed group name; `--failed` (all failed jobs, no prompt),
+  `--job <name>` (one job), `--grep <pattern>` with `-A`/`-B` context, and
+  `--full` (complete logs) are available. Use `--grep` to search first. For
+  larger investigations, save the complete, uncapped output and search locally:
+
+  ```sh
+  utpr ci logs --agent --failed <ref> --full --max-bytes 0 > /tmp/ci-logs.txt
+  rg 'pattern' /tmp/ci-logs.txt
+  ```
 - `utpr ci list` — recent workflow runs grouped by commit.
 - `utpr ci rerun` — re-run failed jobs.
 

@@ -46,9 +46,10 @@ var ciLogsCmd = &cobra.Command{
 	Short: "Show logs for failed CI jobs",
 	Long: `Show logs for failed CI jobs. Accepts the same target forms as 'utpr ci'.
 
-By default, post-job steps (artifact upload, cleanup) are excluded and the
-shown window is anchored on errors (##[error] markers, test failures).
-Use --full to show the complete log.
+By default, post-job steps (artifact upload, cleanup) and steps without error
+landmarks are omitted. The output shows short windows around each failure,
+clipped to each step group, with a heading naming the failed group. Use --full
+to show the complete log.
 
 Use --grep to keep only lines matching a pattern (case-insensitive), with
 -A/--after and -B/--before lines of context. Grep runs on the complete log
@@ -1271,10 +1272,16 @@ func processLogLines(raw string, showTimestamps bool, n int, gf *grepFilter) pro
 	} else {
 		sel := cilog.Select(lines, n)
 		lines, result.Mode, result.Dropped, result.Scoped = sel.Lines, sel.Mode, sel.Dropped, sel.Scoped
+		result.Headers = sel.Headers
 	}
 
-	processed := make([]string, 0, len(lines))
-	for _, line := range lines {
+	processed := make([]string, 0, len(lines)+len(result.Headers))
+	header := 0
+	for i, line := range lines {
+		for header < len(result.Headers) && result.Headers[header].Index == i {
+			processed = append(processed, "### Failed step: "+result.Headers[header].Name)
+			header++
+		}
 		if showTimestamps {
 			if ts, rest, ok := cilog.SplitTimestamp(line); ok {
 				processed = append(processed, ui.StyleMuted.Render(ts)+" "+rest)
@@ -1302,6 +1309,7 @@ type processedLog struct {
 	// Both are zero unless --grep was given.
 	GrepMatches int
 	GrepTotal   int
+	Headers     []cilog.GroupHeader
 }
 
 // grepFilter holds a compiled --grep pattern and its context sizes.
@@ -1573,13 +1581,13 @@ func ciLogsNote(result processedLog, grep bool) string {
 	case result.Mode == cilog.ModeTail:
 		return fmt.Sprintf("(last %d lines)", len(result.Lines))
 	case result.Mode == cilog.ModeLandmark && result.Scoped:
-		return fmt.Sprintf("(%d lines from failed step groups; use --full for the complete log)", len(result.Lines))
+		return fmt.Sprintf("(%d lines of failure context from failed step groups; use --grep to search, or redirect --full --max-bytes 0 to a file)", len(result.Lines))
 	case result.Mode == cilog.ModeLandmark:
-		return fmt.Sprintf("(%d lines around the failure; use --full for the complete log)", len(result.Lines))
+		return fmt.Sprintf("(%d lines around the failure; use --grep to search, or redirect --full --max-bytes 0 to a file)", len(result.Lines))
 	case result.Mode == cilog.ModeFull && result.Scoped:
-		return "(failed step groups only; use --full for the complete log)"
+		return "(failed step groups only; use --grep to search, or redirect --full --max-bytes 0 to a file)"
 	case result.Mode == cilog.ModeFull && result.Dropped:
-		return "(post-job steps omitted; use --full for the complete log)"
+		return "(post-job steps omitted; use --grep to search, or redirect --full --max-bytes 0 to a file)"
 	}
 	return ""
 }

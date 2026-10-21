@@ -260,14 +260,14 @@ func TestProcessLogLinesAnchorsWindowOnFailure(t *testing.T) {
 
 	result := processLogLines(raw, false, 100, nil)
 	processed, mode := result.Lines, result.Mode
-	if mode != cilog.ModeFull {
-		t.Fatalf("processLogLines() mode = %v, want ModeFull when the full failed step fits", mode)
+	if mode != cilog.ModeLandmark {
+		t.Fatalf("processLogLines() mode = %v, want ModeLandmark for a bounded failure excerpt", mode)
 	}
 	if len(processed) > 100 {
 		t.Errorf("processLogLines() returned %d lines, want at most 100", len(processed))
 	}
 	got := strings.Join(processed, "\n")
-	for _, want := range []string{"Failed tests:", "expect_equal(x, 2)", "Execution halted"} {
+	for _, want := range []string{"### Failed step: Run R CMD check", "Failed tests:", "expect_equal(x, 2)", "Execution halted"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("processLogLines() window missing failure context %q", want)
 		}
@@ -305,8 +305,8 @@ func TestProcessLogLinesFullWindow(t *testing.T) {
 	small := ciLogsFixture(3, 2)
 	result = processLogLines(small, false, 100, nil)
 	processed, mode = result.Lines, result.Mode
-	if mode != cilog.ModeFull {
-		t.Errorf("processLogLines(short log) mode = %v, want ModeFull", mode)
+	if mode != cilog.ModeLandmark {
+		t.Errorf("processLogLines(short log) mode = %v, want ModeLandmark for a bounded excerpt", mode)
 	}
 	got = strings.Join(processed, "\n")
 	if !strings.Contains(got, "expect_equal(x, 2) is not TRUE") {
@@ -324,8 +324,11 @@ func TestProcessLogLinesKeepsTimestamps(t *testing.T) {
 	if len(processed) == 0 {
 		t.Fatal("processLogLines() returned no lines")
 	}
-	if !strings.Contains(processed[0], "2026-07-01T10:00:00") {
-		t.Errorf("processLogLines(showTimestamps) first line %q lost its timestamp", processed[0])
+	if !strings.Contains(strings.Join(processed, "\n"), "2026-07-01T10:00:00") {
+		t.Error("processLogLines(showTimestamps) lost timestamps from log lines")
+	}
+	if !strings.Contains(processed[0], "### Failed step: Run R CMD check") {
+		t.Errorf("processLogLines(showTimestamps) first line %q does not identify the failed step", processed[0])
 	}
 }
 
@@ -355,10 +358,10 @@ func TestCILogsNote(t *testing.T) {
 		want   string
 	}{
 		{"tail", processedLog{Lines: make([]string, 50), Mode: cilog.ModeTail}, false, "(last 50 lines)"},
-		{"landmark", processedLog{Lines: make([]string, 80), Mode: cilog.ModeLandmark}, false, "(80 lines around the failure; use --full for the complete log)"},
-		{"landmark scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeLandmark, Scoped: true}, false, "(12 lines from failed step groups; use --full for the complete log)"},
-		{"full scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeFull, Scoped: true}, false, "(failed step groups only; use --full for the complete log)"},
-		{"full with dropped steps", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull, Dropped: true}, false, "(post-job steps omitted; use --full for the complete log)"},
+		{"landmark", processedLog{Lines: make([]string, 80), Mode: cilog.ModeLandmark}, false, "(80 lines around the failure; use --grep to search, or redirect --full --max-bytes 0 to a file)"},
+		{"landmark scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeLandmark, Scoped: true}, false, "(12 lines of failure context from failed step groups; use --grep to search, or redirect --full --max-bytes 0 to a file)"},
+		{"full scoped to steps", processedLog{Lines: make([]string, 12), Mode: cilog.ModeFull, Scoped: true}, false, "(failed step groups only; use --grep to search, or redirect --full --max-bytes 0 to a file)"},
+		{"full with dropped steps", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull, Dropped: true}, false, "(post-job steps omitted; use --grep to search, or redirect --full --max-bytes 0 to a file)"},
 		{"full complete", processedLog{Lines: make([]string, 60), Mode: cilog.ModeFull}, false, ""},
 		{"grep", processedLog{Lines: make([]string, 10), GrepMatches: 8, GrepTotal: 10}, true, "(8 matching lines)"},
 		{"grep capped", processedLog{Lines: make([]string, 5), GrepMatches: 8, GrepTotal: 12}, true, "(8 matching lines, showing last 5; use --full for all matches)"},

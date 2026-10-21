@@ -25,10 +25,19 @@ const (
 type Selection struct {
 	Lines []string
 	Mode  Mode
+	// Headers maps the first selected line of each failed step group to its
+	// group name. Indices refer to Lines.
+	Headers []GroupHeader
 	// Dropped reports that post-job steps were omitted from Lines.
 	Dropped bool
-	// Scoped reports that step groups without error landmarks were omitted.
+	// Scoped reports that failure-unrelated lines were omitted from Lines.
 	Scoped bool
+}
+
+// GroupHeader labels a selected step group in the rendered log output.
+type GroupHeader struct {
+	Index int
+	Name  string
 }
 
 var timestampRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z `)
@@ -47,10 +56,11 @@ func IsGenericExitMessage(msg string) bool {
 	return exitCodeMsgRe.MatchString(msg)
 }
 
-// Select returns the lines to display for a job log:
+// Select returns concise failure context from a job log:
 //   - n <= 0 yields the complete log;
 //   - otherwise post-job steps and step groups without error landmarks are
-//     omitted, then the remaining lines are windowed around error landmarks;
+//     omitted, and short windows around landmarks are selected within each
+//     failed step group;
 //   - without landmarks it returns the complete log if it fits, or the last n
 //     lines otherwise.
 func Select(lines []string, n int) Selection {
@@ -71,13 +81,22 @@ func Select(lines []string, n int) Selection {
 
 	kept, dropped := dropPostSteps(lines, landmarks)
 	landmarks = findLandmarks(kept)
-	kept, landmarks, scoped := keepLandmarkGroups(kept, landmarks)
-	if len(kept) <= n {
-		return Selection{Lines: kept, Mode: ModeFull, Dropped: dropped, Scoped: scoped}
+	selected, headers := selectFailureContext(kept, landmarks, n)
+	selectedLines := 0
+	for _, line := range selected {
+		if line != "--" {
+			selectedLines++
+		}
 	}
-
-	window := windowAround(kept, landmarks, n)
-	return Selection{Lines: window, Mode: ModeLandmark, Dropped: dropped, Scoped: scoped}
+	scoped := selectedLines < len(kept)
+	mode := ModeLandmark
+	if !scoped {
+		mode = ModeFull
+	}
+	return Selection{
+		Lines: selected, Mode: mode, Headers: headers,
+		Dropped: dropped, Scoped: scoped,
+	}
 }
 
 // Grep filters lines to those whose timestamp-stripped content matches re,
@@ -286,11 +305,20 @@ func isPostStepName(name string) bool {
 		strings.Contains(l, "upload artifacts")
 }
 
-// keepLandmarkGroups retains only step groups containing at least one
-// landmark. Landmark indices are remapped to the compacted result. If no
-// landmark is inside a parsed group, the input is left unchanged.
-func keepLandmarkGroups(lines []string, landmarks []int) ([]string, []int, bool) {
+const failureContextBefore = 5
+const failureContextAfter = 10
+
+type lineSpan struct{ start, end int }
+
+// selectFailureContext keeps small windows around each landmark, independently
+// within each failed step group. This prevents a window from spilling into the
+// next step's setup/cleanup output and preserves the group name for rendering.
+func selectFailureContext(lines []string, landmarks []int, limit int) ([]string, []GroupHeader) {
 	groups := stepGroups(lines)
+	if len(groups) == 0 {
+		groups = []stepGroup{{start: 0, end: len(lines)}}
+	}
+
 	groupLandmarks := make([][]int, len(groups))
 	for _, landmark := range landmarks {
 		for i, group := range groups {
@@ -301,30 +329,147 @@ func keepLandmarkGroups(lines []string, landmarks []int) ([]string, []int, bool)
 		}
 	}
 
-	matched := false
-	for _, group := range groupLandmarks {
-		if len(group) > 0 {
-			matched = true
-			break
+	before, after := failureContextBefore, failureContextAfter
+	spans := make([][]lineSpan, len(groups))
+	headerCount := 0
+	for i := range groups {
+		if groups[i].name != "" && len(groupLandmarks[i]) > 0 {
+			headerCount++
 		}
 	}
-	if !matched {
-		return lines, landmarks, false
+	count := 0
+	for {
+		count = headerCount
+		for i, group := range groups {
+			spans[i] = landmarkSpans(lines, group, groupLandmarks[i], before, after)
+			for j, span := range spans[i] {
+				count += span.end - span.start
+				if j > 0 {
+					count++ // output separator between distant clusters
+				}
+			}
+		}
+		if count <= limit || (before == 0 && after == 0) {
+			break
+		}
+		if after > 0 {
+			after--
+		} else {
+			before--
+		}
 	}
 
-	kept := make([]string, 0, len(lines))
-	keptLandmarks := make([]int, 0, len(landmarks))
+	// If the number of separated failure clusters itself exceeds the budget,
+	// fall back to a bounded window per failed group. The window stays inside
+	// that group and is centered on its densest cluster.
+	if count > limit {
+		return selectFailureWindows(lines, groups, groupLandmarks, limit)
+	}
+
+	selected := make([]string, 0, count)
+	var headers []GroupHeader
 	for i, group := range groups {
 		if len(groupLandmarks[i]) == 0 {
 			continue
 		}
-		base := len(kept)
-		kept = append(kept, lines[group.start:group.end]...)
-		for _, landmark := range groupLandmarks[i] {
-			keptLandmarks = append(keptLandmarks, base+landmark-group.start)
+		for j, span := range spans[i] {
+			if j > 0 {
+				selected = append(selected, "--")
+			}
+			if j == 0 && group.name != "" {
+				headers = append(headers, GroupHeader{Index: len(selected), Name: group.name})
+			}
+			selected = append(selected, lines[span.start:span.end]...)
 		}
 	}
-	return kept, keptLandmarks, len(kept) < len(lines)
+	return selected, headers
+}
+
+// landmarkSpans returns merged context windows, clipped to a step group and
+// to nested GitHub action boundaries. Action markers often delimit failure
+// output from later setup/cleanup boilerplate within the same step group.
+func landmarkSpans(lines []string, group stepGroup, landmarks []int, before, after int) []lineSpan {
+	segments := actionSegments(lines, group)
+	segmentIndex := 0
+	var spans []lineSpan
+	for _, landmark := range landmarks {
+		for segmentIndex+1 < len(segments) && landmark >= segments[segmentIndex].end {
+			segmentIndex++
+		}
+		segment := segments[segmentIndex]
+		span := lineSpan{
+			start: max(segment.start, landmark-before),
+			end:   min(segment.end, landmark+after+1),
+		}
+		if len(spans) > 0 && span.start <= spans[len(spans)-1].end {
+			spans[len(spans)-1].end = max(spans[len(spans)-1].end, span.end)
+		} else {
+			spans = append(spans, span)
+		}
+	}
+	return spans
+}
+
+// actionSegments partitions a step group at nested action boundaries. End
+// markers stay with the action they close; the next action starts a new span.
+func actionSegments(lines []string, group stepGroup) []lineSpan {
+	var segments []lineSpan
+	start := group.start
+	for i := group.start; i < group.end; i++ {
+		c := content(lines[i])
+		switch {
+		case strings.HasPrefix(c, "##[start-action"):
+			if i > start {
+				segments = append(segments, lineSpan{start, i})
+			}
+			start = i
+		case strings.HasPrefix(c, "##[end-action"):
+			segments = append(segments, lineSpan{start, i + 1})
+			start = i + 1
+		}
+	}
+	if start < group.end {
+		segments = append(segments, lineSpan{start, group.end})
+	}
+	return segments
+}
+
+func selectFailureWindows(lines []string, groups []stepGroup, landmarks [][]int, limit int) ([]string, []GroupHeader) {
+	selected := make([]string, 0, limit)
+	var headers []GroupHeader
+	remainingGroups := 0
+	for _, group := range landmarks {
+		if len(group) > 0 {
+			remainingGroups++
+		}
+	}
+	remaining := limit
+	for i, group := range groups {
+		if len(landmarks[i]) == 0 || remaining <= 0 {
+			continue
+		}
+		headerCost := 0
+		if group.name != "" && remaining > 1 {
+			headerCost = 1
+		}
+		budget := max(1, (remaining-headerCost)/remainingGroups)
+		localLandmarks := make([]int, len(landmarks[i]))
+		for j, landmark := range landmarks[i] {
+			localLandmarks[j] = landmark - group.start
+		}
+		window := windowAround(lines[group.start:group.end], localLandmarks, budget)
+		if len(window)+headerCost > remaining {
+			budget = max(1, remaining-headerCost)
+			window = windowAround(lines[group.start:group.end], localLandmarks, budget)
+		}
+		if headerCost > 0 {
+			headers = append(headers, GroupHeader{Index: len(selected), Name: group.name})
+		}
+		selected = append(selected, window...)
+		remaining -= len(window) + headerCost
+		remainingGroups--
+	}
+	return selected, headers
 }
 
 // dropPostSteps removes post-job step groups that start after the last

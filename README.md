@@ -330,10 +330,12 @@ to skip the reason lookup entirely:
 ```
 
 When checks fail, `utpr ci logs` streams the output of failed jobs so
-you can debug without leaving the terminal. By default, post-job steps
-(artifact upload, cleanup) are excluded, and error-anchored context stays
-within the step group(s) containing the error markers. Use `--full` to see
-the complete log, including other steps and post-job output:
+you can debug without leaving the terminal. By default, it shows short
+windows around detected failures, clipped to the failed action and step
+group, with a heading naming the step. Unrelated steps and post-job output are
+omitted unless they contain a failure. Use `--grep` to search the complete job
+log for a term; use `--full` to print the complete log, including other steps
+and post-job output.
 
 ```bash
 # One shot: status plus logs for all failed jobs when the commit fails
@@ -380,8 +382,9 @@ the cap or `--max-bytes 0` to disable it:
 # Cap output at 64 KB
 utpr ci logs --full --max-bytes 65536
 
-# No cap
-utpr ci logs --full --max-bytes 0
+# No cap; save the full logs for searching with shell tools
+utpr ci logs --agent --failed <ref> --full --max-bytes 0 > /tmp/ci-logs.txt
+rg 'pattern' /tmp/ci-logs.txt
 ```
 
 ### Keeping a clean repo
