@@ -161,12 +161,14 @@ func WorktreeAdd(path, branch string) error {
 // WorktreeRemove removes a worktree at the given path.
 //
 // When force is false, untracked symlinks in the worktree that point outside
-// of it are deleted first. Removing such a symlink never touches the files it
-// points to, but git otherwise refuses to remove a worktree containing
-// untracked files -- which trips over the shared-directory symlinks created by
-// `utpr init --worktree` when the linked directory is not gitignored. All
-// other untracked files and any changes to tracked files still make git
-// refuse the removal, falling through to the force-removal prompt.
+// of it are deleted first -- but only when they are the only thing blocking
+// the removal. Removing such a symlink never touches the files it points to,
+// but git otherwise refuses to remove a worktree containing untracked files
+// -- which trips over the shared-directory symlinks created by
+// `utpr init --worktree` when the linked directory is not gitignored. If
+// anything else would make git refuse the removal (other untracked files,
+// changes to tracked files), the worktree -- and its symlinks -- are left
+// untouched and git's refusal falls through to the force-removal prompt.
 func WorktreeRemove(path string, force bool) error {
 	if !force {
 		if err := removeOutsideSymlinks(path); err != nil {
@@ -189,30 +191,55 @@ func WorktreeRemove(path string, force bool) error {
 }
 
 // removeOutsideSymlinks deletes untracked symlinks in the worktree at path
-// that resolve to a location outside the worktree. Symlinks pointing inside
-// the worktree are left alone, as are untracked files and any changes to
-// tracked files: those still block a non-forced `git worktree remove`.
+// that resolve to a location outside the worktree -- but only when those
+// symlinks are the only thing standing in the way of a non-forced
+// `git worktree remove`. If the worktree contains any other untracked or
+// modified files, git refuses the removal anyway, so nothing is deleted and
+// the worktree keeps its symlinks in case the user decides to keep it.
 func removeOutsideSymlinks(path string) error {
-	out, err := RunInDir(path, "status", "--porcelain=v1", "-z")
+	out, err := RunInDir(path, "status", "--porcelain=v1", "-z", "-uall")
 	if err != nil {
 		return fmt.Errorf("failed to check worktree status: %w", err)
 	}
+	if hasTrackedChanges(out) {
+		// Changes to tracked files block the removal on their own; deleting
+		// the symlinks would only damage a worktree the user may keep.
+		return nil
+	}
 
+	var links []string
 	for _, name := range untrackedPaths(out) {
 		linkPath := filepath.Join(path, name)
 		fi, err := os.Lstat(linkPath)
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-			continue
+			// An untracked file git refuses the removal over regardless: the
+			// symlinks are not the only blockers, so keep everything as-is.
+			return nil
 		}
 		outside, err := symlinkPointsOutside(linkPath, path)
 		if err != nil || !outside {
-			continue
+			return nil
 		}
+		links = append(links, linkPath)
+	}
+
+	for _, linkPath := range links {
 		if err := os.Remove(linkPath); err != nil {
-			return fmt.Errorf("failed to remove symlink %s: %w", name, err)
+			return fmt.Errorf("failed to remove symlink %s: %w", linkPath, err)
 		}
 	}
 	return nil
+}
+
+// hasTrackedChanges reports whether the `git status --porcelain=v1 -z` output
+// contains any entry other than untracked files.
+func hasTrackedChanges(z string) bool {
+	for _, record := range strings.Split(z, "\x00") {
+		if len(record) >= 4 && record[:2] != "??" {
+			return true
+		}
+	}
+	return false
 }
 
 // untrackedPaths parses `git status --porcelain=v1 -z` output and returns the
@@ -236,9 +263,11 @@ func untrackedPaths(z string) []string {
 	return paths
 }
 
-// symlinkPointsOutside reports whether the symlink at linkPath resolves to a
-// location outside root. A broken symlink counts as pointing outside, since
-// it does not resolve to anything inside the worktree.
+// symlinkPointsOutside reports whether the symlink at linkPath points to a
+// location outside root. A broken symlink is judged lexically from its raw
+// target: one that would land inside the worktree (e.g. a link created before
+// its target exists, like current -> build/out) counts as pointing inside,
+// while one aimed outside the worktree counts as pointing outside.
 func symlinkPointsOutside(linkPath, root string) (bool, error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
@@ -248,9 +277,14 @@ func symlinkPointsOutside(linkPath, root string) (bool, error) {
 	if !filepath.IsAbs(target) {
 		absTarget = filepath.Join(filepath.Dir(linkPath), target)
 	}
+	absTarget = filepath.Clean(absTarget)
 	resolved, err := filepath.EvalSymlinks(absTarget)
 	if err != nil {
-		return true, nil
+		// Broken symlink: resolve its deepest existing ancestor (the missing
+		// tail is appended lexically) so the comparison shares the same
+		// real-path base as root, and deliberate inside-pointing links are
+		// not destroyed.
+		resolved = resolveBrokenPath(absTarget)
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -261,4 +295,28 @@ func symlinkPointsOutside(linkPath, root string) (bool, error) {
 		return true, nil
 	}
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
+}
+
+// resolveBrokenPath resolves a path whose tail does not exist to a real path:
+// the deepest existing ancestor is resolved with EvalSymlinks and the missing
+// elements are appended back lexically. If nothing along the way can be
+// resolved, the lexical path is returned unchanged.
+func resolveBrokenPath(absPath string) string {
+	var missing []string
+	dir := absPath
+	for {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			result := resolved
+			for i := len(missing) - 1; i >= 0; i-- {
+				result = filepath.Join(result, missing[i])
+			}
+			return result
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return absPath
+		}
+		missing = append(missing, filepath.Base(dir))
+		dir = parent
+	}
 }

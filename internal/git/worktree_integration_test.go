@@ -245,3 +245,37 @@ func TestWorktreeRemoveStillBlocksOtherDirt(t *testing.T) {
 		t.Fatal("expected worktree directory to be gone after forced remove")
 	}
 }
+
+func TestWorktreeRemoveKeepsSymlinksWhenTrackedChangesBlock(t *testing.T) {
+	repoPath := testutil.TempRepo(t)
+
+	testutil.CreateBranch(t, repoPath, "wt-tracked-branch")
+	testutil.RunGit(t, repoPath, "checkout", "-")
+
+	wtPath := filepath.Join(filepath.Dir(repoPath), "wt-tracked")
+	if err := WorktreeAdd(wtPath, "wt-tracked-branch"); err != nil {
+		t.Fatalf("WorktreeAdd failed: %v", err)
+	}
+
+	// An outside-pointing symlink plus an uncommitted change to a tracked
+	// file: the tracked change alone makes git refuse the removal, so the
+	// symlink must not be deleted ahead of the failed removal.
+	relRepo, err := filepath.Rel(wtPath, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relRepo, filepath.Join(wtPath, "shared-rel")); err != nil {
+		t.Fatalf("symlink failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "README.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WorktreeRemove(wtPath, false); err == nil {
+		t.Fatal("expected WorktreeRemove to fail with tracked changes present")
+	}
+
+	if _, err := os.Lstat(filepath.Join(wtPath, "shared-rel")); err != nil {
+		t.Fatal("expected outside-pointing symlink to survive the failed removal")
+	}
+}

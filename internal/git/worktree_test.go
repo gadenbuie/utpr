@@ -324,12 +324,13 @@ func TestSymlinkPointsOutside(t *testing.T) {
 	}
 
 	links := map[string]string{
-		"rel-inside":    "inside.txt",
-		"abs-inside":    insideFile,
-		"dir-inside":    ".",
-		"abs-outside":   outsideFile,
-		"rel-outside":   relOutside,
-		"broken-inside": "missing.txt",
+		"rel-inside":     "inside.txt",
+		"abs-inside":     insideFile,
+		"dir-inside":     ".",
+		"abs-outside":    outsideFile,
+		"rel-outside":    relOutside,
+		"broken-inside":  "missing.txt",
+		"broken-outside": filepath.Join(outsideDir, "missing.txt"),
 	}
 	for name, target := range links {
 		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
@@ -347,7 +348,11 @@ func TestSymlinkPointsOutside(t *testing.T) {
 		{"link to the root itself", "dir-inside", false},
 		{"absolute link outside", "abs-outside", true},
 		{"relative link outside", "rel-outside", true},
-		{"broken symlink", "broken-inside", true},
+		// A broken symlink is judged lexically: one aimed inside the worktree
+		// must be kept (it may be deliberate, like current -> build/out),
+		// while one aimed outside still counts as outside.
+		{"broken link inside", "broken-inside", false},
+		{"broken link outside", "broken-outside", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
