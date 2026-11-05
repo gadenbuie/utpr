@@ -98,6 +98,14 @@ func shouldAutoCheckForUpdates(cmd *cobra.Command) bool {
 	return true
 }
 
+// updateCheckResult carries the outcome of one update-check fetch. Results
+// are passed over a buffered channel so that a cancelled spinner never races
+// with a fetch goroutine that is still running.
+type updateCheckResult struct {
+	tag string
+	err error
+}
+
 // maybeCheckForUpdates runs the once-a-day update check before a command
 // runs. It never fails the command: network errors and cancellations are
 // silently ignored, and the check result is advisory only.
@@ -115,23 +123,33 @@ func maybeCheckForUpdates(cmd *cobra.Command) {
 		return
 	}
 
-	var latest string
+	resultCh := make(chan updateCheckResult, 1)
 	// Ctrl+C during the spinner cancels the check: the spinner returns an
-	// error and the command continues as if the check never ran.
-	_ = ui.Spin("Checking for updates...", func() error {
-		var spinErr error
-		latest, spinErr = updateCheckFetch()
-		return spinErr
+	// error and the command continues as if the check never ran. The fetch
+	// goroutine sends its result into the buffered channel and exits without
+	// anyone reading it.
+	spinErr := ui.Spin("Checking for updates...", func() error {
+		var res updateCheckResult
+		res.tag, res.err = updateCheckFetch()
+		resultCh <- res
+		return res.err
 	})
 	// Record the attempt whether the check succeeded, failed, or was
 	// cancelled, so we try at most once a day.
 	_ = writeUpdateCheckState(statePath, updateCheckState{LastCheck: time.Now()})
 
-	if err != nil || latest == "" || isCurrentOrNewer(version, latest) {
+	// The result is only read when the spinner completed normally: on
+	// cancellation the fetch goroutine may still be running.
+	if spinErr != nil {
+		return
+	}
+	result := <-resultCh
+
+	if result.err != nil || result.tag == "" || isCurrentOrNewer(version, result.tag) {
 		return
 	}
 
-	ui.Infof("Update available: %s → %s.", version, displayVersion(latest))
+	ui.Infof("Update available: %s → %s.", version, displayVersion(result.tag))
 	if isBrewInstall() {
 		ui.Info("  Run 'brew upgrade gadenbuie/tap/utpr' to install it.")
 	} else {
@@ -161,25 +179,27 @@ func isBrewInstall() bool {
 // fetchLatestReleaseTag returns the tag of the latest utpr release. It
 // prefers the authenticated GitHub API (which works for private forks of the
 // repo) and falls back to an anonymous API request, so the check also works
-// before `gh auth login`.
+// before `gh auth login`. The whole fetch is bounded by updateCheckTimeout:
+// go-gh clients have no default request timeout, so without the context a
+// stalled connection could hang the command.
 func fetchLatestReleaseTag() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
+	defer cancel()
+
 	if gh.IsAuthenticated() {
 		if client, err := gh.RESTClient(); err == nil {
 			var release struct {
 				TagName string `json:"tag_name"`
 			}
-			if err := client.Get(fmt.Sprintf("repos/%s/releases/latest", utprRepo), &release); err == nil && release.TagName != "" {
+			if err := client.DoWithContext(ctx, http.MethodGet, fmt.Sprintf("repos/%s/releases/latest", utprRepo), nil, &release); err == nil && release.TagName != "" {
 				return release.TagName, nil
 			}
 		}
 	}
-	return fetchLatestReleaseTagAnonymous()
+	return fetchLatestReleaseTagAnonymous(ctx)
 }
 
-func fetchLatestReleaseTagAnonymous() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), updateCheckTimeout)
-	defer cancel()
-
+func fetchLatestReleaseTagAnonymous(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", utprRepo), nil)
 	if err != nil {
