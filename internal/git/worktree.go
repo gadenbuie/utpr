@@ -169,9 +169,15 @@ func WorktreeAdd(path, branch string) error {
 // anything else would make git refuse the removal (other untracked files,
 // changes to tracked files), the worktree -- and its symlinks -- are left
 // untouched and git's refusal falls through to the force-removal prompt.
+// As a safety net, any symlinks that were deleted but whose removal then
+// failed for another reason (a locked worktree, submodules, a nested
+// repository) are recreated before the error is returned.
 func WorktreeRemove(path string, force bool) error {
+	var removed []removedLink
 	if !force {
-		if err := removeOutsideSymlinks(path); err != nil {
+		var err error
+		removed, err = removeOutsideSymlinks(path)
+		if err != nil {
 			return err
 		}
 	}
@@ -182,6 +188,7 @@ func WorktreeRemove(path string, force bool) error {
 	args = append(args, path)
 	_, stderr, err := RunSilent(args...)
 	if err != nil {
+		restoreSymlinks(path, removed)
 		if stderr != "" {
 			return fmt.Errorf("failed to remove worktree: %s", stderr)
 		}
@@ -190,45 +197,71 @@ func WorktreeRemove(path string, force bool) error {
 	return nil
 }
 
+// removedLink records a symlink deleted ahead of a removal attempt so it
+// can be recreated if the removal fails.
+type removedLink struct {
+	name   string // path relative to the worktree root
+	target string // raw symlink target
+}
+
 // removeOutsideSymlinks deletes untracked symlinks in the worktree at path
-// that resolve to a location outside the worktree -- but only when those
+// that point to a location outside the worktree -- but only when those
 // symlinks are the only thing standing in the way of a non-forced
 // `git worktree remove`. If the worktree contains any other untracked or
 // modified files, git refuses the removal anyway, so nothing is deleted and
-// the worktree keeps its symlinks in case the user decides to keep it.
-func removeOutsideSymlinks(path string) error {
+// the worktree keeps its symlinks in case the user decides to keep it. The
+// deleted links are returned so WorktreeRemove can recreate them if the
+// removal still fails for another reason.
+func removeOutsideSymlinks(path string) ([]removedLink, error) {
 	out, err := RunInDir(path, "status", "--porcelain=v1", "-z", "-uall")
 	if err != nil {
-		return fmt.Errorf("failed to check worktree status: %w", err)
+		return nil, fmt.Errorf("failed to check worktree status: %w", err)
 	}
 	if hasTrackedChanges(out) {
 		// Changes to tracked files block the removal on their own; deleting
 		// the symlinks would only damage a worktree the user may keep.
-		return nil
+		return nil, nil
 	}
 
-	var links []string
+	var links []removedLink
 	for _, name := range untrackedPaths(out) {
 		linkPath := filepath.Join(path, name)
 		fi, err := os.Lstat(linkPath)
 		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
 			// An untracked file git refuses the removal over regardless: the
 			// symlinks are not the only blockers, so keep everything as-is.
-			return nil
+			return nil, nil
 		}
 		outside, err := symlinkPointsOutside(linkPath, path)
 		if err != nil || !outside {
-			return nil
+			return nil, nil
 		}
-		links = append(links, linkPath)
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			return nil, nil
+		}
+		links = append(links, removedLink{name: name, target: target})
 	}
 
-	for _, linkPath := range links {
-		if err := os.Remove(linkPath); err != nil {
-			return fmt.Errorf("failed to remove symlink %s: %w", linkPath, err)
+	for _, link := range links {
+		if err := os.Remove(filepath.Join(path, link.name)); err != nil {
+			return links, fmt.Errorf("failed to remove symlink %s: %w", link.name, err)
 		}
 	}
-	return nil
+	return links, nil
+}
+
+// restoreSymlinks recreates the symlinks removed ahead of a failed removal,
+// best effort, so a worktree the user keeps does not lose its shared
+// directories.
+func restoreSymlinks(path string, removed []removedLink) {
+	for _, link := range removed {
+		linkPath := filepath.Join(path, link.name)
+		if _, err := os.Lstat(linkPath); err == nil {
+			continue
+		}
+		_ = os.Symlink(link.target, linkPath)
+	}
 }
 
 // hasTrackedChanges reports whether the `git status --porcelain=v1 -z` output

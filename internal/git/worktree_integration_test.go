@@ -217,11 +217,20 @@ func TestWorktreeRemoveStillBlocksOtherDirt(t *testing.T) {
 	}
 
 	// An untracked regular file and an inside-pointing symlink are real dirt
-	// that must still block a non-forced removal.
+	// that must still block a non-forced removal. An outside-pointing symlink
+	// must survive the failed removal even though it would have been deleted
+	// had it been the only blocker.
 	if err := os.WriteFile(filepath.Join(wtPath, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("notes.txt", filepath.Join(wtPath, "notes-link")); err != nil {
+		t.Fatal(err)
+	}
+	relRepo, err := filepath.Rel(wtPath, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relRepo, filepath.Join(wtPath, "shared-rel")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,13 +238,16 @@ func TestWorktreeRemoveStillBlocksOtherDirt(t *testing.T) {
 		t.Fatal("expected WorktreeRemove to fail with untracked files present")
 	}
 
-	// The worktree, its untracked file, and the inside-pointing symlink must
-	// all still be intact after the failed removal.
+	// The worktree, its untracked file, and both symlinks must all still be
+	// intact after the failed removal.
 	if _, err := os.Stat(filepath.Join(wtPath, "notes.txt")); err != nil {
 		t.Fatal("expected untracked file to survive failed removal")
 	}
 	if _, err := os.Lstat(filepath.Join(wtPath, "notes-link")); err != nil {
 		t.Fatal("expected inside-pointing symlink to survive failed removal")
+	}
+	if fi, err := os.Lstat(filepath.Join(wtPath, "shared-rel")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("expected outside-pointing symlink to survive failed removal")
 	}
 
 	if err := WorktreeRemove(wtPath, true); err != nil {
