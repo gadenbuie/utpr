@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -158,7 +159,20 @@ func WorktreeAdd(path, branch string) error {
 }
 
 // WorktreeRemove removes a worktree at the given path.
+//
+// When force is false, untracked symlinks in the worktree that point outside
+// of it are deleted first. Removing such a symlink never touches the files it
+// points to, but git otherwise refuses to remove a worktree containing
+// untracked files -- which trips over the shared-directory symlinks created by
+// `utpr init --worktree` when the linked directory is not gitignored. All
+// other untracked files and any changes to tracked files still make git
+// refuse the removal, falling through to the force-removal prompt.
 func WorktreeRemove(path string, force bool) error {
+	if !force {
+		if err := removeOutsideSymlinks(path); err != nil {
+			return err
+		}
+	}
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
@@ -172,4 +186,79 @@ func WorktreeRemove(path string, force bool) error {
 		return fmt.Errorf("failed to remove worktree at %s", path)
 	}
 	return nil
+}
+
+// removeOutsideSymlinks deletes untracked symlinks in the worktree at path
+// that resolve to a location outside the worktree. Symlinks pointing inside
+// the worktree are left alone, as are untracked files and any changes to
+// tracked files: those still block a non-forced `git worktree remove`.
+func removeOutsideSymlinks(path string) error {
+	out, err := RunInDir(path, "status", "--porcelain=v1", "-z")
+	if err != nil {
+		return fmt.Errorf("failed to check worktree status: %w", err)
+	}
+
+	for _, name := range untrackedPaths(out) {
+		linkPath := filepath.Join(path, name)
+		fi, err := os.Lstat(linkPath)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		outside, err := symlinkPointsOutside(linkPath, path)
+		if err != nil || !outside {
+			continue
+		}
+		if err := os.Remove(linkPath); err != nil {
+			return fmt.Errorf("failed to remove symlink %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// untrackedPaths parses `git status --porcelain=v1 -z` output and returns the
+// paths of untracked file entries. Untracked directories (which cannot be
+// symlinks) are skipped.
+func untrackedPaths(z string) []string {
+	var paths []string
+	for _, record := range strings.Split(z, "\x00") {
+		if len(record) < 4 {
+			continue
+		}
+		if record[:2] != "??" {
+			continue
+		}
+		path := record[3:]
+		if strings.HasSuffix(path, "/") {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// symlinkPointsOutside reports whether the symlink at linkPath resolves to a
+// location outside root. A broken symlink counts as pointing outside, since
+// it does not resolve to anything inside the worktree.
+func symlinkPointsOutside(linkPath, root string) (bool, error) {
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		return false, err
+	}
+	absTarget := target
+	if !filepath.IsAbs(target) {
+		absTarget = filepath.Join(filepath.Dir(linkPath), target)
+	}
+	resolved, err := filepath.EvalSymlinks(absTarget)
+	if err != nil {
+		return true, nil
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil {
+		return true, nil
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }

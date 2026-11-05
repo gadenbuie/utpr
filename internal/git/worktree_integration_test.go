@@ -165,3 +165,83 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 		t.Fatal("expected worktree directory to be gone after remove")
 	}
 }
+
+func TestWorktreeRemoveOutsideSymlinks(t *testing.T) {
+	repoPath := testutil.TempRepo(t)
+
+	testutil.CreateBranch(t, repoPath, "wt-symlink-branch")
+	testutil.RunGit(t, repoPath, "checkout", "-")
+
+	wtPath := filepath.Join(filepath.Dir(repoPath), "wt-symlink")
+	if err := WorktreeAdd(wtPath, "wt-symlink-branch"); err != nil {
+		t.Fatalf("WorktreeAdd failed: %v", err)
+	}
+
+	// A symlink pointing outside the worktree, like the shared-directory
+	// symlinks created by `utpr init --worktree`.
+	if err := os.Symlink(repoPath, filepath.Join(wtPath, "shared-abs")); err != nil {
+		t.Fatalf("symlink failed: %v", err)
+	}
+	relRepo, err := filepath.Rel(wtPath, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relRepo, filepath.Join(wtPath, "shared-rel")); err != nil {
+		t.Fatalf("symlink failed: %v", err)
+	}
+
+	// A worktree with only outside-pointing symlinks must be removable
+	// without force.
+	if err := WorktreeRemove(wtPath, false); err != nil {
+		t.Fatalf("WorktreeRemove failed with outside symlinks present: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatal("expected worktree directory to be gone after remove")
+	}
+
+	// The symlink targets must still exist.
+	if _, err := os.Stat(repoPath); err != nil {
+		t.Fatalf("expected symlink target to survive worktree removal: %v", err)
+	}
+}
+
+func TestWorktreeRemoveStillBlocksOtherDirt(t *testing.T) {
+	repoPath := testutil.TempRepo(t)
+
+	testutil.CreateBranch(t, repoPath, "wt-dirt-branch")
+	testutil.RunGit(t, repoPath, "checkout", "-")
+
+	wtPath := filepath.Join(filepath.Dir(repoPath), "wt-dirt")
+	if err := WorktreeAdd(wtPath, "wt-dirt-branch"); err != nil {
+		t.Fatalf("WorktreeAdd failed: %v", err)
+	}
+
+	// An untracked regular file and an inside-pointing symlink are real dirt
+	// that must still block a non-forced removal.
+	if err := os.WriteFile(filepath.Join(wtPath, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("notes.txt", filepath.Join(wtPath, "notes-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WorktreeRemove(wtPath, false); err == nil {
+		t.Fatal("expected WorktreeRemove to fail with untracked files present")
+	}
+
+	// The worktree, its untracked file, and the inside-pointing symlink must
+	// all still be intact after the failed removal.
+	if _, err := os.Stat(filepath.Join(wtPath, "notes.txt")); err != nil {
+		t.Fatal("expected untracked file to survive failed removal")
+	}
+	if _, err := os.Lstat(filepath.Join(wtPath, "notes-link")); err != nil {
+		t.Fatal("expected inside-pointing symlink to survive failed removal")
+	}
+
+	if err := WorktreeRemove(wtPath, true); err != nil {
+		t.Fatalf("forced WorktreeRemove failed: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatal("expected worktree directory to be gone after forced remove")
+	}
+}
