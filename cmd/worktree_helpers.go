@@ -143,6 +143,11 @@ func pickAndOpenEditor(targetPath string) {
 	_ = editor.Open(choice, targetPath)
 }
 
+// symlinkLastConfigKey stores, per repo, the items confirmed the last time
+// utpr symlinked files into a new worktree. The next worktree prompt starts
+// with exactly that selection pre-checked.
+const symlinkLastConfigKey = "utpr.symlink-last"
+
 // symlinkWorktreeDirs symlinks configured dirs from main repo into worktree.
 func symlinkWorktreeDirs(repoRoot, wtDir string) {
 	symlinkDirs := os.Getenv("UTPR_SYMLINK_DIRS")
@@ -165,18 +170,20 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 		return
 	}
 
+	suggested := suggestedSymlinkItems(available)
+	suggestedSet := make(map[string]bool, len(suggested))
+	for _, item := range suggested {
+		suggestedSet[item] = true
+	}
+
 	opts := make([]huh.Option[string], len(available))
 	for i, item := range available {
-		opts[i] = huh.NewOption(item, item).Selected(!isManagedBySetupHook(item))
+		opts[i] = huh.NewOption(item, item).Selected(suggestedSet[item])
 	}
 
 	var selected []string
 	if assumeYes() {
-		for _, item := range available {
-			if !isManagedBySetupHook(item) {
-				selected = append(selected, item)
-			}
-		}
+		selected = suggested
 	} else {
 		var err error
 		selected, err = ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
@@ -184,6 +191,8 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 			return
 		}
 	}
+
+	recordSymlinkSelection(available, selected)
 
 	for _, item := range selected {
 		src := filepath.Join(repoRoot, item)
@@ -197,6 +206,78 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 			ui.Successf("Symlinked %s", item)
 		}
 	}
+}
+
+// lastSymlinkSelection reads the symlink selection remembered for this repo
+// from git config. Returns nil, false when nothing (or nothing usable) is
+// recorded.
+func lastSymlinkSelection() ([]string, bool) {
+	raw := strings.TrimSpace(git.ConfigGet(symlinkLastConfigKey))
+	if raw == "" {
+		return nil, false
+	}
+	items := parseSymlinkItems(raw)
+	if len(items) == 0 {
+		return nil, false
+	}
+	return items, true
+}
+
+// suggestedSymlinkItems returns the items to pre-check in the symlink prompt.
+// With a remembered selection for this repo, exactly that selection is
+// replayed (including setup-hook-managed dirs the user opted into).
+// Without one, the default suggestion applies: everything except dirs
+// managed by the worktree setup hooks.
+func suggestedSymlinkItems(available []string) []string {
+	last, hasLast := lastSymlinkSelection()
+	if !hasLast {
+		var suggested []string
+		for _, item := range available {
+			if !isManagedBySetupHook(item) {
+				suggested = append(suggested, item)
+			}
+		}
+		return suggested
+	}
+
+	lastSet := make(map[string]bool, len(last))
+	for _, item := range last {
+		lastSet[item] = true
+	}
+	var suggested []string
+	for _, item := range available {
+		if lastSet[item] {
+			suggested = append(suggested, item)
+		}
+	}
+	return suggested
+}
+
+// recordSymlinkSelection remembers the confirmed selection in this repo's git
+// config so the next worktree prompt starts with the same suggestion. Items
+// that weren't offered this time (e.g. already present in the new worktree)
+	// keep their remembered state. Failures are ignored: the cache is a
+	// convenience, not a requirement.
+func recordSymlinkSelection(available, selected []string) {
+	if len(selected) == 0 {
+		return
+	}
+	availableSet := make(map[string]bool, len(available))
+	for _, item := range available {
+		availableSet[item] = true
+	}
+
+	recorded := make([]string, 0, len(selected))
+	recorded = append(recorded, selected...)
+	if last, ok := lastSymlinkSelection(); ok {
+		for _, item := range last {
+			if !availableSet[item] {
+				recorded = append(recorded, item)
+			}
+		}
+	}
+
+	_ = git.ConfigSet(symlinkLastConfigKey, strings.Join(recorded, ","))
 }
 
 // setupHook defines a project-specific setup command to run in a worktree.

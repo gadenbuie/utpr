@@ -456,6 +456,14 @@ Items are only offered for symlinking if they exist in the main repo **and**
 are not already present in the worktree (i.e. not tracked by git). Gitignored
 files are naturally included since git never checks them out.
 
+Your selection is remembered per repo: the last confirmed set of items is
+stored in the repo's git config (`utpr.symlink-last`) and the next worktree
+prompt starts with exactly those items checked. Deselect an item once and it
+stays deselected next time. With `--yes`, utpr links the remembered selection
+instead of every candidate. To adjust or clear the memory, run
+`git config utpr.symlink-last "_dev,.env"` or
+`git config --unset utpr.symlink-last`.
+
 ## Configuration
 
 utpr can be configured with the following environment variables:

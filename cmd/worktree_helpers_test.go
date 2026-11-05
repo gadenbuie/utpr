@@ -1,6 +1,11 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gadenbuie/utpr/internal/git"
+	"github.com/gadenbuie/utpr/internal/testutil"
+)
 
 func TestComputeSymlinkCandidates(t *testing.T) {
 	tests := []struct {
@@ -176,4 +181,93 @@ func TestParseSymlinkItems(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Tests in this file that need a repo must not run in parallel: TempRepo
+// changes the process working directory.
+
+func TestSuggestedSymlinkItemsWithoutMemory(t *testing.T) {
+	testutil.TempRepo(t)
+
+	available := []string{".env", ".vscode", "node_modules"}
+	got := suggestedSymlinkItems(available)
+	want := []string{".env", ".vscode"}
+	if !equalStrings(got, want) {
+		t.Errorf("suggestedSymlinkItems() = %v, want %v", got, want)
+	}
+}
+
+func TestSuggestedSymlinkItemsReplaysMemory(t *testing.T) {
+	testutil.TempRepo(t)
+	if err := git.ConfigSet(symlinkLastConfigKey, ".env,renv,.vscode"); err != nil {
+		t.Fatalf("failed to set %s: %v", symlinkLastConfigKey, err)
+	}
+
+	available := []string{".env", ".vscode", "node_modules", "secrets"}
+	got := suggestedSymlinkItems(available)
+	want := []string{".env", ".vscode"}
+	if !equalStrings(got, want) {
+		t.Errorf("suggestedSymlinkItems() = %v, want %v", got, want)
+	}
+}
+
+func TestSuggestedSymlinkItemsIgnoresUnsetMemory(t *testing.T) {
+	testutil.TempRepo(t)
+	// An empty value must not count as a remembered selection: the prompt
+	// falls back to the default suggestion instead of pre-checking nothing.
+	if err := git.ConfigSet(symlinkLastConfigKey, ""); err != nil {
+		t.Fatalf("failed to set %s: %v", symlinkLastConfigKey, err)
+	}
+
+	available := []string{".env", "node_modules"}
+	got := suggestedSymlinkItems(available)
+	want := []string{".env"}
+	if !equalStrings(got, want) {
+		t.Errorf("suggestedSymlinkItems() = %v, want %v", got, want)
+	}
+}
+
+func TestRecordSymlinkSelection(t *testing.T) {
+	t.Run("records the confirmed selection", func(t *testing.T) {
+		testutil.TempRepo(t)
+		recordSymlinkSelection([]string{".env", ".vscode", "node_modules"}, []string{".vscode", ".env"})
+		if got, want := git.ConfigGet(symlinkLastConfigKey), ".vscode,.env"; got != want {
+			t.Errorf("%s = %q, want %q", symlinkLastConfigKey, got, want)
+		}
+	})
+
+	t.Run("keeps memory for items not offered", func(t *testing.T) {
+		testutil.TempRepo(t)
+		// Memory: .env and .secrets. This round offers .env and .vscode
+		// (.secrets already exists in the new worktree, so it isn't offered).
+		// The user deselects .env: offered items follow the new selection, but
+		// .secrets keeps its remembered state for future worktrees.
+		if err := git.ConfigSet(symlinkLastConfigKey, ".env,.secrets"); err != nil {
+			t.Fatalf("failed to set %s: %v", symlinkLastConfigKey, err)
+		}
+		recordSymlinkSelection([]string{".env", ".vscode"}, []string{".vscode"})
+		if got, want := git.ConfigGet(symlinkLastConfigKey), ".vscode,.secrets"; got != want {
+			t.Errorf("%s = %q, want %q", symlinkLastConfigKey, got, want)
+		}
+	})
+
+	t.Run("empty selection records nothing", func(t *testing.T) {
+		testutil.TempRepo(t)
+		recordSymlinkSelection([]string{".env"}, nil)
+		if got := git.ConfigGet(symlinkLastConfigKey); got != "" {
+			t.Errorf("%s = %q, want empty", symlinkLastConfigKey, got)
+		}
+	})
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
