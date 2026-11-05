@@ -59,6 +59,7 @@ func init() {
 
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		initPlainMode(cmd)
+		maybeCheckForUpdates(cmd)
 		if cmd.Name() == "help" || cmd.CalledAs() == "help" {
 			return nil
 		}

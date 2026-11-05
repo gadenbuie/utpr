@@ -126,6 +126,16 @@ utpr also needs GitHub authentication. You have two options:
 2. **Environment variable**: Set `GITHUB_TOKEN` (or `GH_TOKEN`) with a
    [personal access token](https://github.com/settings/tokens).
 
+### Update checks
+
+Once a day, utpr checks GitHub for a newer release before running a command.
+The check shows a spinner and can be skipped by pressing Ctrl+C. When an
+update is available, utpr prints the new version and how to install it —
+with `utpr update`, or `brew upgrade` if utpr was installed with Homebrew.
+
+Set `UTPR_NO_UPDATE_CHECK` to disable the automatic check; `utpr update`
+always checks manually.
+
 ## Usage
 
 ```
