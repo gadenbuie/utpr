@@ -251,11 +251,26 @@ func TestRecordSymlinkSelection(t *testing.T) {
 		}
 	})
 
-	t.Run("empty selection records nothing", func(t *testing.T) {
+	t.Run("empty selection records an explicit none", func(t *testing.T) {
 		testutil.TempRepo(t)
 		recordSymlinkSelection([]string{".env"}, nil)
-		if got := git.ConfigGet(symlinkLastConfigKey); got != "" {
-			t.Errorf("%s = %q, want empty", symlinkLastConfigKey, got)
+		if got, want := git.ConfigGet(symlinkLastConfigKey), symlinkLastNone; got != want {
+			t.Errorf("%s = %q, want %q", symlinkLastConfigKey, got, want)
+		}
+	})
+
+	t.Run("empty selection is remembered as empty", func(t *testing.T) {
+		testutil.TempRepo(t)
+		recordSymlinkSelection([]string{".env"}, nil)
+		items, ok := lastSymlinkSelection()
+		if !ok {
+			t.Fatal("expected an explicit empty selection to be remembered")
+		}
+		if len(items) != 0 {
+			t.Errorf("expected no remembered items, got %q", items)
+		}
+		if got := suggestedSymlinkItems([]string{".env", ".vscode"}); len(got) != 0 {
+			t.Errorf("expected no suggestions after an empty selection, got %q", got)
 		}
 	})
 }

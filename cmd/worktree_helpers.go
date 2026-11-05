@@ -187,9 +187,12 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 	} else {
 		var err error
 		selected, err = ui.ChooseMultiWithOptions("Symlink into worktree:", opts)
-		if err != nil || len(selected) == 0 {
+		if err != nil {
+			// The prompt was cancelled: leave the remembered selection alone.
 			return
 		}
+		// An empty selection is a real choice: it is recorded below so the
+		// next prompt for this repo also starts with nothing checked.
 	}
 
 	recordSymlinkSelection(available, selected)
@@ -208,13 +211,21 @@ func symlinkWorktreeDirs(repoRoot, wtDir string) {
 	}
 }
 
+// symlinkLastNone records an explicit "nothing selected" state in the
+// utpr.symlink-last config. It distinguishes "the user deselected everything
+// last time" from "no selection has been recorded yet".
+const symlinkLastNone = "(none)"
+
 // lastSymlinkSelection reads the symlink selection remembered for this repo
-// from git config. Returns nil, false when nothing (or nothing usable) is
-// recorded.
+// from git config. The second return value reports whether anything usable is
+// recorded, including an explicit empty selection.
 func lastSymlinkSelection() ([]string, bool) {
 	raw := strings.TrimSpace(git.ConfigGet(symlinkLastConfigKey))
 	if raw == "" {
 		return nil, false
+	}
+	if raw == symlinkLastNone {
+		return nil, true
 	}
 	items := parseSymlinkItems(raw)
 	if len(items) == 0 {
@@ -256,12 +267,10 @@ func suggestedSymlinkItems(available []string) []string {
 // recordSymlinkSelection remembers the confirmed selection in this repo's git
 // config so the next worktree prompt starts with the same suggestion. Items
 // that weren't offered this time (e.g. already present in the new worktree)
-	// keep their remembered state. Failures are ignored: the cache is a
-	// convenience, not a requirement.
+// keep their remembered state, and deselecting every offered item records an
+// explicit empty selection. Failures are ignored: the cache is a
+// convenience, not a requirement.
 func recordSymlinkSelection(available, selected []string) {
-	if len(selected) == 0 {
-		return
-	}
 	availableSet := make(map[string]bool, len(available))
 	for _, item := range available {
 		availableSet[item] = true
@@ -277,6 +286,10 @@ func recordSymlinkSelection(available, selected []string) {
 		}
 	}
 
+	if len(recorded) == 0 {
+		_ = git.ConfigSet(symlinkLastConfigKey, symlinkLastNone)
+		return
+	}
 	_ = git.ConfigSet(symlinkLastConfigKey, strings.Join(recorded, ","))
 }
 
