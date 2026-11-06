@@ -158,7 +158,7 @@ piped, or explicitly with `utpr quickstart --agent`.
 | `utpr init <branch> [--worktree]` | Create a new PR branch, optionally in a worktree; `--yes` assumes setup defaults |
 | `utpr worktree create [<branch>]` | Create a branch in a new worktree; alias for `utpr init --worktree` |
 | `utpr pause` | Switch back to the default branch |
-| `utpr resume [<branch>]` | Resume work on a PR branch; `--yes` assumes setup defaults |
+| `utpr resume [<pr-or-branch>]` | Resume work on a PR branch; `--yes` assumes setup defaults |
 | `utpr fetch [<pr>] [--worktree]` | Fetch a PR from GitHub, optionally into a worktree; `--yes` assumes setup defaults |
 | `utpr push [--edit=...]` | Push branch and create/update PR; plain results when piped or with `--agent` |
 | `utpr merge [<pr>] [--yes]` | Merge a PR (squash by default), update the base branch, and clean up; `--yes` skips confirmation prompts |

@@ -292,26 +292,9 @@ func localCleanupArgs(args []string, sourceRepo string) ([]string, error) {
 // is known, stored URLs for other repositories are ignored. Returns an
 // error for zero or multiple matches.
 func findBranchWithPRNumber(prNumber int, sourceRepo string) (string, error) {
-	refs, err := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
+	matches, err := branchesWithPRNumber(prNumber, sourceRepo)
 	if err != nil {
-		return "", ui.Dief("Could not look up local branches to resolve PR #%d.", prNumber)
-	}
-	var matches []string
-	for _, branch := range strings.Split(refs, "\n") {
-		branch = strings.TrimSpace(branch)
-		if branch == "" {
-			continue
-		}
-		url := git.GetBranchPRURL(branch)
-		if prNumberFromStoredURL(url) != prNumber {
-			continue
-		}
-		if sourceRepo != "" {
-			if prRepo := prRepoFromStoredURL(url); prRepo != "" && prRepo != sourceRepo {
-				continue
-			}
-		}
-		matches = append(matches, branch)
+		return "", err
 	}
 	switch len(matches) {
 	case 1:

@@ -446,6 +446,34 @@ func runMergedPRPickerFallback(cfg *remote.Config, sourceRepo string, opts merge
 	return selected, nil
 }
 
+// branchesWithPRNumber returns the local branches whose stored PR URL is
+// for the given PR number, newest first. When sourceRepo is known, stored
+// URLs for other repositories are ignored.
+func branchesWithPRNumber(prNumber int, sourceRepo string) ([]string, error) {
+	refs, err := git.ForEachRef("%(refname:short)", "-committerdate", "refs/heads/")
+	if err != nil {
+		return nil, ui.Dief("Could not look up local branches to resolve PR #%d.", prNumber)
+	}
+	var matches []string
+	for _, branch := range strings.Split(refs, "\n") {
+		branch = strings.TrimSpace(branch)
+		if branch == "" {
+			continue
+		}
+		url := git.GetBranchPRURL(branch)
+		if prNumberFromStoredURL(url) != prNumber {
+			continue
+		}
+		if sourceRepo != "" {
+			if prRepo := prRepoFromStoredURL(url); prRepo != "" && prRepo != sourceRepo {
+				continue
+			}
+		}
+		matches = append(matches, branch)
+	}
+	return matches, nil
+}
+
 // prHeadOwners returns candidate head-repo owners for PR branch lookups.
 // GitHub's REST "head" filter requires "owner:branch", where owner is the
 // head repository's owner — PRs from forks have a head owner that differs
