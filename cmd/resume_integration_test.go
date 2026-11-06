@@ -98,3 +98,36 @@ func TestResumeByPRNumberOtherRepo(t *testing.T) {
 		t.Errorf("error should mention PR #123, got: %v", err)
 	}
 }
+
+// TestResumeNumericBranchNameWins verifies that a local branch whose name is
+// a plain number takes precedence over PR-number resolution, and that '#123'
+// explicitly refers to the PR number.
+func TestResumeNumericBranchNameWins(t *testing.T) {
+	testutil.TempRepo(t)
+
+	// A branch literally named "123", tracking an unrelated PR (#999).
+	testutil.CreateBranch(t, ".", "123")
+	if err := git.SetBranchPRURL("123", "https://github.com/owner/repo/pull/999"); err != nil {
+		t.Fatalf("failed to set stored PR URL: %v", err)
+	}
+
+	// 'utpr resume 123' resumes the branch, not PR #123.
+	if err := runResume(resumeCmd, []string{"123"}); err != nil {
+		t.Fatalf("runResume failed: %v", err)
+	}
+	if current, _ := git.GetCurrentBranch(); current != "123" {
+		t.Errorf("current branch = %q, want %q", current, "123")
+	}
+
+	// 'utpr resume #123' explicitly means PR #123, which has no branch.
+	err := runResume(resumeCmd, []string{"#123"})
+	if err == nil {
+		t.Fatal("expected an error for a PR number with no local branch")
+	}
+	if !strings.Contains(err.Error(), "#123") {
+		t.Errorf("error should mention PR #123, got: %v", err)
+	}
+	if current, _ := git.GetCurrentBranch(); current != "123" {
+		t.Errorf("current branch = %q, want %q (unchanged after failed resume)", current, "123")
+	}
+}

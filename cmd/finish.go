@@ -18,7 +18,7 @@ import (
 var finishCmd = &cobra.Command{
 	Use:   "finish [pr-number-or-branch]",
 	Short: "Clean up after a merged PR",
-	Long:  "Clean up a local branch after its PR has been merged. Automatically removes any associated worktree.\n\nAccepts a PR number or branch name.",
+	Long:  "Clean up a local branch after its PR has been merged. Automatically removes any associated worktree.\n\nAccepts a PR number ('461' or '#461') or branch name.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runFinish,
 }
@@ -354,7 +354,10 @@ func pickMergedPRs(cfg *remote.Config, sourceRepo string) ([]int, error) {
 // resolveFinishArg resolves a finish argument to a PR number, accepting
 // either a PR number or a branch name.
 func resolveFinishArg(arg, sourceRepo string, cfg *remote.Config) (int, string, error) {
-	if n, err := strconv.Atoi(arg); err == nil {
+	// A numeric argument names a PR — unless a local branch literally bears
+	// that name, in which case the branch wins. Prefixing with '#' ('#461')
+	// always means the PR number.
+	if n, ok := parsePRNumberArg(arg); ok && !git.BranchExists(arg) {
 		return n, sourceRepo, nil
 	}
 	if prURL := git.GetBranchPRURL(arg); prURL != "" {

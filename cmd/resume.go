@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/gadenbuie/utpr/internal/git"
@@ -14,7 +13,7 @@ import (
 var resumeCmd = &cobra.Command{
 	Use:   "resume [pr-number-or-branch]",
 	Short: "Resume work on a PR branch",
-	Long:  "Resume work on a PR branch. Accepts a branch name or the PR number of a utpr-tracked branch. If no argument is given, an interactive picker is shown.",
+	Long:  "Resume work on a PR branch. Accepts a branch name or a PR number ('461' or '#461') of a utpr-tracked branch. If no argument is given, an interactive picker is shown.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runResume,
 }
@@ -44,7 +43,10 @@ func runResume(cmd *cobra.Command, args []string) error {
 	var branch string
 	if len(args) > 0 {
 		branch = args[0]
-		if n, err := strconv.Atoi(branch); err == nil {
+		// A numeric argument is a PR number, unless a local branch literally
+		// bears that name — the branch wins. Prefixing with '#' always means
+		// the PR number.
+		if n, ok := parsePRNumberArg(branch); ok && !git.BranchExists(branch) {
 			resolved, rerr := resolveBranchForPRNumber(n, cfg)
 			if rerr != nil {
 				return rerr

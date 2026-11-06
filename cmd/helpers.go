@@ -446,6 +446,18 @@ func runMergedPRPickerFallback(cfg *remote.Config, sourceRepo string, opts merge
 	return selected, nil
 }
 
+// parsePRNumberArg parses an argument that names a PR by number — either a
+// plain number ("461") or a "#461"-style reference. ok is false for
+// anything else; callers decide how numeric arguments interact with
+// branches that literally bear a numeric name.
+func parsePRNumberArg(arg string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // branchesWithPRNumber returns the local branches whose stored PR URL is
 // for the given PR number, newest first. When sourceRepo is known, stored
 // URLs for other repositories are ignored.

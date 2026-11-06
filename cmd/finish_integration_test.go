@@ -283,3 +283,34 @@ func TestFreeUpSwitchesToLocalDefault(t *testing.T) {
 		t.Errorf("main repo should be on 'main' after moving the branch, got %q", current)
 	}
 }
+
+// TestResolveFinishArgNumericBranchWins verifies that a local branch whose
+// name is a plain number takes precedence over PR-number resolution, and
+// that '#461' explicitly refers to the PR number.
+func TestResolveFinishArgNumericBranchWins(t *testing.T) {
+	testutil.TempRepo(t)
+
+	// A branch literally named "461", tracking an unrelated PR (#999).
+	testutil.CreateBranch(t, ".", "461")
+	if err := git.SetBranchPRURL("461", "https://github.com/owner/repo/pull/999"); err != nil {
+		t.Fatalf("failed to set stored PR URL: %v", err)
+	}
+
+	// 'utpr finish 461' means the branch, whose PR is #999.
+	got, _, err := resolveFinishArg("461", "owner/repo", nil)
+	if err != nil {
+		t.Fatalf("resolveFinishArg returned error: %v", err)
+	}
+	if got != 999 {
+		t.Errorf("resolveFinishArg(\"461\") = %d, want 999 (the branch's PR)", got)
+	}
+
+	// 'utpr finish #461' explicitly means PR #461.
+	got, _, err = resolveFinishArg("#461", "owner/repo", nil)
+	if err != nil {
+		t.Fatalf("resolveFinishArg returned error: %v", err)
+	}
+	if got != 461 {
+		t.Errorf("resolveFinishArg(\"#461\") = %d, want 461", got)
+	}
+}
