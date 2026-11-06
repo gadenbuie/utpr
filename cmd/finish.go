@@ -126,6 +126,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 
 	// For non-picker path: confirm first and determine the PR's base branch
 	var baseBranch string
+	var prLocalBranch string
 	if !fromPicker {
 		pr, err := gh.GetPR(prRepo, prNumbers[0])
 		if err != nil {
@@ -150,6 +151,7 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		if pr.Base.Ref != "" {
 			baseBranch = pr.Base.Ref
 		}
+		prLocalBranch = findLocalBranchForPR(prNumbers[0], pr.Head.Ref, pr.User.Login, cfg.DefaultBranch, pr.Base.Ref)
 	} else {
 		// Picker path: fetch base branches for selected stacked PRs so their
 		// remote tracking refs are up to date when the user later switches.
@@ -176,14 +178,23 @@ func runFinish(cmd *cobra.Command, args []string) error {
 		ui.Infof("PR targets '%s' (not '%s').", baseBranch, cfg.DefaultBranch)
 	}
 
-	// Switch to base branch and pull (handles worktree case)
-	if onBase, _ := git.IsOnBranch(baseBranch); !onBase {
+	// Switch to the base branch only when the current branch is involved:
+	// when we're on the PR's local branch we must move off it before it's
+	// deleted, and when we're already on the base branch we pull it to
+	// update it. From any other branch (e.g. `utpr finish <pr>` run from an
+	// unrelated branch) there is nothing to switch away from, so stay put.
+	currentBranch, _ := git.GetCurrentBranch()
+	onBase, _ := git.IsOnBranch(baseBranch)
+	onPRBranch := prLocalBranch != "" && currentBranch == prLocalBranch
+	if onPRBranch && !onBase {
 		if err := challengeUncommittedChanges(); err != nil {
 			return err
 		}
 	}
-	if err := prepareBaseBranch(baseBranch, cfg.DefaultBranch, cfg.SourceRemote); err != nil {
-		return err
+	if onPRBranch || onBase {
+		if err := prepareBaseBranch(baseBranch, cfg.DefaultBranch, cfg.SourceRemote); err != nil {
+			return err
+		}
 	}
 
 	// Process each PR
